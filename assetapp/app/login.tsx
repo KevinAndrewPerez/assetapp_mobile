@@ -1,11 +1,24 @@
 import { useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+
 
 export default function LoginScreen() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleLogin = () => {
+    // Simple validation
+    if (email && password) {
+      // Navigate to main app
+      router.replace('/(tabs)');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -13,77 +26,93 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.wrapper}
       >
-        <View style={styles.header}>
-          <View style={styles.logoContainer}>
-            <Text style={styles.logoBadge}>NU</Text>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={styles.headerContainer}>
+            <LinearGradient
+              colors={['#1a3a5c', 'rgba(26, 58, 92, 0.8)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.logoContainer}
+            >
+              <View style={styles.logoBorder}>
+                <View style={styles.logoContent} />
+              </View>
+            </LinearGradient>
+
+            <Text style={styles.title}>Welcome to NU TRACE</Text>
+            <Text style={styles.subtitle}>Sign in to manage your assets</Text>
           </View>
-          <Text style={styles.title}>NULipa ALMS</Text>
-          <Text style={styles.subtitle}>Asset Lifecycle Management System</Text>
-        </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Sign in to your account</Text>
+          {/* Form Container */}
+          <View style={styles.formContainer}>
+            {/* Email Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Email Address</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialIcons name="email" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="your.email@nu.edu.ph"
+                  placeholderTextColor="#rgba(30,41,59,0.5)"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={email}
+                  onChangeText={setEmail}
+                />
+              </View>
+            </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email Address</Text>
-            <View style={styles.inputRow}>
-              <MaterialIcons name="email" size={20} color="#6B7280" />
-              <TextInput
-                style={styles.input}
-                placeholder="Email Address"
-                placeholderTextColor="#9CA3AF"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={email}
-                onChangeText={setEmail}
-              />
+            {/* Password Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialIcons name="lock" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your password"
+                  placeholderTextColor="#rgba(30,41,59,0.5)"
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
+                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color="#6B7280" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Forgot Password */}
+            <TouchableOpacity style={styles.forgotContainer}>
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+
+            {/* Login Button */}
+            <TouchableOpacity onPress={handleLogin} activeOpacity={0.8}>
+              <LinearGradient
+                colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.loginButton}
+              >
+                <Text style={styles.loginButtonText}>Login</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Register Link */}
+            <View style={styles.registerContainer}>
+              <Text style={styles.registerText}>Don&apos;t have an account?</Text>
+              <TouchableOpacity>
+                <Text style={styles.registerLink}>Register</Text>
+              </TouchableOpacity>
             </View>
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.inputRow}>
-              <MaterialIcons name="lock" size={20} color="#6B7280" />
-              <TextInput
-                style={styles.input}
-                placeholder="Password"
-                placeholderTextColor="#9CA3AF"
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-              />
-            </View>
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>National University — Lipa</Text>
           </View>
-
-          <View style={styles.actionsRow}>
-            <View style={styles.checkboxPlaceholder} />
-            <Text style={styles.actionText}>Remember me</Text>
-            <Text style={[styles.actionText, styles.forgotText]}>Forgot password?</Text>
-          </View>
-
-          <TouchableOpacity style={styles.button} activeOpacity={0.85}>
-            <Text style={styles.buttonText}>Sign In</Text>
-          </TouchableOpacity>
-
-          <View style={styles.bottomRow}>
-            <Text style={styles.bottomText}>Don't have an account?</Text>
-            <Text style={styles.registerText}>Register</Text>
-          </View>
-        </View>
-
-        <View style={styles.demoCard}>
-          <Text style={styles.demoTitle}>Demo Credentials</Text>
-          <View style={styles.demoRow}>
-            <Text style={styles.demoRole}>Admin / ITSO</Text>
-            <Text style={styles.demoLabel}>Email: alex.reyes@nulipa.edu.ph</Text>
-            <Text style={styles.demoLabel}>Password: Admin@2026</Text>
-          </View>
-          <View style={styles.demoRow}>
-            <Text style={styles.demoRole}>Unit Head</Text>
-            <Text style={styles.demoLabel}>Email: maria.santos@nulipa.edu.ph</Text>
-            <Text style={styles.demoLabel}>Password: UHead@2026</Text>
-          </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -92,154 +121,138 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#FFFFFF',
   },
   wrapper: {
     flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'center',
   },
-  header: {
+  scrollContent: {
+    flexGrow: 1,
+    paddingVertical: 24,
+  },
+  headerContainer: {
     alignItems: 'center',
     marginBottom: 32,
   },
   logoContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    backgroundColor: '#1E293B',
+    width: 56,
+    height: 56,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
     shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 15,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 15,
   },
-  logoBadge: {
-    color: '#F8FAFC',
-    fontSize: 28,
-    fontWeight: '700',
+  logoBorder: {
+    width: 35,
+    height: 35,
+    borderRadius: 10.5,
+    borderWidth: 2.909,
+    borderColor: '#f4b942',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoContent: {
+    width: 0,
+    height: 0,
   },
   title: {
-    color: '#F8FAFC',
-    fontSize: 24,
+    color: '#1a3a5c',
+    fontSize: 21,
     fontWeight: '700',
     marginBottom: 6,
   },
   subtitle: {
-    color: '#94A3B8',
-    fontSize: 14,
+    color: '#4a5565',
+    fontSize: 12.25,
     textAlign: 'center',
   },
-  card: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 12,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 18,
+  formContainer: {
+    paddingHorizontal: 21,
+    marginBottom: 32,
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 21,
   },
   label: {
-    color: '#475569',
-    fontSize: 14,
-    marginBottom: 8,
+    color: '#364153',
+    fontSize: 12.25,
+    fontWeight: '500',
+    marginBottom: 7,
   },
-  inputRow: {
+  inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E2E8F0',
-    borderRadius: 14,
+    backgroundColor: '#f9fafb',
+    borderRadius: 14.5,
+    borderWidth: 0.727,
+    borderColor: '#e5e7eb',
     paddingHorizontal: 14,
-    height: 52,
+    height: 43.455,
+  },
+  inputIcon: {
+    marginRight: 10.5,
   },
   input: {
     flex: 1,
+    color: '#1e293b',
+    fontSize: 14,
+  },
+  eyeIcon: {
     marginLeft: 10,
-    color: '#0F172A',
-    fontSize: 16,
   },
-  actionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-  checkboxPlaceholder: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFF',
-  },
-  actionText: {
-    color: '#64748B',
-    fontSize: 13,
+  forgotContainer: {
+    alignItems: 'flex-end',
+    marginBottom: 21,
   },
   forgotText: {
-    color: '#1D4ED8',
+    color: '#6a7282',
+    fontSize: 12.25,
+    fontWeight: '500',
   },
-  button: {
-    backgroundColor: '#F59E0B',
-    borderRadius: 16,
+  loginButton: {
+    borderRadius: 24403200,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 52,
-    marginBottom: 16,
+    height: 45.5,
+    marginBottom: 21,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 15,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 15,
   },
-  buttonText: {
-    color: '#0F172A',
-    fontWeight: '700',
-    fontSize: 16,
+  loginButtonText: {
+    color: '#1a3a5c',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  bottomRow: {
+  registerContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 6,
-  },
-  bottomText: {
-    color: '#64748B',
-    fontSize: 13,
+    gap: 4,
   },
   registerText: {
-    color: '#0F172A',
-    fontSize: 13,
-    fontWeight: '700',
+    color: '#4a5565',
+    fontSize: 12.25,
   },
-  demoCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 18,
+  registerLink: {
+    color: '#f4b942',
+    fontSize: 14,
+    fontWeight: '500',
   },
-  demoTitle: {
-    color: '#F8FAFC',
-    fontWeight: '700',
-    fontSize: 15,
-    marginBottom: 12,
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 21,
+    borderTopWidth: 0.727,
+    borderTopColor: '#e5e7eb',
   },
-  demoRow: {
-    marginBottom: 12,
-  },
-  demoRole: {
-    color: '#F8FAFC',
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  demoLabel: {
-    color: '#CBD5E1',
-    fontSize: 13,
+  footerText: {
+    color: '#99a1af',
+    fontSize: 10.5,
   },
 });
