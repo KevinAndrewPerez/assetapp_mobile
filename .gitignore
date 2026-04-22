@@ -1,0 +1,12 @@
+# Ignore the massive library folders
+node_modules/
+assetapp/node_modules/
+
+# Ignore temporary cache files
+.expo/
+assetapp/.expo/
+.vscode/
+
+# Ignore log files
+*.log
+npm-debug.log*
