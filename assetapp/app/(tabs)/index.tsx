@@ -83,6 +83,9 @@ export default function App() {
       iconColor: '#FDB833',
       variant: 'primary' as const,
       onPress: () => router.push('/requests'),
+      gradientColors: ['#1E3A5F', '#2C5282'],
+      titleColor: '#FDB833',
+      subtitleColor: 'rgba(253, 184, 51, 0.7)',
     },
     {
       title: 'Asset Registry',
@@ -92,6 +95,9 @@ export default function App() {
       iconColor: '#1E3A5F',
       variant: 'default' as const,
       onPress: () => router.push('/asset-registry'),
+      gradientColors: ['#FDB833', '#F6AD55'],
+      titleColor: '#1E3A5F',
+      subtitleColor: 'rgba(30, 58, 95, 0.7)',
     },
     {
       title: 'Record Disposal',
@@ -184,6 +190,9 @@ export default function App() {
                 iconColor={link.iconColor}
                 variant={link.variant}
                 onPress={link.onPress}
+                gradientColors={link.gradientColors}
+                titleColor={link.titleColor}
+                subtitleColor={link.subtitleColor}
               />
             ))}
           </View>

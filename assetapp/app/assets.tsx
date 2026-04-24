@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter, useSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 const departments: Record<string, string> = {
   engineering: 'College of Engineering',
@@ -92,7 +92,7 @@ const assets = [
 
 export default function AssetsListScreen() {
   const router = useRouter();
-  const { department } = useSearchParams() as { department?: string };
+  const { department } = useLocalSearchParams() as { department?: string };
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState('All');
   const [expandedId, setExpandedId] = useState<string | null>(assets[0]?.id ?? null);

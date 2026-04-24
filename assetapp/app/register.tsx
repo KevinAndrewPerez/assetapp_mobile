@@ -1,30 +1,24 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons, Feather } from '@expo/vector-icons';
+import { MaterialIcons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 
-
-export default function LoginScreen() {
+export default function RegisterScreen() {
   const router = useRouter();
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [department, setDepartment] = useState('');
+  const [role, setRole] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleAdminLogin = () => {
+  const handleRegister = () => {
     // Simple validation
-    if (email && password) {
-      // Navigate to admin side
-      router.replace('/(tabs)');
-    }
-  };
-
-  const handleUserLogin = () => {
-    // Simple validation
-    if (email && password) {
-      // Navigate to user side
-      router.replace('/(user-tabs)' as any);
+    if (fullName && email && department && role && password) {
+      // For now, just navigate back to login or to the app
+      router.replace('/login');
     }
   };
 
@@ -37,31 +31,35 @@ export default function LoginScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.headerContainer}>
-            <LinearGradient
-              colors={['#1a3a5c', 'rgba(26, 58, 92, 0.8)']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.logoContainer}
-            >
-              <View style={styles.logoBorder}>
-                <View style={styles.logoContent} />
-              </View>
-            </LinearGradient>
-
-            <Text style={styles.title}>Welcome to NU TRACE</Text>
-            <Text style={styles.subtitle}>Sign in to manage your assets</Text>
+            <Text style={styles.title}>Create Account</Text>
+            <Text style={styles.subtitle}>Register to access NU TRACE</Text>
           </View>
 
           {/* Form Container */}
           <View style={styles.formContainer}>
+            {/* Full Name Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Full Name</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialIcons name="person-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Juan Dela Cruz"
+                  placeholderTextColor="#rgba(30,41,59,0.5)"
+                  value={fullName}
+                  onChangeText={setFullName}
+                />
+              </View>
+            </View>
+
             {/* Email Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="email" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="mail-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="your.email@nu.edu.ph"
+                  placeholder="juan.delacruz@nu.edu.ph"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
                   keyboardType="email-address"
                   autoCapitalize="none"
@@ -71,14 +69,44 @@ export default function LoginScreen() {
               </View>
             </View>
 
+            {/* Department Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Department</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialCommunityIcons name="office-building-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Select Department"
+                  placeholderTextColor="#rgba(30,41,59,0.5)"
+                  value={department}
+                  onChangeText={setDepartment}
+                />
+              </View>
+            </View>
+
+            {/* Role Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Role</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialIcons name="account-circle" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Select Role"
+                  placeholderTextColor="#rgba(30,41,59,0.5)"
+                  value={role}
+                  onChangeText={setRole}
+                />
+              </View>
+            </View>
+
             {/* Password Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="lock" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="lock-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Enter your password"
+                  placeholder="Create a strong password"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
                   secureTextEntry={!showPassword}
                   value={password}
@@ -90,35 +118,23 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Forgot Password */}
-            <TouchableOpacity style={styles.forgotContainer}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </TouchableOpacity>
-
-            {/* Admin Login Button */}
-            <TouchableOpacity onPress={handleAdminLogin} activeOpacity={0.8}>
+            {/* Register Button */}
+            <TouchableOpacity onPress={handleRegister} activeOpacity={0.8} style={styles.registerButtonContainer}>
               <LinearGradient
                 colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
-                style={styles.loginButton}
+                style={styles.registerButton}
               >
-                <Text style={styles.loginButtonText}>Login as Admin</Text>
+                <Text style={styles.registerButtonText}>Register</Text>
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* User Login Button */}
-            <TouchableOpacity onPress={handleUserLogin} activeOpacity={0.8}>
-              <View style={[styles.loginButton, styles.userLoginButton]}>
-                <Text style={styles.userLoginButtonText}>Login as User</Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Register Link */}
-            <View style={styles.registerContainer}>
-              <Text style={styles.registerText}>Don&apos;t have an account?</Text>
-              <TouchableOpacity onPress={() => router.push('/register' as any)}>
-                <Text style={styles.registerLink}>Register</Text>
+            {/* Login Link */}
+            <View style={styles.loginContainer}>
+              <Text style={styles.loginText}>Already have an account?</Text>
+              <TouchableOpacity onPress={() => router.push('/login' as any)}>
+                <Text style={styles.loginLink}>Login</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -148,32 +164,7 @@ const styles = StyleSheet.create({
   headerContainer: {
     alignItems: 'center',
     marginBottom: 32,
-  },
-  logoContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 15,
-  },
-  logoBorder: {
-    width: 35,
-    height: 35,
-    borderRadius: 10.5,
-    borderWidth: 2.909,
-    borderColor: '#f4b942',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoContent: {
-    width: 0,
-    height: 0,
+    marginTop: 20,
   },
   title: {
     color: '#1a3a5c',
@@ -216,24 +207,19 @@ const styles = StyleSheet.create({
     flex: 1,
     color: '#1e293b',
     fontSize: 14,
+    height: '100%',
   },
   eyeIcon: {
     marginLeft: 10,
   },
-  forgotContainer: {
-    alignItems: 'flex-end',
-    marginBottom: 21,
+  registerButtonContainer: {
+    marginTop: 12,
   },
-  forgotText: {
-    color: '#6a7282',
-    fontSize: 12.25,
-    fontWeight: '500',
-  },
-  loginButton: {
+  registerButton: {
     borderRadius: 24403200,
+    height: 45.5,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 45.5,
     marginBottom: 21,
     shadowColor: '#000',
     shadowOpacity: 0.1,
@@ -241,33 +227,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 15,
   },
-  loginButtonText: {
+  registerButtonText: {
     color: '#1a3a5c',
     fontSize: 14,
     fontWeight: '600',
   },
-  userLoginButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#f4b942',
-    shadowOpacity: 0.05,
-    elevation: 5,
-  },
-  userLoginButtonText: {
-    color: '#f4b942',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  registerContainer: {
+  loginContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'center',
     gap: 4,
   },
-  registerText: {
+  loginText: {
     color: '#4a5565',
     fontSize: 12.25,
   },
-  registerLink: {
+  loginLink: {
     color: '#f4b942',
     fontSize: 14,
     fontWeight: '500',

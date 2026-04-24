@@ -1,6 +1,7 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface QuickLinkProps {
   title: string;
@@ -10,6 +11,9 @@ interface QuickLinkProps {
   iconColor: string;
   onPress?: () => void;
   variant?: 'primary' | 'secondary' | 'danger' | 'default';
+  gradientColors?: string[];
+  titleColor?: string;
+  subtitleColor?: string;
 }
 
 export function QuickLink({
@@ -20,31 +24,57 @@ export function QuickLink({
   iconColor,
   onPress,
   variant = 'default',
+  gradientColors,
+  titleColor,
+  subtitleColor,
 }: QuickLinkProps) {
+  const content = (
+    <>
+      <MaterialCommunityIcons name={icon as any} size={28} color={iconColor} />
+      <Text style={[styles.title, titleColor ? { color: titleColor } : null]}>{title}</Text>
+      <Text style={[styles.subtitle, subtitleColor ? { color: subtitleColor } : null]}>{subtitle}</Text>
+    </>
+  );
+
+  const containerStyles = [
+    styles.container,
+    variant === 'danger' && styles.dangerBorder,
+    variant === 'secondary' && styles.secondaryBorder,
+  ];
+
   return (
     <TouchableOpacity
-      style={[
-        styles.container,
-        { backgroundColor },
-        variant === 'danger' && styles.dangerBorder,
-        variant === 'secondary' && styles.secondaryBorder,
-      ]}
+      style={styles.touchable}
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <MaterialCommunityIcons name={icon as any} size={28} color={iconColor} />
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
+      {gradientColors && gradientColors.length >= 2 ? (
+        <LinearGradient
+          colors={gradientColors as any}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={containerStyles as any}
+        >
+          {content}
+        </LinearGradient>
+      ) : (
+        <View style={[containerStyles, { backgroundColor }] as any}>
+          {content}
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  touchable: {
     width: '48%',
+    marginBottom: 12,
+  },
+  container: {
+    width: '100%',
     padding: 16,
     borderRadius: 12,
-    marginBottom: 12,
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
     minHeight: 140,

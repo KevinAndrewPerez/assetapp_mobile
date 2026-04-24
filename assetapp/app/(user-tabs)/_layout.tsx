@@ -5,7 +5,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { HapticTab } from "@/components/haptic-tab";
 
-export default function TabLayout() {
+export default function UserLayout() {
   return (
     <Tabs
       screenOptions={{
@@ -52,9 +52,9 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="my-assets"
         options={{
-          title: "Assets",
+          title: "My Assets",
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
               <MaterialCommunityIcons name={focused ? "cube" : "cube-outline"} size={22} color={color} />
@@ -64,9 +64,9 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="requests"
+        name="my-requests"
         options={{
-          title: "Requests",
+          title: "My Requests",
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
               <MaterialCommunityIcons name={focused ? "file-document" : "file-document-outline"} size={22} color={color} />
@@ -85,18 +85,6 @@ export default function TabLayout() {
               {focused && <View style={styles.activeIndicator} />}
             </View>
           ),
-        }}
-      />
-      <Tabs.Screen
-        name="disposal"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="pullout"
-        options={{
-          href: null,
         }}
       />
     </Tabs>

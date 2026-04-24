@@ -67,7 +67,8 @@ export default function ProfileScreen() {
               activeOpacity={0.7}
             >
               <View style={[styles.settingIconContainer, { backgroundColor: `${option.color}20` }]}>
-              <MaterialCommunityIcons name={option.icon as any} size={20} color={option.color} />              </View>
+                <MaterialCommunityIcons name={option.icon as any} size={20} color={option.color} />
+              </View>
               <Text style={styles.settingLabel}>{option.label}</Text>
               <MaterialCommunityIcons name="chevron-right" size={24} color="#D1D5DB" />
             </TouchableOpacity>
@@ -85,7 +86,9 @@ export default function ProfileScreen() {
         </TouchableOpacity>
 
         {/* Footer */}
-        <Text style={styles.footer}>NU TRACE v1.0.0 • National University Lipa</Text>
+        <View style={styles.footerContainer}>
+          <Text style={styles.footer}>NU TRACE v1.0.0 • National University Lipa</Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -214,10 +217,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  footerContainer: {
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   footer: {
     textAlign: 'center',
     fontSize: 12,
     color: '#9CA3AF',
-    marginTop: 8,
   },
 });
