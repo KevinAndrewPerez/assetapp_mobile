@@ -5,92 +5,57 @@ import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-
+import { supabase } from '../lib/supabase';
 
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [unitHeadsNumber, setUnitHeadsNumber] = useState('');
   const [emailError, setEmailError] = useState('');
-  const [passwordError, setPasswordError] = useState('');
+  const [unitHeadsError, setUnitHeadsError] = useState('');
   const [generalError, setGeneralError] = useState('');
 
   const clearErrors = () => {
     setEmailError('');
-    setPasswordError('');
+    setUnitHeadsError('');
     setGeneralError('');
   };
 
   const handleLogin = async () => {
     clearErrors();
 
-    if (!email || !password) {
+    if (!email || !unitHeadsNumber) {
       if (!email) setEmailError('Email is required');
-      if (!password) setPasswordError('Password is required');
+      if (!unitHeadsNumber) setUnitHeadsError('Unit Heads Number is required');
       return;
     }
 
     try {
-      const response = await axios.post('http://192.168.1.3/api/login', {
-        email,
-        password,
-      });
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .eq('unit_heads_number', unitHeadsNumber)
+        .single();
 
-      if (response.data.status === 'success') {
-        const { user, token } = response.data.data;
-
-        await AsyncStorage.setItem('user', JSON.stringify(user));
-        await AsyncStorage.setItem('token', token);
-
-        if (user.role === 'AssetOfficer') {
-          router.replace('/(tabs)');
-        } else if (user.role === 'Employee') {
-          router.replace('/(user-tabs)' as any);
-        } else {
-          setGeneralError('Unknown user role');
-        }
-      } else {
-        setGeneralError(response.data.message || 'Invalid credentials');
+      if (error || !data) {
+        setGeneralError('Invalid email or unit heads number');
+        return;
       }
-    } catch (error: any) {
-      if (error.response) {
-        if (error.response.status === 422) {
-          const errors = error.response.data.errors;
-          const message = error.response.data.message;
-          if (errors && Object.keys(errors).length > 0) {
-            if (errors.email) {
-              setEmailError(errors.email[0]);
-            }
-            if (errors.password) {
-              setPasswordError(errors.password[0]);
-            }
-          } else if (message) {
-              setGeneralError(message);
-              // Trigger red borders and messages for both fields on general error
-              setEmailError(message);
-              setPasswordError(message);
-            } else {
-              setGeneralError('Invalid credentials');
-              setEmailError('Invalid credentials');
-              setPasswordError('Invalid credentials');
-            }
-          } else if (error.response.status === 401) {
-            setGeneralError('Invalid credentials');
-            setEmailError('Invalid credentials');
-            setPasswordError('Invalid credentials');
-          } else if (error.response.status === 403) {
-            const msg = error.response.data.message || 'Account is not active';
-            setGeneralError(msg);
-            setEmailError(msg);
-            setPasswordError(msg);
-          } else {
-            setGeneralError('Login failed. Please try again.');
-          }
+
+      const user = data;
+
+      await AsyncStorage.setItem('user', JSON.stringify(user));
+
+      if (user.role === 'AssetOfficer') {
+        router.replace('/(tabs)');
+      } else if (user.role === 'Employee') {
+        router.replace('/(user-tabs)' as any);
       } else {
-        setGeneralError('Network error. Please check your connection.');
+        setGeneralError('Unauthorized role');
       }
+    } catch (err) {
+      setGeneralError('Login failed. Please try again.');
     }
   };
 
@@ -151,35 +116,30 @@ export default function LoginScreen() {
               ) : null}
             </View>
 
-            {/* Password Input */}
+            {/* Unit Heads Number Input */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password</Text>
-              <View style={[styles.inputWrapper, passwordError ? styles.inputError : null]}>
-                <MaterialIcons name="lock" size={18} color={passwordError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
+              <Text style={styles.label}>Unit Heads Number</Text>
+              <View style={[styles.inputWrapper, unitHeadsError ? styles.inputError : null]}>
+                <MaterialIcons name="badge" size={18} color={unitHeadsError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.input, passwordError ? styles.inputTextError : null]}
-                  placeholder="Enter your password"
+                  style={[styles.input, unitHeadsError ? styles.inputTextError : null]}
+                  placeholder="Enter your unit heads number"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
-                  secureTextEntry={!showPassword}
-                  value={password}
+                  value={unitHeadsNumber}
                   onChangeText={(text) => {
-                    setPassword(text);
-                    if (passwordError) setPasswordError('');
+                    setUnitHeadsNumber(text);
+                    if (unitHeadsError) setUnitHeadsError('');
                   }}
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
-                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color="#6B7280" />
-                </TouchableOpacity>
               </View>
-              {passwordError ? (
-                <Text style={styles.fieldErrorText}>{passwordError}</Text>
+              {unitHeadsError ? (
+                <Text style={styles.fieldErrorText}>{unitHeadsError}</Text>
               ) : null}
             </View>
 
-            {/* Forgot Password */}
-            <TouchableOpacity style={styles.forgotContainer}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </TouchableOpacity>
+
 
             {/* Login Button */}
             <TouchableOpacity onPress={handleLogin} activeOpacity={0.8}>
