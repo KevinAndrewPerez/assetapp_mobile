@@ -13,50 +13,31 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
-
 {
+    /** @use HasFactory<UserFactory> */
+    use HasApiTokens, HasFactory, Notifiable;
 
-    /** @use HasFactory<UserFactory> */
-
-    use HasFactory, Notifiable;
-
- 
-
-    /**
-
-     * The attributes that are mass assignable.
-
-     *
-
-     * @var array<int, string>
-
-     */
-
-    protected $fillable = [
-
-        'employee_number',
-
-        'first_name',
-
-        'last_name',
-
-        'email',
-
-        'password_hash',
-
-        'role',
-
-        'department',
-
-        'profile_photo',
-
-        'qr_code_path',
-
-        'qr_generated_at',
-
-    ];
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
+    protected $fillable = [
+        'employee_number',
+        'first_name',
+        'last_name',
+        'email',
+        'password_hash',
+        'role',
+        'department',
+        'status',
+        'profile_photo',
+        'qr_code_path',
+        'qr_generated_at',
+    ];
 
  
 

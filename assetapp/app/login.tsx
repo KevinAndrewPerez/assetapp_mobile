@@ -4,6 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
 
 
 export default function LoginScreen() {
@@ -11,20 +13,84 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [generalError, setGeneralError] = useState('');
 
-  const handleAdminLogin = () => {
-    // Simple validation
-    if (email && password) {
-      // Navigate to admin side
-      router.replace('/(tabs)');
-    }
+  const clearErrors = () => {
+    setEmailError('');
+    setPasswordError('');
+    setGeneralError('');
   };
 
-  const handleUserLogin = () => {
-    // Simple validation
-    if (email && password) {
-      // Navigate to user side
-      router.replace('/(user-tabs)' as any);
+  const handleLogin = async () => {
+    clearErrors();
+
+    if (!email || !password) {
+      if (!email) setEmailError('Email is required');
+      if (!password) setPasswordError('Password is required');
+      return;
+    }
+
+    try {
+      const response = await axios.post('http://192.168.1.3/api/login', {
+        email,
+        password,
+      });
+
+      if (response.data.status === 'success') {
+        const { user, token } = response.data.data;
+
+        await AsyncStorage.setItem('user', JSON.stringify(user));
+        await AsyncStorage.setItem('token', token);
+
+        if (user.role === 'AssetOfficer') {
+          router.replace('/(tabs)');
+        } else if (user.role === 'Employee') {
+          router.replace('/(user-tabs)' as any);
+        } else {
+          setGeneralError('Unknown user role');
+        }
+      } else {
+        setGeneralError(response.data.message || 'Invalid credentials');
+      }
+    } catch (error: any) {
+      if (error.response) {
+        if (error.response.status === 422) {
+          const errors = error.response.data.errors;
+          const message = error.response.data.message;
+          if (errors && Object.keys(errors).length > 0) {
+            if (errors.email) {
+              setEmailError(errors.email[0]);
+            }
+            if (errors.password) {
+              setPasswordError(errors.password[0]);
+            }
+          } else if (message) {
+              setGeneralError(message);
+              // Trigger red borders and messages for both fields on general error
+              setEmailError(message);
+              setPasswordError(message);
+            } else {
+              setGeneralError('Invalid credentials');
+              setEmailError('Invalid credentials');
+              setPasswordError('Invalid credentials');
+            }
+          } else if (error.response.status === 401) {
+            setGeneralError('Invalid credentials');
+            setEmailError('Invalid credentials');
+            setPasswordError('Invalid credentials');
+          } else if (error.response.status === 403) {
+            const msg = error.response.data.message || 'Account is not active';
+            setGeneralError(msg);
+            setEmailError(msg);
+            setPasswordError(msg);
+          } else {
+            setGeneralError('Login failed. Please try again.');
+          }
+      } else {
+        setGeneralError('Network error. Please check your connection.');
+      }
     }
   };
 
@@ -54,40 +120,60 @@ export default function LoginScreen() {
 
           {/* Form Container */}
           <View style={styles.formContainer}>
+            {/* Error Message */}
+            {generalError ? (
+              <View style={styles.errorBanner}>
+                <MaterialIcons name="error-outline" size={20} color="#DC2626" />
+                <Text style={styles.errorBannerText}>{generalError}</Text>
+              </View>
+            ) : null}
+
             {/* Email Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
-              <View style={styles.inputWrapper}>
-                <MaterialIcons name="email" size={18} color="#9CA3AF" style={styles.inputIcon} />
+              <View style={[styles.inputWrapper, emailError ? styles.inputError : null]}>
+                <MaterialIcons name="email" size={18} color={emailError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, emailError ? styles.inputTextError : null]}
                   placeholder="your.email@nu.edu.ph"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
                   keyboardType="email-address"
                   autoCapitalize="none"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={(text) => {
+                    setEmail(text);
+                    if (emailError) setEmailError('');
+                  }}
                 />
               </View>
+              {emailError ? (
+                <Text style={styles.fieldErrorText}>{emailError}</Text>
+              ) : null}
             </View>
 
             {/* Password Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
-              <View style={styles.inputWrapper}>
-                <MaterialIcons name="lock" size={18} color="#9CA3AF" style={styles.inputIcon} />
+              <View style={[styles.inputWrapper, passwordError ? styles.inputError : null]}>
+                <MaterialIcons name="lock" size={18} color={passwordError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, passwordError ? styles.inputTextError : null]}
                   placeholder="Enter your password"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
                   secureTextEntry={!showPassword}
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(text) => {
+                    setPassword(text);
+                    if (passwordError) setPasswordError('');
+                  }}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
                   <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color="#6B7280" />
                 </TouchableOpacity>
               </View>
+              {passwordError ? (
+                <Text style={styles.fieldErrorText}>{passwordError}</Text>
+              ) : null}
             </View>
 
             {/* Forgot Password */}
@@ -95,23 +181,16 @@ export default function LoginScreen() {
               <Text style={styles.forgotText}>Forgot password?</Text>
             </TouchableOpacity>
 
-            {/* Admin Login Button */}
-            <TouchableOpacity onPress={handleAdminLogin} activeOpacity={0.8}>
+            {/* Login Button */}
+            <TouchableOpacity onPress={handleLogin} activeOpacity={0.8}>
               <LinearGradient
                 colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.loginButton}
               >
-                <Text style={styles.loginButtonText}>Login as Admin</Text>
+                <Text style={styles.loginButtonText}>Login</Text>
               </LinearGradient>
-            </TouchableOpacity>
-
-            {/* User Login Button */}
-            <TouchableOpacity onPress={handleUserLogin} activeOpacity={0.8}>
-              <View style={[styles.loginButton, styles.userLoginButton]}>
-                <Text style={styles.userLoginButtonText}>Login as User</Text>
-              </View>
             </TouchableOpacity>
 
             {/* Register Link */}
@@ -246,18 +325,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  userLoginButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#f4b942',
-    shadowOpacity: 0.05,
-    elevation: 5,
-  },
-  userLoginButtonText: {
-    color: '#f4b942',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   registerContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -281,5 +348,34 @@ const styles = StyleSheet.create({
   footerText: {
     color: '#99a1af',
     fontSize: 10.5,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    gap: 8,
+  },
+  errorBannerText: {
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  inputError: {
+    borderColor: '#DC2626',
+    borderWidth: 1,
+  },
+  inputTextError: {
+    color: '#DC2626',
+  },
+  fieldErrorText: {
+    color: '#DC2626',
+    fontSize: 11,
+    marginTop: 4,
+    marginLeft: 2,
   },
 });
