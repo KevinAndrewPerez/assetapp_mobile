@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -9,97 +9,41 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { fetchActivityTimeline, LifecycleEvent } from '../lib/assetService';
 
 const activityTags = ['All', 'New Assets', 'Repairs', 'Pull Outs'];
-
-const activities = [
-  {
-    id: 'activity-1',
-    type: 'new-asset',
-    title: 'New asset registered',
-    assetName: 'Dell Laptop i7-12th Gen',
-    timestamp: '5 mins ago',
-    icon: 'plus-circle',
-    iconColor: '#3B82F6',
-    barcode: 'NU-2026-04-001',
-    department: 'College of Engineering',
-    performedBy: 'Alex D. Solomon',
-    note: 'Assigned to Dr. Maria Santos',
-    date: 'Apr 16, 2026',
-  },
-  {
-    id: 'activity-2',
-    type: 'repair',
-    title: 'Repair request approved',
-    assetName: 'HP Printer LaserJet Pro M404n',
-    timestamp: '1 hour ago',
-    icon: 'wrench',
-    iconColor: '#F59E0B',
-    barcode: 'NU-2024-03-087',
-    department: 'Administration',
-    requestId: 'REQ-2026-889',
-    reason: 'Paper jam and print quality issues',
-    performedBy: 'Alex D. Solomon',
-    status: 'For Repair',
-    date: 'Apr 16, 2026',
-  },
-  {
-    id: 'activity-3',
-    type: 'pullout',
-    title: 'Asset pulled out',
-    assetName: 'Epson Projector EB-X41',
-    timestamp: '2 hours ago',
-    icon: 'arrow-up-box',
-    iconColor: '#6B7280',
-    barcode: 'NU-2023-11-234',
-    date: 'Apr 16, 2026',
-  },
-  {
-    id: 'activity-4',
-    type: 'new-asset',
-    title: 'New asset registered',
-    assetName: 'Lenovo ThinkCentre M90n',
-    timestamp: '3 hours ago',
-    icon: 'plus-circle',
-    iconColor: '#3B82F6',
-    barcode: 'NU-2026-04-005',
-    department: 'Finance Department',
-    performedBy: 'Alex D. Solomon',
-    note: 'Assigned to Prof. Juan Cruz',
-    date: 'Apr 15, 2026',
-  },
-  {
-    id: 'activity-5',
-    type: 'repair',
-    title: 'Repair request submitted',
-    assetName: 'Canon Multifunction Printer',
-    timestamp: '1 day ago',
-    icon: 'wrench',
-    iconColor: '#F59E0B',
-    barcode: 'NU-2025-02-156',
-    department: 'ITSO - IT Services Office',
-    requestId: 'REQ-2026-876',
-    reason: 'Scanner module not functioning',
-    performedBy: 'Dr. Maria Santos',
-    status: 'Pending',
-    date: 'Apr 15, 2026',
-  },
-];
 
 export default function ActivityLogScreen() {
   const router = useRouter();
   const [activeTag, setActiveTag] = useState('All');
+  const [activities, setActivities] = useState<LifecycleEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const filteredActivities = useMemo(
-    () => {
-      if (activeTag === 'All') return activities;
-      if (activeTag === 'New Assets') return activities.filter((a) => a.type === 'new-asset');
-      if (activeTag === 'Repairs') return activities.filter((a) => a.type === 'repair');
-      if (activeTag === 'Pull Outs') return activities.filter((a) => a.type === 'pullout');
-      return activities;
-    },
-    [activeTag],
-  );
+  useEffect(() => {
+    const loadActivityTimeline = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const timeline = await fetchActivityTimeline();
+        setActivities(timeline);
+      } catch (err) {
+        setError((err as Error).message || 'Unable to load activity timeline from Supabase');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadActivityTimeline();
+  }, []);
+
+  const filteredActivities = useMemo(() => {
+    if (activeTag === 'All') return activities;
+    if (activeTag === 'New Assets') return activities.filter((a) => a.eventType === 'audit');
+    if (activeTag === 'Repairs') return activities.filter((a) => a.eventType === 'repair');
+    if (activeTag === 'Pull Outs') return activities.filter((a) => a.eventType === 'disposal');
+    return activities;
+  }, [activeTag, activities]);
 
   return (
     <SafeAreaView style={styles.container}>

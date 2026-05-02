@@ -10,52 +10,61 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { registerAsset } from '../lib/assetService';
 
 export default function AssetRegistryScreen() {
   const router = useRouter();
   const [assetId] = useState('AST-79645262-ZTBA');
-
-  // Basic Information
   const [assetName, setAssetName] = useState('');
   const [category, setCategory] = useState('');
   const [condition, setCondition] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
   const [model, setModel] = useState('');
   const [manufacturer, setManufacturer] = useState('');
-
-  // Assignment & Location
   const [department, setDepartment] = useState('');
   const [unitHead, setUnitHead] = useState('');
   const [location, setLocation] = useState('');
-
-  // Acquisition Details
   const [dateAcquired, setDateAcquired] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('');
   const [warranty, setWarranty] = useState('');
   const [supplier, setSupplier] = useState('');
-
-  // Additional Information
   const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const handleRegisterAsset = () => {
-    // Handle asset registration
-    console.log('Registering asset:', {
-      assetId,
-      assetName,
-      category,
-      condition,
-      serialNumber,
-      model,
-      manufacturer,
-      department,
-      unitHead,
-      location,
-      dateAcquired,
-      purchasePrice,
-      warranty,
-      supplier,
-      notes,
-    });
+  const handleRegisterAsset = async () => {
+    setError(null);
+    setSuccess(null);
+    setSaving(true);
+
+    try {
+      await registerAsset({
+        assetId,
+        title: assetName,
+        category,
+        condition,
+        serialNumber,
+        model,
+        manufacturer,
+        department,
+        custodian: unitHead,
+        location,
+        acquisitionDate: dateAcquired,
+        purchasePrice: Number(purchasePrice) || undefined,
+        warrantyMonths: Number(warranty) || undefined,
+        supplier,
+        notes,
+        status: 'Acquired',
+      });
+
+      setSuccess('Asset registered successfully.');
+      router.push('/assets');
+    } catch (err) {
+      setError((err as Error).message || 'Unable to register asset with Supabase.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

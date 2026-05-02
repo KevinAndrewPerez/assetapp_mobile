@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { fetchAssets, AssetSummary } from '../lib/assetService';
 
 const departments: Record<string, string> = {
   engineering: 'College of Engineering',
@@ -22,80 +23,36 @@ const departments: Record<string, string> = {
 
 const tags = ['All', 'Acquired', 'Active', 'For Repair', 'Pulled Out', 'Disposed'];
 
-const assets = [
-  {
-    id: 'asset-1',
-    department: 'engineering',
-    title: 'Dell Laptop i7-12th Gen',
-    category: 'Computer Equipment',
-    location: 'College of Engineering',
-    status: 'Active',
-    serialNumber: 'D7B92-X45T-9821',
-    acquisitionDate: 'April, 2026',
-    custodian: 'Dr. Maria Santos',
-    assetId: 'NU-2026-04-001',
-    lastUpdated: 'April 15, 2026',
-  },
-  {
-    id: 'asset-2',
-    department: 'engineering',
-    title: 'HP LaserJet Printer 1020',
-    category: 'Office Equipment',
-    location: 'College of Engineering',
-    status: 'Pulled Out',
-    serialNumber: 'HPLJ-1020-AX2',
-    acquisitionDate: 'March, 2024',
-    custodian: 'Ms. Ana Cruz',
-    assetId: 'NU-2024-03-010',
-    lastUpdated: 'April 10, 2026',
-  },
-  {
-    id: 'asset-3',
-    department: 'engineering',
-    title: 'BenQ SVGA Projector',
-    category: 'AV Equipment',
-    location: 'College of Engineering',
-    status: 'Disposed',
-    serialNumber: 'BQ-SVGA-7281',
-    acquisitionDate: 'January, 2022',
-    custodian: 'Mr. Jon Villanueva',
-    assetId: 'NU-2022-01-089',
-    lastUpdated: 'March 27, 2026',
-  },
-  {
-    id: 'asset-4',
-    department: 'engineering',
-    title: 'Cisco Network Switch',
-    category: 'Networking',
-    location: 'College of Engineering',
-    status: 'For Repair',
-    serialNumber: 'CSW-2960-11D',
-    acquisitionDate: 'December, 2023',
-    custodian: 'Mr. Mark Lopez',
-    assetId: 'NU-2023-12-044',
-    lastUpdated: 'April 16, 2026',
-  },
-  {
-    id: 'asset-5',
-    department: 'engineering',
-    title: 'Lenovo ThinkCentre M90n',
-    category: 'Computer Equipment',
-    location: 'College of Engineering',
-    status: 'Acquired',
-    serialNumber: 'LN-TC-90N-5567',
-    acquisitionDate: 'April, 2026',
-    custodian: 'Dr. Maria Santos',
-    assetId: 'NU-2026-04-005',
-    lastUpdated: 'April 18, 2026',
-  },
-];
-
 export default function AssetsListScreen() {
   const router = useRouter();
   const { department } = useLocalSearchParams() as { department?: string };
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState('All');
-  const [expandedId, setExpandedId] = useState<string | null>(assets[0]?.id ?? null);
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadAssets = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const records = await fetchAssets();
+        setAssets(records);
+        if (!expandedId && records.length > 0) {
+          setExpandedId(records[0].id);
+        }
+      } catch (err) {
+        setError((err as Error).message || 'Unable to load assets from Supabase');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAssets();
+  }, [department]);
 
   const departmentName = department ? departments[department] ?? 'Assets' : 'Assets';
 
@@ -104,14 +61,13 @@ export default function AssetsListScreen() {
       assets.filter((item) => {
         const matchesDepartment = department ? item.department === department : true;
         const matchesTag = activeTag === 'All' ? true : item.status === activeTag;
-        const matchesSearch = [item.title, item.category, item.location, item.assetId, item.custodian]
+        const searchable = [item.title, item.category, item.location, item.assetId, item.custodian]
           .join(' ')
-          .toLowerCase()
-          .includes(search.toLowerCase());
+          .toLowerCase();
 
-        return matchesDepartment && matchesTag && matchesSearch;
+        return matchesDepartment && matchesTag && searchable.includes(search.toLowerCase());
       }),
-    [search, activeTag, department],
+    [search, activeTag, department, assets],
   );
 
   return (
@@ -125,7 +81,7 @@ export default function AssetsListScreen() {
           <Text style={styles.headerSubtitle}>View all assets in the department</Text>
         </View>
         <View style={styles.notificationBadge}>
-          <Text style={styles.notificationBadgeText}>3</Text>
+          <Text style={styles.notificationBadgeText}>{filteredAssets.length}</Text>
         </View>
       </View>
 
@@ -166,7 +122,19 @@ export default function AssetsListScreen() {
           })}
         </ScrollView>
 
-        {filteredAssets.map((item) => {
+        {loading && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>Loading assets from Supabase...</Text>
+          </View>
+        )}
+
+        {error && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>Error: {error}</Text>
+          </View>
+        )}
+
+        {!loading && !error && filteredAssets.map((item) => {
           const expanded = expandedId === item.id;
           return (
             <View key={item.id} style={styles.assetCard}>
@@ -177,8 +145,8 @@ export default function AssetsListScreen() {
               >
                 <View style={styles.assetInfo}>
                   <Text style={styles.assetTitle}>{item.title}</Text>
-                  <Text style={styles.assetSubtitle}>{item.category}</Text>
-                  <Text style={styles.assetLocation}>{item.location}</Text>
+                  <Text style={styles.assetSubtitle}>{item.category || 'Uncategorized'}</Text>
+                  <Text style={styles.assetLocation}>{item.location || 'No location set'}</Text>
                 </View>
                 <View
                   style={{
@@ -216,18 +184,18 @@ export default function AssetsListScreen() {
                   <View style={styles.detailRow}>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Serial Number</Text>
-                      <Text style={styles.detailValue}>{item.serialNumber}</Text>
+                      <Text style={styles.detailValue}>{item.serialNumber || 'N/A'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Acquisition Date</Text>
-                      <Text style={styles.detailValue}>{item.acquisitionDate}</Text>
+                      <Text style={styles.detailValue}>{item.acquisitionDate || 'N/A'}</Text>
                     </View>
                   </View>
 
                   <View style={styles.detailRow}>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Custodian</Text>
-                      <Text style={styles.detailValue}>{item.custodian}</Text>
+                      <Text style={styles.detailValue}>{item.custodian || 'Unassigned'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Asset ID</Text>
@@ -235,16 +203,16 @@ export default function AssetsListScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.detailRow}> 
+                  <View style={styles.detailRow}>
                     <View style={styles.detailItemFull}>
                       <Text style={styles.detailLabel}>Category</Text>
-                      <Text style={styles.detailValue}>{item.category}</Text>
+                      <Text style={styles.detailValue}>{item.category || 'Unknown'}</Text>
                     </View>
                   </View>
 
                   <View style={styles.detailFooter}>
                     <Text style={styles.updatedLabel}>Last updated</Text>
-                    <Text style={styles.updatedValue}>{item.lastUpdated}</Text>
+                    <Text style={styles.updatedValue}>{item.updatedAt || 'Not available'}</Text>
                   </View>
                 </View>
               )}
@@ -252,7 +220,7 @@ export default function AssetsListScreen() {
           );
         })}
 
-        {filteredAssets.length === 0 && (
+        {!loading && !error && filteredAssets.length === 0 && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No assets match your filter.</Text>
           </View>
