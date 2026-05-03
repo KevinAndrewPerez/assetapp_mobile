@@ -1,14 +1,20 @@
 import React from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function ProfileScreen() {
   const router = useRouter();
 
-  const handleLogout = () => {
-    router.replace('/login');
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.removeItem('user');
+      router.replace('/login');
+    } catch (error) {
+      console.error('Logout Error:', error);
+    }
   };
 
   const settingsOptions = [

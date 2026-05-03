@@ -10,30 +10,24 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function UserProfile() {
   const router = useRouter();
 
   const settings = [
-    {
-      title: 'Edit Profile',
-      icon: 'account-outline',
-      color: '#f4b942',
-    },
-    {
-      title: 'Change Password',
-      icon: 'lock-outline',
-      color: '#f4b942',
-    },
-    {
-      title: 'Notification Preferences',
-      icon: 'bell-outline',
-      color: '#f4b942',
-    },
+    { title: 'Edit Profile', icon: 'account-outline', color: '#f4b942' },
+    { title: 'Change Password', icon: 'lock-outline', color: '#f4b942' },
+    { title: 'Notification Preferences', icon: 'bell-outline', color: '#f4b942' },
   ];
 
-  const handleLogout = () => {
-    router.replace('/login');
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.removeItem('user');
+      router.replace('/login');
+    } catch (error) {
+      console.error('Logout Error:', error);
+    }
   };
 
   return (
@@ -43,7 +37,6 @@ export default function UserProfile() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Profile Card */}
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
             <Text style={styles.avatarText}>MS</Text>
@@ -53,7 +46,6 @@ export default function UserProfile() {
           <Text style={styles.userCollege}>College of Engineering</Text>
         </View>
 
-        {/* Settings Section */}
         <View style={styles.settingsSection}>
           <Text style={styles.sectionTitle}>Settings</Text>
           <View style={styles.settingsContainer}>
@@ -77,13 +69,11 @@ export default function UserProfile() {
           </View>
         </View>
 
-        {/* Logout Button */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <MaterialCommunityIcons name="logout" size={20} color="#FFFFFF" style={styles.logoutIcon} />
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
 
-        {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>NU TRACE v1.0.0 • National University Lipa</Text>
         </View>
@@ -92,6 +82,7 @@ export default function UserProfile() {
   );
 }
 
+// ... styles below
 const styles = StyleSheet.create({
   container: {
     flex: 1,
