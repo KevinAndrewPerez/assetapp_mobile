@@ -18,8 +18,8 @@ interface RequestData {
   status: string;
   Note: string;
   created_at: string;
-  users: { full_name: string; department: string };
-  assets: { Asset_code: string; Asset_name: string };
+  profiles?: { full_name: string; department: string }[];
+  assets?: { Asset_code: string; Asset_name: string } | null;
 }
 
 const tabs = ['All', 'Pending', 'Completed'] as const;
@@ -37,24 +37,26 @@ export default function RequestsScreen() {
       setLoading(true);
       const { data, error } = await supabase
         .from('requests')
-        .select('id, request_type, status, Note, created_at, users(full_name, department), assets(Asset_code, Asset_name)');
+        .select('id, request_type, status, Note, created_at, profiles:user_id(full_name, department), assets(Asset_code, Asset_name)');
 
       if (error) throw error;
 
-      const mappedItems: RequestItem[] = (data || []).map((req: RequestData) => ({
-        id: String(req.id),
-        title: req.assets?.Asset_name || 'Unknown Asset',
-        requestId: `REQ-${req.id}`,
-        assetName: req.assets?.Asset_name || 'Unknown',
-        assetId: req.assets?.Asset_code || 'N/A',
-        requestType: req.request_type,
-        department: req.users?.department || 'N/A',
-        submittedBy: req.users?.full_name || 'Unknown',
-        dateSubmitted: new Date(req.created_at).toLocaleDateString(),
-        reason: req.Note || '',
-        status: req.status,
-        statusLabel: req.status as RequestStatus,
-      }));
+      const mappedItems: RequestItem[] = (data as any[] || []).map((req: any) => {        const profile = req.profiles?.[0];
+        return {
+          id: String(req.id),
+          title: req.assets?.Asset_name || 'Unknown Asset',
+          requestId: `REQ-${req.id}`,
+          assetName: req.assets?.Asset_name || 'Unknown',
+          assetId: req.assets?.Asset_code || 'N/A',
+          requestType: req.request_type,
+          department: profile?.department || 'N/A',
+          submittedBy: profile?.full_name || 'Unknown',
+          dateSubmitted: new Date(req.created_at).toLocaleDateString(),
+          reason: req.Note || '',
+          status: req.status,
+          statusLabel: req.status as RequestStatus,
+        };
+      });
 
       setItems(mappedItems);
     } catch (error) {
