@@ -1,12 +1,43 @@
-import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
+interface UserProfile {
+  full_name: string;
+  email: string;
+  role: string;
+  department: string;
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const userJson = await AsyncStorage.getItem('user');
+        if (userJson) {
+          const user = JSON.parse(userJson);
+          setProfile({
+            full_name: user.full_name || 'Admin User',
+            email: user.email || 'N/A',
+            role: user.role || 'Administrator',
+            department: user.department || 'Administration',
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load profile:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadProfile();
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -16,6 +47,16 @@ export default function ProfileScreen() {
       console.error('Logout Error:', error);
     }
   };
+
+  if (loading || !profile) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0F172A" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const settingsOptions = [
     {
@@ -54,13 +95,37 @@ export default function ProfileScreen() {
         >
           <View style={styles.avatarContainer}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>SA</Text>
+              <Text style={styles.avatarText}>{profile.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}</Text>
             </View>
           </View>
-          <Text style={styles.userName}>Sir Alex</Text>
-          <Text style={styles.userRole}>Administrator</Text>
-          <Text style={styles.userOrganization}>NU Lipa</Text>
+          <Text style={styles.userName}>{profile.full_name}</Text>
+          <Text style={styles.userRole}>{profile.role}</Text>
+          <Text style={styles.userOrganization}>{profile.department}</Text>
         </LinearGradient>
+
+        <View style={styles.accountDetails}>
+          <View style={styles.detailRow}>
+            <MaterialCommunityIcons name="email" size={18} color="#0F172A" style={styles.detailIcon} />
+            <View>
+              <Text style={styles.detailLabel}>Email</Text>
+              <Text style={styles.detailValue}>{profile.email}</Text>
+            </View>
+          </View>
+          <View style={styles.detailRow}>
+            <MaterialCommunityIcons name="briefcase" size={18} color="#0F172A" style={styles.detailIcon} />
+            <View>
+              <Text style={styles.detailLabel}>Role</Text>
+              <Text style={styles.detailValue}>{profile.role}</Text>
+            </View>
+          </View>
+          <View style={styles.detailRow}>
+            <MaterialCommunityIcons name="home-city" size={18} color="#0F172A" style={styles.detailIcon} />
+            <View>
+              <Text style={styles.detailLabel}>Department</Text>
+              <Text style={styles.detailValue}>{profile.department}</Text>
+            </View>
+          </View>
+        </View>
 
         {/* Settings Section */}
         <View style={styles.settingsSection}>
@@ -104,6 +169,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     paddingHorizontal: 16,
@@ -173,6 +243,33 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 16,
     marginBottom: 20,
+  },
+  accountDetails: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 20,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  detailIcon: {
+    marginRight: 14,
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  detailValue: {
+    fontSize: 14,
+    color: '#0F172A',
+    fontWeight: '600',
   },
   sectionTitle: {
     fontSize: 14,

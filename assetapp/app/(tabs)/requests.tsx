@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -6,67 +6,21 @@ import {
   Text,
   View,
   TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
+import { supabase } from '@/lib/supabase';
 import { RequestCard, RequestItem, RequestStatus } from '@/components/requests/request-card';
 
-const requests: RequestItem[] = [
-  {
-    id: 'req-1',
-    title: 'HP Printer LaserJet Pro',
-    requestId: 'REQ-2024-03-087',
-    assetName: 'HP Printer LaserJet Pro',
-    assetId: 'AST-2024-03-005',
-    requestType: 'Repair',
-    department: 'Engineering',
-    submittedBy: 'Dr. Maria Santos',
-    dateSubmitted: 'April 12, 2026',
-    reason: 'Printer is producing faded prints and paper jams.',
-    status: 'Pending',
-    statusLabel: 'Pending',
-  },
-  {
-    id: 'req-2',
-    title: 'Old Desktop PC i3',
-    requestId: 'REQ-2015-02-143',
-    assetName: 'Old Desktop PC i3',
-    assetId: 'AST-2025-06-134',
-    requestType: 'Pullout',
-    department: 'Finance',
-    submittedBy: 'Prof. Juan Cruz',
-    dateSubmitted: 'April 11, 2026',
-    reason: 'PC is outdated and scheduled for pullout after replacement.',
-    status: 'Pending',
-    statusLabel: 'Pending',
-  },
-  {
-    id: 'req-3',
-    title: 'Canon Scanner DR-C225',
-    requestId: 'REQ-2024-01-056',
-    assetName: 'Canon Scanner DR-C225',
-    assetId: 'AST-2024-00-056',
-    requestType: 'Repair',
-    department: 'Arts & Sciences',
-    submittedBy: 'Dr. Ana Reyes',
-    dateSubmitted: 'April 10, 2026',
-    reason: 'Scanner not detecting documents properly.',
-    status: 'Approved',
-    statusLabel: 'Approved',
-  },
-  {
-    id: 'req-4',
-    title: 'Old Projector',
-    requestId: 'REQ-2025-06-134',
-    assetName: 'Old Projector',
-    assetId: 'AST-2025-06-134',
-    requestType: 'Repair',
-    department: 'N/A',
-    submittedBy: 'Prof. Pedro Garcia',
-    dateSubmitted: 'April 09, 2026',
-    reason: 'Projector lamp needs replacement and maintenance.',
-    status: 'Rejected',
-    statusLabel: 'Rejected',
-  },
-];
+interface RequestData {
+  id: number;
+  request_type: string;
+  status: string;
+  Note: string;
+  created_at: string;
+  users: { full_name: string; department: string };
+  assets: { Asset_code: string; Asset_name: string };
+}
 
 const tabs = ['All', 'Pending', 'Completed'] as const;
 type RequestTab = typeof tabs[number];
@@ -74,7 +28,51 @@ type RequestTab = typeof tabs[number];
 export default function RequestsScreen() {
   const [activeTab, setActiveTab] = useState<RequestTab>('All');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [items, setItems] = useState<RequestItem[]>(requests);
+  const [items, setItems] = useState<RequestItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchRequests = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('requests')
+        .select('id, request_type, status, Note, created_at, users(full_name, department), assets(Asset_code, Asset_name)');
+
+      if (error) throw error;
+
+      const mappedItems: RequestItem[] = (data || []).map((req: RequestData) => ({
+        id: String(req.id),
+        title: req.assets?.Asset_name || 'Unknown Asset',
+        requestId: `REQ-${req.id}`,
+        assetName: req.assets?.Asset_name || 'Unknown',
+        assetId: req.assets?.Asset_code || 'N/A',
+        requestType: req.request_type,
+        department: req.users?.department || 'N/A',
+        submittedBy: req.users?.full_name || 'Unknown',
+        dateSubmitted: new Date(req.created_at).toLocaleDateString(),
+        reason: req.Note || '',
+        status: req.status,
+        statusLabel: req.status as RequestStatus,
+      }));
+
+      setItems(mappedItems);
+    } catch (error) {
+      console.error('Failed to fetch requests:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchRequests();
+    setRefreshing(false);
+  };
 
   const filteredRequests = useMemo(() => {
     if (activeTab === 'Pending') {
@@ -86,25 +84,18 @@ export default function RequestsScreen() {
     return items;
   }, [activeTab, items]);
 
-  const handleApprove = (id: string) => {
-    setItems((current) =>
-      current.map((item) =>
-        item.id === id
-          ? { ...item, status: 'Approved', statusLabel: 'Approved' as RequestStatus }
-          : item,
-      ),
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Requests</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0F172A" />
+        </View>
+      </SafeAreaView>
     );
-  };
-
-  const handleReject = (id: string) => {
-    setItems((current) =>
-      current.map((item) =>
-        item.id === id
-          ? { ...item, status: 'Rejected', statusLabel: 'Rejected' as RequestStatus }
-          : item,
-      ),
-    );
-  };
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -131,15 +122,15 @@ export default function RequestsScreen() {
         })}
       </View>
 
-      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         {filteredRequests.map((item) => (
           <RequestCard
             key={item.id}
             item={item}
             expanded={expandedId === item.id}
             onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
-            onApprove={() => handleApprove(item.id)}
-            onReject={() => handleReject(item.id)}
+            onApprove={() => {}}
+            onReject={() => {}}
           />
         ))}
         {filteredRequests.length === 0 && (
@@ -156,6 +147,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     flexDirection: 'row',

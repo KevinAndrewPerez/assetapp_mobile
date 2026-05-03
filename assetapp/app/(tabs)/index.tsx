@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,12 @@ import {
   ScrollView,
   SafeAreaView,
   TouchableOpacity,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '@/lib/supabase';
 import { UserCard } from '@/components/dashboard/user-card';
 import { StatCard } from '@/components/dashboard/stat-card';
 import { ActivityItem } from '@/components/dashboard/activity-item';
@@ -17,38 +20,50 @@ import { SectionHeader } from '@/components/dashboard/section-header';
 
 export default function App() {
   const router = useRouter();
+  const [userName, setUserName] = useState('Admin');
+  const [stats, setStats] = useState([
+    { title: 'Total Assets', value: '0', icon: 'database', iconColor: '#FDB833', backgroundColor: '#FEF9E7' },
+    { title: 'Deployed', value: '0', icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#F0FDF4' },
+    { title: 'For Repair', value: '0', icon: 'wrench', iconColor: '#F59E0B', backgroundColor: '#FFFBEB' },
+    { title: 'Pending Requests', value: '0', icon: 'clock', iconColor: '#3B82F6', backgroundColor: '#EFF6FF' },
+  ]);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const stats = [
-    {
-      title: 'Total Assets',
-      value: '545',
-      icon: 'database',
-      iconColor: '#FDB833',
-      backgroundColor: '#FEF9E7',
-    },
-    {
-      title: 'Acquired this year',
-      value: '45',
-      icon: 'calendar-plus',
-      iconColor: '#3B82F6',
-      backgroundColor: '#EFF6FF',
-      subtitle: 'this year',
-    },
-    {
-      title: 'Active',
-      value: '324',
-      icon: 'check-circle',
-      iconColor: '#10B981',
-      backgroundColor: '#F0FDF4',
-    },
-    {
-      title: 'Pending',
-      value: '1',
-      icon: 'clock',
-      iconColor: '#F59E0B',
-      backgroundColor: '#FFFBEB',
-    },
-  ];
+  const fetchDashboardData = async () => {
+    try {
+      const userJson = await AsyncStorage.getItem('user');
+      if (userJson) {
+        const user = JSON.parse(userJson);
+        setUserName(user.full_name || 'Admin');
+      }
+
+      const [assetsRes, deploysRes, repairsRes, requestsRes] = await Promise.all([
+        supabase.from('assets').select('id', { count: 'exact' }),
+        supabase.from('assets').select('id', { count: 'exact' }).eq('Lifecycle_Status', 'Active'),
+        supabase.from('assets').select('id', { count: 'exact' }).eq('Lifecycle_Status', 'For Repair'),
+        supabase.from('requests').select('id', { count: 'exact' }).eq('status', 'Pending'),
+      ]);
+
+      setStats([
+        { title: 'Total Assets', value: String(assetsRes.count || 0), icon: 'database', iconColor: '#FDB833', backgroundColor: '#FEF9E7' },
+        { title: 'Deployed', value: String(deploysRes.count || 0), icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#F0FDF4' },
+        { title: 'For Repair', value: String(repairsRes.count || 0), icon: 'wrench', iconColor: '#F59E0B', backgroundColor: '#FFFBEB' },
+        { title: 'Pending Requests', value: String(requestsRes.count || 0), icon: 'clock', iconColor: '#3B82F6', backgroundColor: '#EFF6FF' },
+      ]);
+    } catch (error) {
+      console.error('Failed to fetch dashboard data:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchDashboardData();
+    setRefreshing(false);
+  };
 
   const activities = [
     {
@@ -131,12 +146,12 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <UserCard
-          name="Alex D. Solomon"
+          name={userName}
           role="Administrator"
           organization="NU Lipa"
-          avatarInitials="AS"
+          avatarInitials={userName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() || 'AD'}
         />
 
         <View style={styles.section}>
@@ -155,7 +170,6 @@ export default function App() {
                 icon={stat.icon}
                 iconColor={stat.iconColor}
                 backgroundColor={stat.backgroundColor}
-                subtitle={stat.subtitle}
               />
             ))}
           </ScrollView>
