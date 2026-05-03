@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons, Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -10,46 +10,49 @@ import { supabase } from '../lib/supabase';
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
-  const [unitHeadsNumber, setUnitHeadsNumber] = useState('');
+  const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
-  const [unitHeadsError, setUnitHeadsError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [generalError, setGeneralError] = useState('');
 
   const clearErrors = () => {
     setEmailError('');
-    setUnitHeadsError('');
+    setPasswordError('');
     setGeneralError('');
   };
 
   const handleLogin = async () => {
     clearErrors();
 
-    if (!email || !unitHeadsNumber) {
+    if (!email || !password) {
       if (!email) setEmailError('Email is required');
-      if (!unitHeadsNumber) setUnitHeadsError('Unit Heads Number is required');
+      if (!password) setPasswordError('Password is required');
       return;
     }
 
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', email)
-        .eq('unit_heads_number', unitHeadsNumber)
-        .single();
+      const { data, error } = await supabase.rpc('verify_user_password', {
+        email_input: email.trim(),
+        password_input: password.trim(),
+      });
 
-      if (error || !data) {
-        setGeneralError('Invalid email or unit heads number');
+      if (error) {
+        console.error('Supabase Error:', error.message);
+        setGeneralError('Connection error. Please try again.');
         return;
       }
 
-      const user = data;
+      if (!data || data.length === 0) {
+        setGeneralError('Invalid email or password');
+        return;
+      }
 
+      const user = data[0];
       await AsyncStorage.setItem('user', JSON.stringify(user));
 
-      if (user.role === 'AssetOfficer') {
+      if (user.role === 'Admin' || user.role === 'AssetOfficer') {
         router.replace('/(tabs)');
-      } else if (user.role === 'Employee') {
+      } else if (user.role === 'Employee' || user.role === 'Department Head') {
         router.replace('/(user-tabs)' as any);
       } else {
         setGeneralError('Unauthorized role');
@@ -66,7 +69,6 @@ export default function LoginScreen() {
         style={styles.wrapper}
       >
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Header */}
           <View style={styles.headerContainer}>
             <LinearGradient
               colors={['#1a3a5c', 'rgba(26, 58, 92, 0.8)']}
@@ -78,14 +80,11 @@ export default function LoginScreen() {
                 <View style={styles.logoContent} />
               </View>
             </LinearGradient>
-
             <Text style={styles.title}>Welcome to NU TRACE</Text>
             <Text style={styles.subtitle}>Sign in to manage your assets</Text>
           </View>
 
-          {/* Form Container */}
           <View style={styles.formContainer}>
-            {/* Error Message */}
             {generalError ? (
               <View style={styles.errorBanner}>
                 <MaterialIcons name="error-outline" size={20} color="#DC2626" />
@@ -93,7 +92,6 @@ export default function LoginScreen() {
               </View>
             ) : null}
 
-            {/* Email Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
               <View style={[styles.inputWrapper, emailError ? styles.inputError : null]}>
@@ -111,37 +109,30 @@ export default function LoginScreen() {
                   }}
                 />
               </View>
-              {emailError ? (
-                <Text style={styles.fieldErrorText}>{emailError}</Text>
-              ) : null}
+              {emailError ? <Text style={styles.fieldErrorText}>{emailError}</Text> : null}
             </View>
 
-            {/* Unit Heads Number Input */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Unit Heads Number</Text>
-              <View style={[styles.inputWrapper, unitHeadsError ? styles.inputError : null]}>
-                <MaterialIcons name="badge" size={18} color={unitHeadsError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
+              <Text style={styles.label}>Password</Text>
+              <View style={[styles.inputWrapper, passwordError ? styles.inputError : null]}>
+                <MaterialIcons name="lock" size={18} color={passwordError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.input, unitHeadsError ? styles.inputTextError : null]}
-                  placeholder="Enter your unit heads number"
+                  style={[styles.input, passwordError ? styles.inputTextError : null]}
+                  placeholder="Enter your password"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
-                  value={unitHeadsNumber}
+                  value={password}
                   onChangeText={(text) => {
-                    setUnitHeadsNumber(text);
-                    if (unitHeadsError) setUnitHeadsError('');
+                    setPassword(text);
+                    if (passwordError) setPasswordError('');
                   }}
+                  secureTextEntry={true}
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
               </View>
-              {unitHeadsError ? (
-                <Text style={styles.fieldErrorText}>{unitHeadsError}</Text>
-              ) : null}
+              {passwordError ? <Text style={styles.fieldErrorText}>{passwordError}</Text> : null}
             </View>
 
-
-
-            {/* Login Button */}
             <TouchableOpacity onPress={handleLogin} activeOpacity={0.8}>
               <LinearGradient
                 colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
@@ -153,16 +144,14 @@ export default function LoginScreen() {
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* Register Link */}
             <View style={styles.registerContainer}>
-              <Text style={styles.registerText}>Don&apos;t have an account?</Text>
+              <Text style={styles.registerText}>Don't have an account?</Text>
               <TouchableOpacity onPress={() => router.push('/register' as any)}>
                 <Text style={styles.registerLink}>Register</Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Footer */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>National University — Lipa</Text>
           </View>
@@ -171,6 +160,7 @@ export default function LoginScreen() {
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   screen: {
