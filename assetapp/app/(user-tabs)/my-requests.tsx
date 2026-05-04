@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
+  RefreshControl,
   View,
   Text,
   StyleSheet,
@@ -9,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetchUserRequests, getStoredUser } from '@/lib/userService';
 
@@ -19,24 +21,33 @@ export default function MyRequests() {
   const [activeTab, setActiveTab] = useState<RequestTab>('All');
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    const loadRequests = async () => {
-      setLoading(true);
-      try {
-        const user = await getStoredUser();
-        if (!user) return;
-        const data = await fetchUserRequests(user);
-        setRequests(data);
-      } catch (error) {
-        console.error('Failed to load user requests:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadRequests();
+  const loadRequests = useCallback(async () => {
+    setLoading(true);
+    try {
+      const user = await getStoredUser();
+      if (!user) return;
+      const data = await fetchUserRequests(user);
+      setRequests(data);
+    } catch (error) {
+      console.error('Failed to load user requests:', error);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadRequests();
+    }, [loadRequests]),
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadRequests();
+    setRefreshing(false);
+  };
 
   const filteredRequests = useMemo(() => {
     if (activeTab === 'Pending') {
@@ -73,7 +84,11 @@ export default function MyRequests() {
         ))}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         {filteredRequests.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>No requests found.</Text>

@@ -18,6 +18,7 @@ export type UserAsset = {
   name: string;
   category: string;
   barcode: string;
+  qrCode?: string;
   status: string;
   statusColor: string;
   statusBg: string;
@@ -64,11 +65,12 @@ const normalizeUserAsset = (row: any): UserAsset => {
     name: String(row.name ?? row.asset_name ?? row.Asset_name ?? 'Untitled Asset'),
     category: String(row.category ?? row.asset_category ?? 'Unknown'),
     barcode: String(row.asset_id ?? row.Asset_code ?? row.barcode ?? ''),
+    qrCode: String(row.qr_code_path ?? row.qrCodePath ?? ''),
     status,
     statusColor,
     statusBg,
     location: String(row.location ?? row.asset_location ?? ''),
-    custodian: String(user.full_name ?? user.fullName ?? ''),
+    custodian: String(row.unit_head ?? row.custodian ?? row.assigned_to ?? ''),
   };
 };
 

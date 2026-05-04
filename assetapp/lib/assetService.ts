@@ -57,8 +57,8 @@ const normalizeAssetRecord = (record: any): AssetSummary => ({
   updatedAt: String(record.updated_at ?? record.last_updated ?? ''),
 });
 
-const normalizeLifecycleRow = (row: any, eventType: LifecycleEvent['eventType']): LifecycleEvent => ({
-  id: String(row.id ?? `${eventType}-${row.asset_id ?? row.assetId ?? ''}-${row.created_at ?? row.timestamp ?? row.date ?? ''}`),
+const normalizeLifecycleRow = (row: any, eventType: LifecycleEvent['eventType'], index?: number): LifecycleEvent => ({
+  id: String(row.id ?? `${eventType}-${row.asset_id ?? row.assetId ?? ''}-${row.created_at ?? row.timestamp ?? row.date ?? ''}-${index ?? 0}`),
   eventType,
   title:
     eventType === 'audit'
@@ -124,10 +124,10 @@ export async function fetchAssetLifecycle(assetId: string): Promise<LifecycleEve
   }
 
   const events = [
-    ...(auditRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'audit')),
-    ...(repairRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'repair')),
-    ...(replacementRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'replacement')),
-    ...(disposalRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'disposal')),
+    ...(auditRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'audit', idx)),
+    ...(repairRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'repair', idx)),
+    ...(replacementRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'replacement', idx)),
+    ...(disposalRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'disposal', idx)),
   ];
 
   return events.sort((a, b) => {
@@ -152,10 +152,10 @@ export async function fetchActivityTimeline(): Promise<LifecycleEvent[]> {
   }
 
   const events = [
-    ...(auditRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'audit')),
-    ...(repairRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'repair')),
-    ...(replacementRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'replacement')),
-    ...(disposalRes.data ?? []).map((row) => normalizeLifecycleRow(row, 'disposal')),
+    ...(auditRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'audit', idx)),
+    ...(repairRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'repair', idx)),
+    ...(replacementRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'replacement', idx)),
+    ...(disposalRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'disposal', idx)),
   ];
 
   return events.sort((a, b) => {

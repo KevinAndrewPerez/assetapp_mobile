@@ -18,7 +18,7 @@ interface RequestData {
   status: string;
   Note: string;
   created_at: string;
-  profiles?: { full_name: string; department: string }[];
+  profiles?: { full_name: string; department_id: string }[];
   assets?: { Asset_code: string; Asset_name: string } | null;
 }
 
@@ -37,7 +37,7 @@ export default function RequestsScreen() {
       setLoading(true);
       const { data, error } = await supabase
         .from('requests')
-        .select('id, request_type, status, Note, created_at, profiles:user_id(full_name, department), assets(Asset_code, Asset_name)');
+        .select('id, request_type, status, Note, created_at, profiles:user_id(full_name, department_id), assets(Asset_code, Asset_name)');
 
       if (error) throw error;
 
@@ -49,7 +49,7 @@ export default function RequestsScreen() {
           assetName: req.assets?.Asset_name || 'Unknown',
           assetId: req.assets?.Asset_code || 'N/A',
           requestType: req.request_type,
-          department: profile?.department || 'N/A',
+          department: profile?.department_id || 'N/A',
           submittedBy: profile?.full_name || 'Unknown',
           dateSubmitted: new Date(req.created_at).toLocaleDateString(),
           reason: req.Note || '',

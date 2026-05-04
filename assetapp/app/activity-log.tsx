@@ -81,8 +81,8 @@ export default function ActivityLogScreen() {
           })}
         </ScrollView>
 
-        {filteredActivities.map((activity) => (
-          <View key={activity.id} style={styles.activityCard}>
+        {filteredActivities.map((activity, index) => (
+          <View key={`${activity.id}-${index}`} style={styles.activityCard}>
             <View style={styles.activityHeader}>
               <View
                 style={[styles.iconContainer, { backgroundColor: `${activity.iconColor}20` }]}

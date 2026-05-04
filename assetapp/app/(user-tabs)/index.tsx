@@ -4,21 +4,22 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   TouchableOpacity,
   Platform,
   ActivityIndicator,
+  DimensionValue,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { fetchUserAssets, fetchUserRequests, getStoredUser, StoredUser } from '@/lib/userService';
+import { fetchUserAssets, fetchUserRequests, getStoredUser, StoredUser, UserAsset, UserRequest } from '@/lib/userService';
 
 export default function UserDashboard() {
   const router = useRouter();
   const [user, setUser] = useState<StoredUser | null>(null);
-  const [assets, setAssets] = useState<any[]>([]);
-  const [requests, setRequests] = useState<any[]>([]);
+  const [assets, setAssets] = useState<UserAsset[]>([]);
+  const [requests, setRequests] = useState<UserRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -56,7 +57,10 @@ export default function UserDashboard() {
     };
 
     assets.forEach((asset) => {
-      counts[asset.status] = (counts[asset.status] ?? 0) + 1;
+      const status = asset.status;
+      if (status in counts) {
+        counts[status] = (counts[status] ?? 0) + 1;
+      }
     });
 
     return [
@@ -123,8 +127,18 @@ export default function UserDashboard() {
           {/* Progress Bar */}
           <View style={styles.progressBarContainer}>
             {lifecycleStatus.map((status) => {
-              const width = assets.length > 0 ? `${Math.max(1, Math.round((status.count / assets.length) * 100))}%` : '0%';
-              return <View key={status.label} style={[styles.progressSegment, { width, backgroundColor: status.color }]} />;
+              const segmentWidth = assets.length > 0 
+                ? `${Math.max(1, Math.round((status.count / assets.length) * 100))}%` 
+                : '0%';
+              return (
+                <View 
+                  key={status.label} 
+                  style={[
+                    styles.progressSegment, 
+                    { width: segmentWidth as DimensionValue, backgroundColor: status.color }
+                  ]} 
+                />
+              );
             })}
           </View>
 
@@ -429,5 +443,23 @@ const styles = StyleSheet.create({
   },
   spacer: {
     height: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyState: {
+    padding: 20,
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    borderStyle: 'dashed',
+  },
+  emptyStateText: {
+    color: '#64748B',
+    fontSize: 14,
   },
 });
