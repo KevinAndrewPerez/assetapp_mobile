@@ -17,6 +17,7 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { ActivityItem } from '@/components/dashboard/activity-item';
 import { QuickLink } from '@/components/dashboard/quick-link';
 import { SectionHeader } from '@/components/dashboard/section-header';
+import { fetchActivityTimeline, LifecycleEvent } from '@/lib/assetService';
 
 export default function App() {
   const router = useRouter();
@@ -28,6 +29,7 @@ export default function App() {
     { title: 'Pending Requests', value: '0', icon: 'clock', iconColor: '#3B82F6', backgroundColor: '#EFF6FF' },
   ]);
   const [refreshing, setRefreshing] = useState(false);
+  const [activities, setActivities] = useState<LifecycleEvent[]>([]);
 
   const fetchDashboardData = async () => {
     try {
@@ -37,11 +39,12 @@ export default function App() {
         setUserName(user.full_name || 'Admin');
       }
 
-      const [assetsRes, deploysRes, repairsRes, requestsRes] = await Promise.all([
+      const [assetsRes, deploysRes, repairsRes, requestsRes, timelineRes] = await Promise.all([
         supabase.from('assets').select('id', { count: 'exact' }),
         supabase.from('assets').select('id', { count: 'exact' }).eq('Lifecycle_Status', 'Active'),
         supabase.from('assets').select('id', { count: 'exact' }).eq('Lifecycle_Status', 'For Repair'),
         supabase.from('requests').select('id', { count: 'exact' }).eq('status', 'Pending'),
+        fetchActivityTimeline(),
       ]);
 
       setStats([
@@ -50,6 +53,8 @@ export default function App() {
         { title: 'For Repair', value: String(repairsRes.count || 0), icon: 'wrench', iconColor: '#F59E0B', backgroundColor: '#FFFBEB' },
         { title: 'Pending Requests', value: String(requestsRes.count || 0), icon: 'clock', iconColor: '#3B82F6', backgroundColor: '#EFF6FF' },
       ]);
+
+      setActivities(timelineRes.slice(0, 5)); // Show only latest 5
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
     }
@@ -64,30 +69,6 @@ export default function App() {
     await fetchDashboardData();
     setRefreshing(false);
   };
-
-  const activities = [
-    {
-      title: 'New asset registered',
-      description: 'Dell Laptop i7-12th Gen\nBarcode: NU-2026-06-001 • College of Engineering • Dr Maria Santos',
-      timestamp: '5 mins ago',
-      icon: 'plus-circle',
-      iconColor: '#3B82F6',
-    },
-    {
-      title: 'Asset transferred',
-      description: 'HP Desktop • Transferred to IT Department',
-      timestamp: '2 hours ago',
-      icon: 'arrow-right-circle',
-      iconColor: '#8B5CF6',
-    },
-    {
-      title: 'Maintenance scheduled',
-      description: 'Canon Printer • Scheduled for next week',
-      timestamp: '1 day ago',
-      icon: 'wrench',
-      iconColor: '#F59E0B',
-    },
-  ];
 
   const quickLinks = [
     {
@@ -178,16 +159,20 @@ export default function App() {
         <View style={styles.section}>
           <SectionHeader title="Recent Activity" onViewAll={() => router.push('/activity-log')} />
           <View style={styles.activityContainer}>
-            {activities.map((activity, index) => (
-              <ActivityItem
-                key={index}
-                title={activity.title}
-                description={activity.description}
-                timestamp={activity.timestamp}
-                icon={activity.icon}
-                iconColor={activity.iconColor}
-              />
-            ))}
+            {activities.length > 0 ? (
+              activities.map((activity, index) => (
+                <ActivityItem
+                  key={index}
+                  title={activity.title}
+                  description={`${activity.assetName}\n${activity.description}`}
+                  timestamp={activity.timestamp}
+                  icon={activity.icon}
+                  iconColor={activity.iconColor}
+                />
+              ))
+            ) : (
+              <Text style={styles.emptyText}>No recent activities</Text>
+            )}
           </View>
         </View>
 
@@ -278,6 +263,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   spacer: {
-    height: 80,
+    height: 40,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#9CA3AF',
+    marginTop: 10,
+    fontSize: 14,
   },
 });

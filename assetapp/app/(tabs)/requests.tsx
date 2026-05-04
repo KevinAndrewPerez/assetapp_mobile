@@ -11,6 +11,9 @@ import {
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { RequestCard, RequestItem, RequestStatus } from '@/components/requests/request-card';
+import { updateRequestStatus } from '@/lib/userService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 
 interface RequestData {
   id: number;
@@ -99,6 +102,24 @@ export default function RequestsScreen() {
     );
   }
 
+  const handleAction = async (requestId: string, status: 'Approved' | 'Rejected') => {
+    try {
+      const userJson = await AsyncStorage.getItem('user');
+      if (!userJson) {
+        Alert.alert('Error', 'User session not found.');
+        return;
+      }
+      const user = JSON.parse(userJson);
+
+      await updateRequestStatus(requestId, status, user.id);
+      Alert.alert('Success', `Request ${status.toLowerCase()} successfully.`);
+      fetchRequests(); // Refresh list
+    } catch (error) {
+      console.error(`Failed to ${status.toLowerCase()} request:`, error);
+      Alert.alert('Error', `Failed to ${status.toLowerCase()} request.`);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -131,8 +152,8 @@ export default function RequestsScreen() {
             item={item}
             expanded={expandedId === item.id}
             onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
-            onApprove={() => {}}
-            onReject={() => {}}
+            onApprove={() => handleAction(item.id, 'Approved')}
+            onReject={() => handleAction(item.id, 'Rejected')}
           />
         ))}
         {filteredRequests.length === 0 && (

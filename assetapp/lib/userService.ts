@@ -172,3 +172,60 @@ export async function submitUserRequest(user: StoredUser, requestType: string, a
   }
   return data;
 }
+
+export async function updateRequestStatus(requestId: string, status: 'Approved' | 'Rejected', adminId: string | number) {
+  const { data: request, error: fetchError } = await supabase
+    .from('requests')
+    .select('*, assets(Asset_code, Asset_name)')
+    .eq('id', requestId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  const { error: updateError } = await supabase
+    .from('requests')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', requestId);
+
+  if (updateError) throw updateError;
+
+  // If approved, update asset status and log the activity
+  if (status === 'Approved' && request.asset_id) {
+    let newAssetStatus = 'Active';
+    let logTable = 'audit_logs';
+    let logType = 'audit';
+
+    if (request.request_type === 'Repair') {
+      newAssetStatus = 'For Repair';
+      logTable = 'repairs';
+      logType = 'repair';
+    } else if (request.request_type === 'Pullout') {
+      newAssetStatus = 'Pulled Out';
+      logTable = 'disposals'; // Using disposals for pullouts as per assetService.ts
+      logType = 'disposal';
+    } else if (request.request_type === 'Replacement') {
+      newAssetStatus = 'Replacement';
+      logTable = 'replacements';
+      logType = 'replacement';
+    }
+
+    // Update asset status
+    await supabase
+      .from('assets')
+      .update({ Lifecycle_Status: newAssetStatus })
+      .eq('Asset_code', request.asset_id);
+
+    // Add log entry
+    await supabase.from(logTable).insert([{
+      asset_id: request.asset_id,
+      title: `${request.request_type} Approved`,
+      description: request.Note,
+      performed_by: adminId,
+      status: newAssetStatus,
+      request_id: requestId,
+      created_at: new Date().toISOString()
+    }]);
+  }
+
+  return true;
+}
