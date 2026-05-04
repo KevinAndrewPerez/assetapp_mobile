@@ -1,24 +1,58 @@
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
+import { useState, useEffect } from 'react';
+import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { registerUser, fetchDepartments } from '../lib/userService';
 
 export default function RegisterScreen() {
   const router = useRouter();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [department, setDepartment] = useState('');
-  const [role, setRole] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [unitHeadsNumber, setUnitHeadsNumber] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [departments, setDepartments] = useState<any[]>([]);
 
-  const handleRegister = () => {
-    // Simple validation
-    if (fullName && email && department && role && password) {
-      // For now, just navigate back to login or to the app
-      router.replace('/login');
+  useEffect(() => {
+    const loadDepartments = async () => {
+      try {
+        const data = await fetchDepartments();
+        setDepartments(data || []);
+      } catch (error) {
+        console.error('Failed to load departments:', error);
+      }
+    };
+    loadDepartments();
+  }, []);
+
+  const handleRegister = async () => {
+    if (!fullName || !email || !departmentId || !unitHeadsNumber || !password) {
+      Alert.alert('Missing Information', 'Please fill out all fields.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await registerUser({
+        fullName,
+        email,
+        departmentId,
+        unitHeadsNumber,
+        password,
+        role: 'Employee'
+      });
+      
+      Alert.alert('Success', 'Your account has been created. Please log in.', [
+        { text: 'OK', onPress: () => router.replace('/login') }
+      ]);
+    } catch (error: any) {
+      Alert.alert('Registration Failed', error.message || 'Unable to create account.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -69,32 +103,34 @@ export default function RegisterScreen() {
               </View>
             </View>
 
-            {/* Department Input */}
+            {/* Department Picker (Simplified as Input for now but using ID) */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Department</Text>
+              <Text style={styles.label}>Department ID (Refer to database)</Text>
               <View style={styles.inputWrapper}>
                 <MaterialCommunityIcons name="office-building-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Select Department"
+                  placeholder="e.g. 1"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
-                  value={department}
-                  onChangeText={setDepartment}
+                  keyboardType="numeric"
+                  value={departmentId}
+                  onChangeText={setDepartmentId}
                 />
               </View>
             </View>
 
-            {/* Role Input */}
+            {/* Unit Head Number Input */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Role</Text>
+              <Text style={styles.label}>Unit Head Number</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="account-circle" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="phone" size={18} color="#9CA3AF" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Select Role"
+                  placeholder="09XXXXXXXXX"
                   placeholderTextColor="#rgba(30,41,59,0.5)"
-                  value={role}
-                  onChangeText={setRole}
+                  keyboardType="phone-pad"
+                  value={unitHeadsNumber}
+                  onChangeText={setUnitHeadsNumber}
                 />
               </View>
             </View>
@@ -119,14 +155,23 @@ export default function RegisterScreen() {
             </View>
 
             {/* Register Button */}
-            <TouchableOpacity onPress={handleRegister} activeOpacity={0.8} style={styles.registerButtonContainer}>
+            <TouchableOpacity 
+              onPress={handleRegister} 
+              activeOpacity={0.8} 
+              style={styles.registerButtonContainer}
+              disabled={loading}
+            >
               <LinearGradient
                 colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
-                style={styles.registerButton}
+                style={[styles.registerButton, loading && { opacity: 0.7 }]}
               >
-                <Text style={styles.registerButtonText}>Register</Text>
+                {loading ? (
+                  <ActivityIndicator color="#1a3a5c" />
+                ) : (
+                  <Text style={styles.registerButtonText}>Register</Text>
+                )}
               </LinearGradient>
             </TouchableOpacity>
 

@@ -12,11 +12,20 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetchUserAssets, getStoredUser } from '@/lib/userService';
+import { useRouter } from 'expo-router';
 
 export default function MyAssets() {
+  const router = useRouter();
   const [assets, setAssets] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+
+  const handleAssetPress = (assetId: string) => {
+    router.push({
+      pathname: '/asset-details',
+      params: { id: assetId }
+    } as any);
+  };
 
   useEffect(() => {
     const loadAssets = async () => {
@@ -94,7 +103,11 @@ export default function MyAssets() {
           </View>
         ) : (
           filteredAssets.map((asset) => (
-            <TouchableOpacity key={asset.id} style={styles.assetCard}>
+            <TouchableOpacity 
+              key={asset.id} 
+              style={styles.assetCard}
+              onPress={() => handleAssetPress(asset.id)}
+            >
               <View style={styles.assetInfo}>
                 <Text style={styles.assetName}>{asset.name}</Text>
                 <Text style={styles.assetCategory}>{asset.category}</Text>

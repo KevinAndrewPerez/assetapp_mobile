@@ -72,7 +72,13 @@ export default function UserDashboard() {
     ];
   }, [assets]);
 
-  const recentRequests = useMemo(() => requests.slice(0, 2), [requests]);
+  const recentRequests = useMemo(() => {
+    return requests.slice(0, 5).map(req => ({
+      ...req,
+      statusBg: req.status === 'Approved' ? '#F0FDF4' : req.status === 'Pending' ? '#FFFBEB' : '#FEF2F2',
+      statusColor: req.status === 'Approved' ? '#10B981' : req.status === 'Pending' ? '#F59E0B' : '#EF4444',
+    }));
+  }, [requests]);
 
   if (loading) {
     return (
@@ -114,9 +120,13 @@ export default function UserDashboard() {
         {/* Asset Summary Card */}
         <View style={styles.summaryCard}>
           <View style={styles.summaryHeader}>
-            <View>
-              <Text style={styles.collegeName}>{user?.department ?? 'My Department'}</Text>
-              <Text style={styles.unitHead}>{user?.full_name ?? 'Your Name'}{user?.role ? ` - ${user.role}` : ''}</Text>
+            <View style={styles.summaryTitleSection}>
+              <Text style={styles.collegeName} numberOfLines={1} ellipsizeMode="tail">
+                {user?.department ?? 'My Department'}
+              </Text>
+              <Text style={styles.unitHead} numberOfLines={1} ellipsizeMode="tail">
+                {user?.full_name ?? 'Your Name'}{user?.role ? ` - ${user.role}` : ''}
+              </Text>
             </View>
             <View style={styles.totalAssetsContainer}>
               <Text style={styles.totalAssetsValue}>{assets.length}</Text>
@@ -125,33 +135,70 @@ export default function UserDashboard() {
           </View>
 
           {/* Progress Bar */}
-          <View style={styles.progressBarContainer}>
+          <View style={styles.progressBarWrapper}>
+            <View style={styles.progressBarContainer}>
+              {lifecycleStatus.map((status) => {
+                const count = status.count;
+                const total = assets.length;
+                const segmentWidth = total > 0 
+                  ? (count / total) * 100 
+                  : 0;
+                
+                if (segmentWidth === 0) return null;
+
+                return (
+                  <View 
+                    key={status.label} 
+                    style={[
+                      styles.progressSegment, 
+                      { width: `${segmentWidth}%` as DimensionValue, backgroundColor: status.color }
+                    ]} 
+                  />
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Legend with Percentages */}
+          <View style={styles.legendContainer}>
             {lifecycleStatus.map((status) => {
-              const segmentWidth = assets.length > 0 
-                ? `${Math.max(1, Math.round((status.count / assets.length) * 100))}%` 
-                : '0%';
+              const count = status.count;
+              const total = assets.length;
+              const percentage = total > 0 
+                ? Math.round((count / total) * 100) 
+                : 0;
               return (
-                <View 
-                  key={status.label} 
-                  style={[
-                    styles.progressSegment, 
-                    { width: segmentWidth as DimensionValue, backgroundColor: status.color }
-                  ]} 
-                />
+                <View key={status.label} style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: status.color }]} />
+                  <Text style={styles.legendText}>{percentage}%</Text>
+                </View>
               );
             })}
           </View>
 
-          {/* Legend */}
-          <View style={styles.legendContainer}>
-            {lifecycleStatus.map((status) => (
-              <View key={status.label} style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: status.color }]} />
-                <Text style={styles.legendText}>{status.label}: {status.count}</Text>
-              </View>
-            ))}
+          <View style={styles.divider} />
 
-          </View>
+          {/* Status Row with Icons */}
+          <Text style={styles.sectionTitleSmall}>Asset Lifecycle Status</Text>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.statusScroll}
+          >
+            {lifecycleStatus.map((status, index) => (
+              <React.Fragment key={status.label}>
+                <View style={styles.statusItem}>
+                  <View style={[styles.statusBadge, { backgroundColor: status.lightColor }]}>
+                    <Text style={[styles.statusLabel, { color: status.color }]}>{status.label}</Text>
+                  </View>
+                  <Text style={styles.statusCount}>{status.count}</Text>
+                </View>
+                {index < lifecycleStatus.length - 1 && (
+                  <View style={styles.statusConnector} />
+                )}
+              </React.Fragment>
+            ))}
+          </ScrollView>
         </View>
 
         {/* Quick Actions */}
@@ -269,50 +316,66 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
+    gap: 12,
+  },
+  summaryTitleSection: {
+    flex: 1,
   },
   collegeName: {
     fontSize: 18,
     fontWeight: '700',
     color: '#1a3a5c',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   unitHead: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748B',
+    lineHeight: 18,
   },
   totalAssetsContainer: {
     alignItems: 'flex-end',
+    minWidth: 80,
   },
   totalAssetsValue: {
     fontSize: 24,
-    fontWeight: '700',
-    color: '#f4b942',
+    fontWeight: '800',
+    color: '#1a3a5c',
+    lineHeight: 28,
   },
   totalAssetsLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#64748B',
+    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  progressBarContainer: {
-    height: 8,
-    flexDirection: 'row',
-    borderRadius: 4,
-    overflow: 'hidden',
+  progressBarWrapper: {
+    width: '100%',
     marginBottom: 12,
+  },
+  progressBarContainer: {
+    height: 10,
+    flexDirection: 'row',
+    borderRadius: 5,
+    overflow: 'hidden',
+    backgroundColor: '#F1F5F9',
+    width: '100%',
   },
   progressSegment: {
     height: '100%',
   },
   legendContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
+    gap: 8,
     marginBottom: 20,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    minWidth: '18%',
   },
   legendDot: {
     width: 8,
@@ -321,9 +384,9 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   legendText: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
+    fontSize: 10,
+    color: '#1a3a5c',
+    fontWeight: '800',
   },
   divider: {
     height: 1,
@@ -336,35 +399,36 @@ const styles = StyleSheet.create({
     color: '#1a3a5c',
     marginBottom: 16,
   },
-  statusGrid: {
+  statusScroll: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingBottom: 10,
   },
   statusItem: {
     alignItems: 'center',
-    flex: 1,
+    minWidth: 80,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginBottom: 8,
   },
   statusLabel: {
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
   },
   statusCount: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#334155',
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E293B',
   },
-  statusDivider: {
-    width: 1,
-    height: 20,
+  statusConnector: {
+    width: 20,
+    height: 1,
     backgroundColor: '#E2E8F0',
     marginHorizontal: 4,
+    marginTop: -24, // Align with the badges
   },
   section: {
     marginBottom: 24,

@@ -52,7 +52,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="assets"
         options={{
           title: "Assets",
           tabBarIcon: ({ color, focused }) => (
@@ -85,6 +85,12 @@ export default function TabLayout() {
               {focused && <View style={styles.activeIndicator} />}
             </View>
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="explore"
+        options={{
+          href: null,
         }}
       />
       <Tabs.Screen

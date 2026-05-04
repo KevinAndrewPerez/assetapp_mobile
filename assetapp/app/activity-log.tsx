@@ -9,7 +9,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import QRCode from 'react-native-qrcode-svg';
 import { fetchActivityTimeline, LifecycleEvent } from '../lib/assetService';
+import QRViewModal from '../components/QRViewModal';
 
 const activityTags = ['All', 'New Assets', 'Repairs', 'Pull Outs'];
 
@@ -19,6 +21,17 @@ export default function ActivityLogScreen() {
   const [activities, setActivities] = useState<LifecycleEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // QR Modal State
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [selectedQrValue, setSelectedQrValue] = useState('');
+  const [selectedQrTitle, setSelectedQrTitle] = useState('');
+
+  const openQrModal = (value: string, title: string) => {
+    setSelectedQrValue(value);
+    setSelectedQrTitle(title);
+    setQrModalVisible(true);
+  };
 
   useEffect(() => {
     const loadActivityTimeline = async () => {
@@ -44,6 +57,22 @@ export default function ActivityLogScreen() {
     if (activeTag === 'Pull Outs') return activities.filter((a) => a.eventType === 'disposal');
     return activities;
   }, [activeTag, activities]);
+
+  const formatTimestamp = (ts: string) => {
+    try {
+      const date = new Date(ts);
+      return date.toLocaleString('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch {
+      return ts;
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -85,92 +114,83 @@ export default function ActivityLogScreen() {
           <View key={`${activity.id}-${index}`} style={styles.activityCard}>
             <View style={styles.activityHeader}>
               <View
-                style={[styles.iconContainer, { backgroundColor: `${activity.iconColor}20` }]}
+                style={[
+                  styles.iconContainer,
+                  { backgroundColor: `${activity.iconColor || '#64748B'}20` },
+                ]}
               >
                 <MaterialCommunityIcons
-                  name={activity.icon}
+                  name={(activity.icon as any) || 'bell-outline'}
                   size={24}
-                  color={activity.iconColor}
+                  color={activity.iconColor || '#64748B'}
                 />
               </View>
               <View style={styles.activityTitleSection}>
-                <Text style={styles.activityTitle}>{activity.title}</Text>
-                <Text style={styles.activityAssetName}>{activity.assetName}</Text>
+                <Text style={styles.activityTitle} numberOfLines={2}>{activity.title}</Text>
+                <Text style={styles.timestamp}>{formatTimestamp(activity.timestamp)}</Text>
               </View>
-              <Text style={styles.timestamp}>{activity.timestamp}</Text>
+              {activity.assetId ? (
+                <TouchableOpacity 
+                  style={styles.qrContainer} 
+                  onPress={() => openQrModal(activity.assetId, activity.assetName || activity.title)}
+                  activeOpacity={0.7}
+                >
+                  <QRCode value={activity.assetId} size={40} />
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             <View style={styles.activityDetails}>
-              <View style={styles.detailRow}>
-                <MaterialCommunityIcons name="barcode" size={16} color="#6B7280" />
-                <Text style={styles.detailLabel}>Barcode: </Text>
-                <Text style={styles.detailValue}>{activity.barcode}</Text>
-              </View>
-
-              {activity.department && (
+              {activity.assetId ? (
                 <View style={styles.detailRow}>
-                  <MaterialCommunityIcons name="office-building" size={16} color="#6B7280" />
-                  <Text style={styles.detailLabel}>Department: </Text>
-                  <Text style={styles.detailValue}>{activity.department}</Text>
-                </View>
-              )}
-
-              {activity.requestId && (
-                <View style={styles.detailRow}>
-                  <MaterialCommunityIcons name="identifier" size={16} color="#6B7280" />
-                  <Text style={styles.detailLabel}>Request ID: </Text>
-                  <Text style={styles.detailValue}>{activity.requestId}</Text>
-                </View>
-              )}
-
-              {activity.reason && (
-                <View style={styles.detailRow}>
-                  <MaterialCommunityIcons name="message-text-outline" size={16} color="#6B7280" />
-                  <Text style={styles.detailLabel}>Reason: </Text>
-                  <Text style={styles.detailValue}>{activity.reason}</Text>
-                </View>
-              )}
-
-              {activity.performedBy && (
-                <View style={styles.detailRow}>
-                  <MaterialCommunityIcons name="account-circle-outline" size={16} color="#6B7280" />
-                  <Text style={styles.detailLabel}>Performed by: </Text>
-                  <Text style={styles.performedByName}>{activity.performedBy}</Text>
-                </View>
-              )}
-
-              {activity.status && (
-                <View style={styles.detailRow}>
-                  <MaterialCommunityIcons name="information-outline" size={16} color="#6B7280" />
-                  <Text style={styles.detailLabel}>Status: </Text>
-                  <Text style={[styles.detailValue, styles.statusText(activity.status)]}>
-                    {activity.status}
+                  <MaterialCommunityIcons name="cube-outline" size={16} color="#64748B" />
+                  <Text style={styles.detailLabel}>Asset: </Text>
+                  <Text style={styles.detailValue}>
+                    {activity.assetName ? `${activity.assetName} ` : ''}({activity.assetId})
                   </Text>
                 </View>
-              )}
+              ) : null}
 
-              {activity.note && (
+              {activity.performedBy ? (
                 <View style={styles.detailRow}>
-                  <MaterialCommunityIcons name="note-outline" size={16} color="#6B7280" />
-                  <Text style={styles.detailLabel}>Note: </Text>
-                  <Text style={styles.detailValue}>{activity.note}</Text>
+                  <MaterialCommunityIcons name="account-circle-outline" size={16} color="#64748B" />
+                  <Text style={styles.detailLabel}>User: </Text>
+                  <Text style={styles.detailValue}>{activity.performedBy}</Text>
                 </View>
-              )}
+              ) : null}
 
-              <View style={styles.detailRow}>
-                <MaterialCommunityIcons name="calendar" size={16} color="#6B7280" />
-                <Text style={styles.detailValue}>{activity.date}</Text>
-              </View>
+              {activity.description && activity.description !== activity.title ? (
+                <View style={styles.detailRow}>
+                  <MaterialCommunityIcons name={"text-box-outline" as any} size={16} color="#64748B" />
+                  <Text style={styles.detailLabel}>Action: </Text>
+                  <Text style={styles.detailValue} numberOfLines={2}>{activity.description}</Text>
+                </View>
+              ) : null}
+
+              {activity.requestId ? (
+                <View style={styles.detailRow}>
+                  <MaterialCommunityIcons name={"numeric" as any} size={16} color="#64748B" />
+                  <Text style={styles.detailLabel}>Request: </Text>
+                  <Text style={styles.detailValue}>#{activity.requestId}</Text>
+                </View>
+              ) : null}
             </View>
           </View>
         ))}
 
-        {filteredActivities.length === 0 && (
+        {filteredActivities.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No activities found for this filter.</Text>
           </View>
-        )}
+        ) : null}
       </ScrollView>
+
+      <QRViewModal
+        visible={qrModalVisible}
+        onClose={() => setQrModalVisible(false)}
+        value={selectedQrValue}
+        title={selectedQrTitle}
+      />
     </SafeAreaView>
   );
 }
@@ -272,7 +292,7 @@ const styles = StyleSheet.create({
   },
   activityHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 12,
     gap: 12,
   },
@@ -285,53 +305,49 @@ const styles = StyleSheet.create({
   },
   activityTitleSection: {
     flex: 1,
+    gap: 4,
+    marginRight: 8,
   },
   activityTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
-    color: '#0F172A',
-  },
-  activityAssetName: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 2,
+    color: '#1E293B',
+    lineHeight: 20,
   },
   timestamp: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  qrContainer: {
+    padding: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
   activityDetails: {
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: '#F1F5F9',
     gap: 8,
   },
   detailRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
   },
   detailLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
   },
   detailValue: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  performedByName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#F59E0B',
-  },
-  statusText: (status: string) => {
-    let textColor = '#6B7280';
-    if (status === 'Active') textColor = '#10B981';
-    if (status === 'For Repair') textColor = '#F59E0B';
-    if (status === 'Pending') textColor = '#EF4444';
-    return { color: textColor, fontWeight: '700' };
+    flex: 1,
+    fontSize: 12,
+    color: '#1E293B',
+    lineHeight: 18,
   },
   emptyState: {
     marginTop: 24,

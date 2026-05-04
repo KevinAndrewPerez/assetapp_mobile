@@ -42,13 +42,13 @@ export type UserRequest = {
 };
 
 const normalizeUserAsset = (row: any): UserAsset => {
-  const status = String(row.status ?? row.current_status ?? 'Unknown');
+  const status = String(row.Lifecycle_Status ?? row.status ?? 'Unknown');
   const statusColor =
     status === 'Active'
       ? '#10B981'
       : status === 'For Repair'
       ? '#F59E0B'
-      : status === 'Disposed'
+      : status === 'Disposal'
       ? '#EF4444'
       : '#64748B';
   const statusBg =
@@ -56,21 +56,21 @@ const normalizeUserAsset = (row: any): UserAsset => {
       ? '#F0FDF4'
       : status === 'For Repair'
       ? '#FFFBEB'
-      : status === 'Disposed'
+      : status === 'Disposal'
       ? '#FEF2F2'
       : '#F8FAFC';
 
   return {
-    id: String(row.id ?? row.asset_id ?? row.Asset_code ?? row.assetCode ?? ''),
-    name: String(row.name ?? row.asset_name ?? row.Asset_name ?? 'Untitled Asset'),
-    category: String(row.category ?? row.asset_category ?? 'Unknown'),
-    barcode: String(row.asset_id ?? row.Asset_code ?? row.barcode ?? ''),
-    qrCode: String(row.qr_code_path ?? row.qrCodePath ?? ''),
+    id: String(row.id ?? ''),
+    name: String(row.Asset_name ?? row.name ?? 'Untitled Asset'),
+    category: String(row.Category ?? row.category ?? 'Unknown'),
+    barcode: String(row.Asset_code ?? row.barcode ?? ''),
+    qrCode: String(row.qr_code_path ?? ''),
     status,
     statusColor,
     statusBg,
-    location: String(row.location ?? row.asset_location ?? ''),
-    custodian: String(row.unit_head ?? row.custodian ?? row.assigned_to ?? ''),
+    location: String(row.asset_location ?? row.location ?? ''),
+    custodian: String(row.custodian ?? ''),
   };
 };
 
@@ -171,6 +171,55 @@ export async function submitUserRequest(user: StoredUser, requestType: string, a
     throw error;
   }
   return data;
+}
+
+export async function registerUser(payload: {
+  fullName: string;
+  email: string;
+  departmentId: number | string;
+  unitHeadsNumber: string;
+  password: string;
+  role?: string;
+}) {
+  const { data, error } = await supabase.from('users').insert([{
+    full_name: payload.fullName,
+    email: payload.email,
+    department_id: payload.departmentId,
+    unit_heads_number: payload.unitHeadsNumber,
+    password: payload.password, // In a real app, this should be hashed on the server side
+    role: payload.role ?? 'Employee',
+    status: 'Active',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }]).select().single();
+
+  if (error) {
+    console.error('Failed to register user:', error.message);
+    throw error;
+  }
+  return data;
+}
+
+export async function searchUsers(query: string) {
+  if (!query || query.length < 2) return [];
+  
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, full_name, email, departments(Name)')
+    .or(`full_name.ilike.%${query}%,email.ilike.%${query}%`)
+    .limit(10);
+
+  if (error) {
+    console.error('Failed to search users:', error.message);
+    throw error;
+  }
+  
+  return (data ?? []).map(u => ({
+    id: u.id,
+    fullName: u.full_name,
+    email: u.email,
+    departmentName: (u.departments as any)?.Name || 'No Department'
+  }));
 }
 
 export async function updateRequestStatus(requestId: string, status: 'Approved' | 'Rejected', adminId: string | number) {
