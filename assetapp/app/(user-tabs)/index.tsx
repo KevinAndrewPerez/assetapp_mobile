@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,42 +7,81 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { fetchUserAssets, fetchUserRequests, getStoredUser, StoredUser } from '@/lib/userService';
 
 export default function UserDashboard() {
   const router = useRouter();
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [assets, setAssets] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const lifecycleStatus = [
-    { label: 'Acquired', count: 5, color: '#3B82F6', lightColor: '#EFF6FF' },
-    { label: 'Active', count: 42, color: '#10B981', lightColor: '#F0FDF4' },
-    { label: 'For Repair', count: 2, color: '#F59E0B', lightColor: '#FFFBEB' },
-    { label: 'Pulled Out', count: 1, color: '#6366F1', lightColor: '#EEF2FF' },
-    { label: 'Disposed', count: 8, color: '#EF4444', lightColor: '#FEF2F2' },
-  ];
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const storedUser = await getStoredUser();
+        if (!storedUser) return;
+        setUser(storedUser);
 
-  const recentRequests = [
-    {
-      id: '1',
-      title: 'HP Printer LaserJet',
-      type: 'Repair',
-      date: '2024-04-12',
-      status: 'Pending',
-      statusColor: '#F59E0B',
-      statusBg: '#FFFBEB',
-    },
-    {
-      id: '2',
-      title: 'Old Desktop PC i3',
-      type: 'Pullout',
-      date: '2024-04-10',
-      status: 'Approved',
-      statusColor: '#10B981',
-      statusBg: '#F0FDF4',
-    },
-  ];
+        const [userAssets, userRequests] = await Promise.all([
+          fetchUserAssets(storedUser),
+          fetchUserRequests(storedUser),
+        ]);
+
+        setAssets(userAssets);
+        setRequests(userRequests);
+      } catch (error) {
+        console.error('Dashboard load failed:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  const lifecycleStatus = useMemo(() => {
+    const counts: Record<string, number> = {
+      Acquired: 0,
+      Active: 0,
+      'For Repair': 0,
+      'Pulled Out': 0,
+      Disposed: 0,
+    };
+
+    assets.forEach((asset) => {
+      counts[asset.status] = (counts[asset.status] ?? 0) + 1;
+    });
+
+    return [
+      { label: 'Acquired', count: counts.Acquired, color: '#3B82F6', lightColor: '#EFF6FF' },
+      { label: 'Active', count: counts.Active, color: '#10B981', lightColor: '#F0FDF4' },
+      { label: 'For Repair', count: counts['For Repair'], color: '#F59E0B', lightColor: '#FFFBEB' },
+      { label: 'Pulled Out', count: counts['Pulled Out'], color: '#6366F1', lightColor: '#EEF2FF' },
+      { label: 'Disposed', count: counts.Disposed, color: '#EF4444', lightColor: '#FEF2F2' },
+    ];
+  }, [assets]);
+
+  const recentRequests = useMemo(() => requests.slice(0, 2), [requests]);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Dashboard</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#f4b942" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -62,56 +101,42 @@ export default function UserDashboard() {
           end={{ x: 1, y: 1 }}
           style={styles.welcomeCard}
         >
-          <Text style={styles.welcomeText}>Welcome, Dr. Maria Santos</Text>
-          <Text style={styles.roleText}>Unit Head • College of Engineering</Text>
+          <Text style={styles.welcomeText}>Welcome, {user?.full_name ?? user?.email ?? 'User'}</Text>
+          <Text style={styles.roleText}>
+            {user?.role ?? 'Member'}{user?.department ? ` • ${user.department}` : ''}
+          </Text>
         </LinearGradient>
 
         {/* Asset Summary Card */}
         <View style={styles.summaryCard}>
           <View style={styles.summaryHeader}>
             <View>
-              <Text style={styles.collegeName}>College of Engineering</Text>
-              <Text style={styles.unitHead}>Dr. Maria Santos - Unit Head</Text>
+              <Text style={styles.collegeName}>{user?.department ?? 'My Department'}</Text>
+              <Text style={styles.unitHead}>{user?.full_name ?? 'Your Name'}{user?.role ? ` - ${user.role}` : ''}</Text>
             </View>
             <View style={styles.totalAssetsContainer}>
-              <Text style={styles.totalAssetsValue}>58</Text>
+              <Text style={styles.totalAssetsValue}>{assets.length}</Text>
               <Text style={styles.totalAssetsLabel}>Total Assets</Text>
             </View>
           </View>
 
           {/* Progress Bar */}
           <View style={styles.progressBarContainer}>
-            <View style={[styles.progressSegment, { width: '9%', backgroundColor: '#3B82F6' }]} />
-            <View style={[styles.progressSegment, { width: '72%', backgroundColor: '#10B981' }]} />
-            <View style={[styles.progressSegment, { width: '3%', backgroundColor: '#F59E0B' }]} />
-            <View style={[styles.progressSegment, { width: '2%', backgroundColor: '#6366F1' }]} />
-            <View style={[styles.progressSegment, { width: '14%', backgroundColor: '#EF4444' }]} />
+            {lifecycleStatus.map((status) => {
+              const width = assets.length > 0 ? `${Math.max(1, Math.round((status.count / assets.length) * 100))}%` : '0%';
+              return <View key={status.label} style={[styles.progressSegment, { width, backgroundColor: status.color }]} />;
+            })}
           </View>
 
           {/* Legend */}
           <View style={styles.legendContainer}>
-            <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#3B82F6' }]} /><Text style={styles.legendText}>9%</Text></View>
-            <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#10B981' }]} /><Text style={styles.legendText}>72%</Text></View>
-            <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} /><Text style={styles.legendText}>3%</Text></View>
-            <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#6366F1' }]} /><Text style={styles.legendText}>2%</Text></View>
-            <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} /><Text style={styles.legendText}>14%</Text></View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <Text style={styles.sectionTitleSmall}>Asset Lifecycle Status</Text>
-          <View style={styles.statusGrid}>
-            {lifecycleStatus.map((status, index) => (
-              <React.Fragment key={status.label}>
-                <View style={styles.statusItem}>
-                  <View style={[styles.statusBadge, { backgroundColor: status.lightColor }]}>
-                    <Text style={[styles.statusLabel, { color: status.color }]}>{status.label}</Text>
-                  </View>
-                  <Text style={styles.statusCount}>{status.count}</Text>
-                </View>
-                {index < lifecycleStatus.length - 1 && <View style={styles.statusDivider} />}
-              </React.Fragment>
+            {lifecycleStatus.map((status) => (
+              <View key={status.label} style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: status.color }]} />
+                <Text style={styles.legendText}>{status.label}: {status.count}</Text>
+              </View>
             ))}
+
           </View>
         </View>
 
@@ -147,13 +172,18 @@ export default function UserDashboard() {
               <TouchableOpacity key={request.id} style={styles.requestCard}>
                 <View style={styles.requestInfo}>
                   <Text style={styles.requestTitle}>{request.title}</Text>
-                  <Text style={styles.requestMeta}>{request.type} • {request.date}</Text>
+                  <Text style={styles.requestMeta}>{request.requestType} • {request.dateSubmitted}</Text>
                 </View>
                 <View style={[styles.statusTag, { backgroundColor: request.statusBg }]}>
                   <Text style={[styles.statusTagText, { color: request.statusColor }]}>{request.status}</Text>
                 </View>
               </TouchableOpacity>
             ))}
+            {recentRequests.length === 0 && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No recent requests yet.</Text>
+              </View>
+            )}
           </View>
         </View>
 

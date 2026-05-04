@@ -14,6 +14,7 @@ export default function LoginScreen() {
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [generalError, setGeneralError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const clearErrors = () => {
     setEmailError('');
@@ -30,10 +31,11 @@ export default function LoginScreen() {
       return;
     }
 
+    setLoading(true);
     try {
       const { data, error } = await supabase.rpc('verify_user_password', {
         email_input: email.trim(),
-        password_input: password.trim(),
+        password_input: password,
       });
 
       if (error) {
@@ -48,6 +50,7 @@ export default function LoginScreen() {
       }
 
       const user = data[0];
+      console.log('Current User Role:', user.role);
       await AsyncStorage.setItem('user', JSON.stringify(user));
 
       if (user.role === 'Admin' || user.role === 'AssetOfficer') {
@@ -59,6 +62,8 @@ export default function LoginScreen() {
       }
     } catch (err) {
       setGeneralError('Login failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 

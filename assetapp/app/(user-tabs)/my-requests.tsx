@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,70 +7,46 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { fetchUserRequests, getStoredUser } from '@/lib/userService';
 
-const REQUESTS = [
-  {
-    id: '1',
-    title: 'HP Printer LaserJet Pro',
-    type: 'Repair',
-    typeColor: '#F59E0B',
-    typeBg: '#FFFBEB',
-    status: 'Pending',
-    statusColor: '#F59E0B',
-    statusBg: '#FFFBEB',
-    reason: 'Printer not printing properly',
-    date: '2024-04-12',
-    barcode: 'NU-2024-03-007',
-  },
-  {
-    id: '2',
-    title: 'Old Desktop PC i3',
-    type: 'Disposal',
-    typeColor: '#EF4444',
-    typeBg: '#FEF2F2',
-    status: 'Approved',
-    statusColor: '#10B981',
-    statusBg: '#F0FDF4',
-    reason: 'Outdated and no longer needed',
-    date: '2024-04-10',
-    barcode: 'NU-2015-02-143',
-  },
-  {
-    id: '3',
-    title: 'Canon Scanner DR-C225',
-    type: 'Repair',
-    typeColor: '#F59E0B',
-    typeBg: '#FFFBEB',
-    status: 'Approved',
-    statusColor: '#10B981',
-    statusBg: '#F0FDF4',
-    reason: 'Scanner not detecting documents',
-    date: '2024-04-05',
-    barcode: 'NU-2024-01-056',
-  },
-  {
-    id: '4',
-    title: 'Old Projector SVGA',
-    type: 'Replacement',
-    typeColor: '#8B5CF6',
-    typeBg: '#F5F3FF',
-    status: 'Rejected',
-    statusColor: '#EF4444',
-    statusBg: '#FEF2F2',
-    reason: 'Replaced with new model',
-    date: '2024-04-01',
-    barcode: 'NU-2025-05-334',
-  },
-];
+const tabs = ['All', 'Pending', 'Completed'] as const;
+type RequestTab = typeof tabs[number];
 
 export default function MyRequests() {
-  const [activeTab, setActiveTab] = useState('All');
+  const [activeTab, setActiveTab] = useState<RequestTab>('All');
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filteredRequests = activeTab === 'All' 
-    ? REQUESTS 
-    : REQUESTS.filter(r => r.status === activeTab);
+  useEffect(() => {
+    const loadRequests = async () => {
+      setLoading(true);
+      try {
+        const user = await getStoredUser();
+        if (!user) return;
+        const data = await fetchUserRequests(user);
+        setRequests(data);
+      } catch (error) {
+        console.error('Failed to load user requests:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadRequests();
+  }, []);
+
+  const filteredRequests = useMemo(() => {
+    if (activeTab === 'Pending') {
+      return requests.filter((item) => item.status === 'Pending');
+    }
+    if (activeTab === 'Completed') {
+      return requests.filter((item) => item.status !== 'Pending');
+    }
+    return requests;
+  }, [activeTab, requests]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -98,36 +74,42 @@ export default function MyRequests() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {filteredRequests.map((request) => (
-          <View key={request.id} style={styles.requestCard}>
-            <View style={styles.cardHeader}>
-              <View style={styles.titleContainer}>
-                <Text style={styles.requestTitle}>{request.title}</Text>
-                <View style={styles.badgeContainer}>
-                  <View style={[styles.badge, { backgroundColor: request.typeBg }]}>
-                    <Text style={[styles.badgeText, { color: request.typeColor }]}>{request.type}</Text>
-                  </View>
-                  <View style={[styles.badge, { backgroundColor: request.statusBg }]}>
-                    <Text style={[styles.badgeText, { color: request.statusColor }]}>{request.status}</Text>
+        {filteredRequests.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No requests found.</Text>
+          </View>
+        ) : (
+          filteredRequests.map((request) => (
+            <View key={request.id} style={styles.requestCard}>
+              <View style={styles.cardHeader}>
+                <View style={styles.titleContainer}>
+                  <Text style={styles.requestTitle}>{request.title}</Text>
+                  <View style={styles.badgeContainer}>
+                    <View style={[styles.badge, { backgroundColor: '#F1F5F9' }]}> 
+                      <Text style={[styles.badgeText, { color: '#334155' }]}>{request.requestType}</Text>
+                    </View>
+                    <View style={[styles.badge, { backgroundColor: request.statusBg }]}> 
+                      <Text style={[styles.badgeText, { color: request.statusColor }]}>{request.status}</Text>
+                    </View>
                   </View>
                 </View>
+                <View style={styles.qrPlaceholder}>
+                  <MaterialCommunityIcons name="qrcode" size={40} color="#f4b942" />
+                  <Text style={styles.barcodeText}>{request.barcode}</Text>
+                </View>
               </View>
-              <View style={styles.qrPlaceholder}>
-                <MaterialCommunityIcons name="qrcode" size={40} color="#f4b942" />
-                <Text style={styles.barcodeText}>{request.barcode}</Text>
-              </View>
-            </View>
 
-            <View style={styles.cardFooter}>
-              <Text style={styles.reasonLabel}>
-                Reason: <Text style={styles.reasonText}>{request.reason}</Text>
-              </Text>
-              <Text style={styles.dateLabel}>
-                Date: <Text style={styles.dateText}>{request.date}</Text>
-              </Text>
+              <View style={styles.cardFooter}>
+                <Text style={styles.reasonLabel}>
+                  Reason: <Text style={styles.reasonText}>{request.reason}</Text>
+                </Text>
+                <Text style={styles.dateLabel}>
+                  Date: <Text style={styles.dateText}>{request.dateSubmitted}</Text>
+                </Text>
+              </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
         <View style={styles.spacer} />
       </ScrollView>
     </SafeAreaView>
@@ -260,6 +242,19 @@ const styles = StyleSheet.create({
   dateText: {
     fontWeight: '400',
     color: '#334155',
+  },
+  emptyState: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    color: '#64748B',
+    fontSize: 15,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   spacer: {
     height: 20,

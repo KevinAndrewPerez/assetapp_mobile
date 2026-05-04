@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,19 +7,40 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getStoredUser, fetchLiveUser, StoredUser } from '@/lib/userService';
 
 export default function UserProfile() {
   const router = useRouter();
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const settings = [
-    { title: 'Edit Profile', icon: 'account-outline', color: '#f4b942' },
-    { title: 'Change Password', icon: 'lock-outline', color: '#f4b942' },
-    { title: 'Notification Preferences', icon: 'bell-outline', color: '#f4b942' },
-  ];
+  useEffect(() => {
+    const loadProfile = async () => {
+      setLoading(true);
+      try {
+        const stored = await getStoredUser();
+        if (!stored) {
+          router.replace('/login');
+          return;
+        }
+        const liveUser = await fetchLiveUser(stored.id ?? stored.user_id ?? '');
+        setUser(liveUser ?? stored);
+      } catch (error) {
+        console.error('Failed to load profile:', error);
+        const stored = await getStoredUser();
+        setUser(stored);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProfile();
+  }, [router]);
 
   const handleLogout = async () => {
     try {
@@ -30,6 +51,19 @@ export default function UserProfile() {
     }
   };
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Profile</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#f4b942" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -39,26 +73,33 @@ export default function UserProfile() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
-            <Text style={styles.avatarText}>MS</Text>
+            <Text style={styles.avatarText}>
+              {user?.full_name?.split(' ').map((part) => part[0]).join('') ?? 'NA'}
+            </Text>
           </View>
-          <Text style={styles.userName}>Dr. Maria Santos</Text>
-          <Text style={styles.userRole}>Unit Head</Text>
-          <Text style={styles.userCollege}>College of Engineering</Text>
+          <Text style={styles.userName}>{user?.full_name ?? 'Unknown User'}</Text>
+          <Text style={styles.userRole}>{user?.role ?? 'User'}</Text>
+          <Text style={styles.userCollege}>{user?.department ?? 'No department assigned'}</Text>
+          <Text style={styles.userEmail}>{user?.email ?? ''}</Text>
         </View>
 
         <View style={styles.settingsSection}>
           <Text style={styles.sectionTitle}>Settings</Text>
           <View style={styles.settingsContainer}>
-            {settings.map((item, index) => (
-              <TouchableOpacity 
-                key={item.title} 
+            {[
+              { title: 'Edit Profile', icon: 'account-outline', color: '#f4b942' },
+              { title: 'Change Password', icon: 'lock-outline', color: '#f4b942' },
+              { title: 'Notification Preferences', icon: 'bell-outline', color: '#f4b942' },
+            ].map((item, index) => (
+              <TouchableOpacity
+                key={item.title}
                 style={[
                   styles.settingsItem,
-                  index < settings.length - 1 && styles.settingsDivider
+                  index < 2 && styles.settingsDivider,
                 ]}
               >
                 <View style={styles.settingsItemLeft}>
-                  <View style={[styles.iconBg, { backgroundColor: '#FFFBEB' }]}>
+                  <View style={[styles.iconBg, { backgroundColor: '#FFFBEB' }]}> 
                     <MaterialCommunityIcons name={item.icon as any} size={22} color={item.color} />
                   </View>
                   <Text style={styles.settingsItemText}>{item.title}</Text>
@@ -82,7 +123,6 @@ export default function UserProfile() {
   );
 }
 
-// ... styles below
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -146,6 +186,11 @@ const styles = StyleSheet.create({
   userCollege: {
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.6)',
+    marginBottom: 8,
+  },
+  userEmail: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.75)',
   },
   settingsSection: {
     marginBottom: 32,
@@ -220,5 +265,10 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: 12,
     color: '#94A3B8',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

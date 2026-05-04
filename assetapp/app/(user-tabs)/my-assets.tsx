@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,40 +8,60 @@ import {
   TouchableOpacity,
   TextInput,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-
-const ASSETS = [
-  {
-    id: '1',
-    name: 'HP Printer LaserJet Pro',
-    category: 'IT Equipment',
-    barcode: 'NU-2024-03-007',
-    status: 'Active',
-    statusColor: '#10B981',
-    statusBg: '#F0FDF4',
-  },
-  {
-    id: '2',
-    name: 'Dell Laptop XPS 15',
-    category: 'IT Equipment',
-    barcode: 'NU-2024-01-022',
-    status: 'Active',
-    statusColor: '#10B981',
-    statusBg: '#F0FDF4',
-  },
-  {
-    id: '3',
-    name: 'Office Chair - Ergonomic',
-    category: 'Furniture',
-    barcode: 'NU-2023-11-045',
-    status: 'For Repair',
-    statusColor: '#F59E0B',
-    statusBg: '#FFFBEB',
-  },
-];
+import { fetchUserAssets, getStoredUser } from '@/lib/userService';
 
 export default function MyAssets() {
+  const [assets, setAssets] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadAssets = async () => {
+      setLoading(true);
+      try {
+        const user = await getStoredUser();
+        if (!user) return;
+        const data = await fetchUserAssets(user);
+        setAssets(data);
+      } catch (error) {
+        console.error('Failed to load user assets:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAssets();
+  }, []);
+
+  const filteredAssets = useMemo(
+    () =>
+      assets.filter((asset) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          asset.name.toLowerCase().includes(query) ||
+          asset.category.toLowerCase().includes(query) ||
+          asset.barcode.toLowerCase().includes(query)
+        );
+      }),
+    [assets, searchQuery],
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>My Assets</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#f4b942" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -58,6 +78,8 @@ export default function MyAssets() {
             placeholder="Search assets..."
             style={styles.searchInput}
             placeholderTextColor="#94A3B8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
           />
         </View>
         <TouchableOpacity style={styles.filterButton}>
@@ -66,21 +88,27 @@ export default function MyAssets() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {ASSETS.map((asset) => (
-          <TouchableOpacity key={asset.id} style={styles.assetCard}>
-            <View style={styles.assetInfo}>
-              <Text style={styles.assetName}>{asset.name}</Text>
-              <Text style={styles.assetCategory}>{asset.category}</Text>
-              <View style={styles.barcodeContainer}>
-                <MaterialCommunityIcons name="barcode-scan" size={14} color="#64748B" />
-                <Text style={styles.barcodeText}>{asset.barcode}</Text>
+        {filteredAssets.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No assigned assets found.</Text>
+          </View>
+        ) : (
+          filteredAssets.map((asset) => (
+            <TouchableOpacity key={asset.id} style={styles.assetCard}>
+              <View style={styles.assetInfo}>
+                <Text style={styles.assetName}>{asset.name}</Text>
+                <Text style={styles.assetCategory}>{asset.category}</Text>
+                <View style={styles.barcodeContainer}>
+                  <MaterialCommunityIcons name="barcode-scan" size={14} color="#64748B" />
+                  <Text style={styles.barcodeText}>{asset.barcode}</Text>
+                </View>
               </View>
-            </View>
-            <View style={[styles.statusTag, { backgroundColor: asset.statusBg }]}>
-              <Text style={[styles.statusTagText, { color: asset.statusColor }]}>{asset.status}</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+              <View style={[styles.statusTag, { backgroundColor: asset.statusBg }]}> 
+                <Text style={[styles.statusTagText, { color: asset.statusColor }]}>{asset.status}</Text>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
         <View style={styles.spacer} />
       </ScrollView>
     </SafeAreaView>
@@ -142,6 +170,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   scrollContent: {
     padding: 16,
   },
@@ -193,6 +226,14 @@ const styles = StyleSheet.create({
   statusTagText: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  emptyState: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    color: '#64748B',
+    fontSize: 15,
   },
   spacer: {
     height: 20,
