@@ -12,6 +12,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { fetchAssets, AssetSummary } from '../lib/assetService';
 import { getStoredUser } from '../lib/userService';
+import { LinearGradient } from 'expo-linear-gradient';
+import QRCode from 'react-native-qrcode-svg';
+import QRViewModal from '../components/QRViewModal';
 
 const tags = ['All', 'Acquired', 'Active', 'For Repair', 'Pulled Out', 'Disposed'];
 
@@ -21,9 +24,19 @@ export default function AssetsListScreen() {
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState('All');
   const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [selectedQrValue, setSelectedQrValue] = useState('');
+  const [selectedQrTitle, setSelectedQrTitle] = useState('');
+
+  const openQrModal = (value: string, title: string) => {
+    setSelectedQrValue(value);
+    setSelectedQrTitle(title);
+    setQrModalVisible(true);
+  };
 
   useEffect(() => {
     const loadData = async () => {
@@ -37,6 +50,7 @@ export default function AssetsListScreen() {
         ]);
         setAssets(records);
         setUser(userData);
+        setExpandedId((prev) => prev ?? (records?.[0]?.id ? String(records[0].id) : null));
       } catch (err) {
         setError((err as Error).message || 'Unable to load assets from Supabase');
       } finally {
@@ -48,13 +62,6 @@ export default function AssetsListScreen() {
   }, [department, departmentId]);
 
   const isAdmin = user?.role === 'Admin';
-
-  const handleAssetPress = (assetId: string) => {
-    router.push({
-      pathname: '/asset-details',
-      params: { id: assetId }
-    } as any);
-  };
 
   const filteredAssets = useMemo(
     () =>
@@ -156,12 +163,16 @@ export default function AssetsListScreen() {
         </ScrollView>
 
         {filteredAssets.map((item) => {
+          const expanded = expandedId === item.id;
+          const statusColor = item.status === 'Active' ? '#10B981' : item.status === 'For Repair' ? '#F59E0B' : '#64748B';
+          const statusBg = item.status === 'Active' ? '#F0FDF4' : item.status === 'For Repair' ? '#FFFBEB' : '#F8FAFC';
+
           return (
             <View key={item.id} style={styles.assetCard}>
-              <TouchableOpacity 
-                style={styles.assetHeader} 
-                onPress={() => handleAssetPress(item.id)}
-                activeOpacity={0.7}
+              <TouchableOpacity
+                style={styles.assetHeader}
+                onPress={() => setExpandedId(expanded ? null : item.id)}
+                activeOpacity={0.8}
               >
                 <View style={styles.assetInfo}>
                   <Text style={styles.assetTitle}>{item.title}</Text>
@@ -169,17 +180,49 @@ export default function AssetsListScreen() {
                   <Text style={styles.assetLocation}>{item.department}</Text>
                 </View>
                 <View style={styles.headerRight}>
-                  <View style={styles.statusBadge}>
-                    <View style={[styles.statusDot, { backgroundColor: item.status === 'Active' ? '#10B981' : '#FBBF24' }]} />
-                    <Text style={[styles.statusText, { color: item.status === 'Active' ? '#10B981' : '#FBBF24' }]}>{item.status}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
+                    <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                    <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
                   </View>
-                  <MaterialCommunityIcons 
-                    name="chevron-right" 
-                    size={24} 
-                    color="#94A3B8" 
+                  <MaterialCommunityIcons
+                    name={expanded ? 'chevron-up' : 'chevron-down'}
+                    size={24}
+                    color="#94A3B8"
                   />
                 </View>
               </TouchableOpacity>
+
+              {expanded && (
+                <View style={styles.assetDetails}>
+                  <TouchableOpacity
+                    style={styles.qrSection}
+                    onPress={() => openQrModal(item.assetId, item.title)}
+                    activeOpacity={0.9}
+                  >
+                    <LinearGradient
+                      colors={['#1E3A5F', '#2D5A8E']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.qrGradient}
+                    >
+                      <View style={styles.qrContainer}>
+                        <QRCode value={item.assetId} size={150} backgroundColor="white" />
+                      </View>
+                      <Text style={styles.qrHint}>Tap QR to Expand</Text>
+                      <Text style={styles.qrValue}>{item.assetId}</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+
+                  <View style={styles.detailGrid}>
+                    <DetailItem icon="pound" label="Serial Number" value={item.serialNumber} />
+                    <DetailItem icon="calendar-range" label="Acquisition Date" value={formatDate(item.acquisitionDate)} />
+                    <DetailItem icon="account-outline" label="Custodian" value={item.custodian} />
+                    <DetailItem icon="identifier" label="Asset ID" value={item.assetId} />
+                    <DetailItem icon="tag-outline" label="Category" value={item.category} />
+                    <DetailItem icon="clock-outline" label="Last Updated" value={formatDate(item.updatedAt)} />
+                  </View>
+                </View>
+              )}
             </View>
           );
         })}
@@ -190,7 +233,26 @@ export default function AssetsListScreen() {
           </View>
         )}
       </ScrollView>
+
+      <QRViewModal
+        visible={qrModalVisible}
+        onClose={() => setQrModalVisible(false)}
+        value={selectedQrValue}
+        title={selectedQrTitle}
+      />
     </SafeAreaView>
+  );
+}
+
+function DetailItem({ icon, label, value }: { icon: string, label: string, value?: string }) {
+  return (
+    <View style={styles.detailItemBox}>
+      <View style={styles.detailItemHeader}>
+        <MaterialCommunityIcons name={icon as any} size={16} color="#94A3B8" />
+        <Text style={styles.detailItemLabel}>{label}</Text>
+      </View>
+      <Text style={styles.detailItemValue}>{value || 'N/A'}</Text>
+    </View>
   );
 }
 
@@ -379,26 +441,34 @@ const styles = StyleSheet.create({
     borderTopColor: '#F1F5F9',
     paddingTop: 20,
   },
-  qrCard: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  qrBox: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
+  qrSection: {
     borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 18,
+  },
+  qrGradient: {
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+  },
+  qrContainer: {
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#FBBF24',
-    shadowColor: '#FBBF24',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
   },
-  qrText: {
+  qrHint: {
     marginTop: 12,
-    color: '#1E3A5F',
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  qrValue: {
+    marginTop: 6,
+    color: '#FFFFFF',
     fontWeight: '800',
-    fontSize: 15,
+    fontSize: 14,
     letterSpacing: 1,
   },
   detailGrid: {

@@ -24,6 +24,10 @@ export type UserAsset = {
   statusBg: string;
   location?: string;
   custodian?: string;
+  serialNumber?: string;
+  acquisitionDate?: string;
+  updatedAt?: string;
+  department?: string;
 };
 
 export type UserRequest = {
@@ -71,6 +75,10 @@ const normalizeUserAsset = (row: any): UserAsset => {
     statusBg,
     location: String(row.asset_location ?? row.location ?? ''),
     custodian: String(row.custodian ?? ''),
+    serialNumber: String(row.serial_Number ?? row.serial_number ?? ''),
+    acquisitionDate: String(row.accusion_date ?? row.acquisition_date ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+    department: String(row.department ?? ''),
   };
 };
 
@@ -117,14 +125,60 @@ export async function fetchLiveUser(userId: number | string): Promise<StoredUser
 }
 
 export async function fetchUserAssets(user: StoredUser): Promise<UserAsset[]> {
-  const department = String(user.department ?? '');
-  const query = supabase.from('assets').select('*').order('updated_at', { ascending: false });
+  const departmentId = String((user as any).department_id ?? (user as any).departmentId ?? '');
+  const departmentName = String(user.department ?? '');
 
-  if (department) {
-    query.eq('department', department);
+  let targetDeptId = departmentId;
+  if (!targetDeptId && departmentName) {
+    const { data: deptRow, error: deptErr } = await supabase
+      .from('departments')
+      .select('id')
+      .eq('Name', departmentName)
+      .maybeSingle();
+    if (!deptErr && deptRow?.id) {
+      targetDeptId = String(deptRow.id);
+    }
   }
 
-  const { data, error } = await query;
+  if (targetDeptId) {
+    const { data: deptUsers, error: usersErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('department_id', targetDeptId);
+
+    if (usersErr) {
+      console.error('Failed to fetch department users:', usersErr.message);
+      throw usersErr;
+    }
+
+    const userIds = (deptUsers ?? []).map((u: any) => u.id).filter(Boolean);
+    if (userIds.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from('assets')
+      .select('*')
+      .in('user_id', userIds)
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error('Failed to fetch department assets:', error.message);
+      throw error;
+    }
+
+    return (data ?? []).map(normalizeUserAsset);
+  }
+
+  const userId = String(user.id ?? '');
+  if (!userId) return [];
+
+  const { data, error } = await supabase
+    .from('assets')
+    .select('*')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false });
+
   if (error) {
     console.error('Failed to fetch user assets:', error.message);
     throw error;
@@ -149,6 +203,26 @@ export async function fetchUserRequests(user: StoredUser): Promise<UserRequest[]
   return (data ?? []).map(normalizeUserRequest);
 }
 
+export type DepartmentOption = {
+  id: string | number;
+  Name: string;
+};
+
+export async function fetchDepartments(): Promise<DepartmentOption[]> {
+  const { data, error } = await supabase
+    .from('departments')
+    .select('id, Name')
+    .eq('status', 'Active')
+    .order('Name', { ascending: true });
+
+  if (error) {
+    console.error('Failed to fetch departments:', error.message);
+    throw error;
+  }
+
+  return (data ?? []) as DepartmentOption[];
+}
+
 export async function submitUserRequest(user: StoredUser, requestType: string, assetId: string, note: string) {
   const userId = user.id ?? null;
   if (!userId) {
@@ -161,8 +235,29 @@ export async function submitUserRequest(user: StoredUser, requestType: string, a
     status: 'Pending',
   };
 
-  if (assetId) {
-    payload.asset_id = assetId;
+  const trimmedAssetId = String(assetId ?? '').trim();
+  if (trimmedAssetId) {
+    const numericOnly = /^\d+$/.test(trimmedAssetId);
+    if (!numericOnly) {
+      const { data: assetRow, error: assetErr } = await supabase
+        .from('assets')
+        .select('id')
+        .eq('Asset_code', trimmedAssetId)
+        .maybeSingle();
+
+      if (assetErr) {
+        console.error('Failed to resolve asset code to id:', assetErr.message);
+        throw assetErr;
+      }
+
+      if (!assetRow?.id) {
+        throw new Error('Invalid asset code: no matching asset found.');
+      }
+
+      payload.asset_id = assetRow.id;
+    } else {
+      payload.asset_id = trimmedAssetId;
+    }
   }
 
   const { data, error } = await supabase.from('requests').insert([payload]).select().single();
@@ -214,7 +309,7 @@ export async function searchUsers(query: string) {
     throw error;
   }
   
-  return (data ?? []).map(u => ({
+  return (data ?? []).map((u: any) => ({
     id: u.id,
     fullName: u.full_name,
     email: u.email,
@@ -252,6 +347,10 @@ export async function updateRequestStatus(requestId: string, status: 'Approved' 
       newAssetStatus = 'Pulled Out';
       logTable = 'disposals'; // Using disposals for pullouts as per assetService.ts
       logType = 'disposal';
+    } else if (request.request_type === 'Disposal') {
+      newAssetStatus = 'Disposed';
+      logTable = 'disposals';
+      logType = 'disposal';
     } else if (request.request_type === 'Replacement') {
       newAssetStatus = 'Replacement';
       logTable = 'replacements';
@@ -262,7 +361,7 @@ export async function updateRequestStatus(requestId: string, status: 'Approved' 
     await supabase
       .from('assets')
       .update({ Lifecycle_Status: newAssetStatus })
-      .eq('Asset_code', request.asset_id);
+      .eq('id', request.asset_id);
 
     // Add log entry
     await supabase.from(logTable).insert([{

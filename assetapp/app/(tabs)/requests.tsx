@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -13,17 +14,6 @@ import { supabase } from '@/lib/supabase';
 import { RequestCard, RequestItem, RequestStatus } from '@/components/requests/request-card';
 import { updateRequestStatus } from '@/lib/userService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
-
-interface RequestData {
-  id: number;
-  request_type: string;
-  status: string;
-  Note: string;
-  created_at: string;
-  profiles?: { full_name: string; department_id: string }[];
-  assets?: { Asset_code: string; Asset_name: string } | null;
-}
 
 const tabs = ['All', 'Pending', 'Completed'] as const;
 type RequestTab = typeof tabs[number];

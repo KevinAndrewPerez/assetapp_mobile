@@ -12,12 +12,14 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { fetchUserRequests, getStoredUser } from '@/lib/userService';
 
 const tabs = ['All', 'Pending', 'Completed'] as const;
 type RequestTab = typeof tabs[number];
 
 export default function MyRequests() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<RequestTab>('All');
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,19 +61,55 @@ export default function MyRequests() {
     return requests;
   }, [activeTab, requests]);
 
+  if (loading && requests.length === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>My Requests</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.newRequestButton}
+              onPress={() => router.push('/submit-request' as any)}
+              activeOpacity={0.85}
+            >
+              <MaterialCommunityIcons name="plus" size={18} color="#1a3a5c" />
+              <Text style={styles.newRequestText}>New</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.notificationButton}>
+              <MaterialCommunityIcons name="bell-badge-outline" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#f4b942" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Custom Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Requests</Text>
-        <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell-badge-outline" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.newRequestButton}
+            onPress={() => router.push('/submit-request' as any)}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="plus" size={18} color="#1a3a5c" />
+            <Text style={styles.newRequestText}>New</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.notificationButton}>
+            <MaterialCommunityIcons name="bell-badge-outline" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
-        {['All', 'Pending', 'Completed'].map((tab) => (
+        {tabs.map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && styles.activeTab]}
@@ -152,6 +190,25 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     padding: 4,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  newRequestButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f4b942',
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 999,
+  },
+  newRequestText: {
+    color: '#1a3a5c',
+    fontWeight: '800',
+    fontSize: 12,
   },
   tabContainer: {
     flexDirection: 'row',

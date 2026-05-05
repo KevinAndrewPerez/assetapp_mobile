@@ -1,7 +1,8 @@
-﻿﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -15,8 +16,11 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getStoredUser, submitUserRequest } from '@/lib/userService';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import { supabase } from '@/lib/supabase';
 
-const requestTypes = ['Repair', 'Pullout', 'Approval', 'Replacement', 'Other'] as const;
+const requestTypes = ['Repair', 'Pullout', 'Disposal', 'Turn Over', 'Approval', 'Replacement', 'Other'] as const;
 type RequestType = typeof requestTypes[number];
 
 export default function SubmitRequest() {
@@ -26,10 +30,20 @@ export default function SubmitRequest() {
   const [reason, setReason] = useState('');
   const [showTypeOptions, setShowTypeOptions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [selectedPhotoUri, setSelectedPhotoUri] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!requestType) {
       Alert.alert('Validation error', 'Please select a request type.');
+      return;
+    }
+
+    const requiresAsset = requestType === 'Repair' || requestType === 'Pullout' || requestType === 'Disposal' || requestType === 'Replacement';
+    if (requiresAsset && !assetId.trim()) {
+      Alert.alert('Validation error', 'Please scan or enter the asset code for this request type.');
       return;
     }
 
@@ -46,7 +60,34 @@ export default function SubmitRequest() {
         return;
       }
 
-      await submitUserRequest(user, requestType, assetId.trim(), reason.trim());
+      let resolvedAssetDbId = '';
+      const trimmedAssetId = assetId.trim();
+      if (trimmedAssetId) {
+        const { data: assetRow, error: assetErr } = await supabase
+          .from('assets')
+          .select('id, Asset_code, Lifecycle_Status')
+          .eq('Asset_code', trimmedAssetId)
+          .maybeSingle();
+
+        if (assetErr) {
+          Alert.alert('Error', 'Unable to validate asset code. Please try again.');
+          return;
+        }
+
+        if (!assetRow) {
+          Alert.alert('Invalid asset code', 'No asset was found for the entered/scanned code.');
+          return;
+        }
+
+        resolvedAssetDbId = String(assetRow.id ?? '');
+        const status = String(assetRow.Lifecycle_Status ?? '');
+        if ((requestType === 'Pullout' || requestType === 'Disposal') && status !== 'Active' && status !== 'Acquired') {
+          Alert.alert('Not allowed', `Only Active or Acquired assets can be used for ${requestType} requests. Current status: ${status || 'Unknown'}`);
+          return;
+        }
+      }
+
+      await submitUserRequest(user, requestType, resolvedAssetDbId, reason.trim());
       Alert.alert('Request submitted', 'Your request has been submitted successfully.');
       router.back();
     } catch (error) {
@@ -60,6 +101,51 @@ export default function SubmitRequest() {
   const handleTypeSelect = (type: RequestType) => {
     setRequestType(type);
     setShowTypeOptions(false);
+  };
+
+  const openScanner = async () => {
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) {
+        Alert.alert('Camera Permission', 'Camera permission is required to scan QR codes.');
+        return;
+      }
+    }
+    setScanned(false);
+    setScannerVisible(true);
+  };
+
+  const handleScanned = (value: string) => {
+    if (scanned) return;
+    setScanned(true);
+    const code = String(value ?? '').trim();
+    if (!code) {
+      setScanned(false);
+      Alert.alert('Invalid QR', 'The scanned QR code is empty.');
+      return;
+    }
+    setAssetId(code);
+    setScannerVisible(false);
+  };
+
+  const clearAssetId = () => {
+    setAssetId('');
+  };
+
+  const pickPhoto = async () => {
+    const res = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!res.granted) {
+      Alert.alert('Permission required', 'Please allow photo library access to attach a photo.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+      allowsEditing: true,
+    });
+    if (result.canceled) return;
+    const uri = result.assets?.[0]?.uri;
+    if (uri) setSelectedPhotoUri(uri);
   };
 
   return (
@@ -109,10 +195,10 @@ export default function SubmitRequest() {
             <TouchableOpacity
               style={styles.uploadButton}
               activeOpacity={0.8}
-              onPress={() => Alert.alert('Not supported', 'QR upload is not supported in this version.')}
+              onPress={openScanner}
             >
-              <MaterialCommunityIcons name="upload" size={20} color="#FFFFFF" />
-              <Text style={styles.uploadButtonText}>Upload Asset QR Code</Text>
+              <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FFFFFF" />
+              <Text style={styles.uploadButtonText}>Scan with camera</Text>
             </TouchableOpacity>
 
             <View style={styles.orContainer}>
@@ -121,13 +207,18 @@ export default function SubmitRequest() {
               <View style={styles.orLine} />
             </View>
 
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, styles.assetCodeRow]}>
               <TextInput
                 style={styles.input}
                 placeholder="Enter asset code manually"
                 value={assetId}
                 onChangeText={setAssetId}
               />
+              {!!assetId.trim() && (
+                <TouchableOpacity onPress={clearAssetId} style={styles.clearButton} activeOpacity={0.8}>
+                  <Text style={styles.clearButtonText}>Clear</Text>
+                </TouchableOpacity>
+              )}
             </View>
             <Text style={styles.helperText}>Enter the asset code if you know it, or leave blank for a new request.</Text>
           </View>
@@ -152,11 +243,11 @@ export default function SubmitRequest() {
             <TouchableOpacity
               style={styles.photoUploadArea}
               activeOpacity={0.8}
-              onPress={() => Alert.alert('Not supported', 'Photo upload is not supported in this version.')}
+              onPress={pickPhoto}
             >
               <MaterialCommunityIcons name="upload-outline" size={32} color="#94A3B8" />
-              <Text style={styles.photoUploadText}>Click to upload or drag and drop</Text>
-              <Text style={styles.photoUploadSubtext}>PNG, JPG up to 10MB</Text>
+              <Text style={styles.photoUploadText}>{selectedPhotoUri ? 'Photo selected' : 'Tap to upload'}</Text>
+              <Text style={styles.photoUploadSubtext}>{selectedPhotoUri ? 'Attached to this request' : 'PNG, JPG up to 10MB'}</Text>
             </TouchableOpacity>
           </View>
 
@@ -174,6 +265,33 @@ export default function SubmitRequest() {
           <View style={styles.spacer} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal visible={scannerVisible} animationType="slide">
+        <SafeAreaView style={styles.scannerContainer}>
+          <View style={styles.scannerHeader}>
+            <TouchableOpacity
+              style={styles.scannerClose}
+              onPress={() => setScannerVisible(false)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="close" size={26} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.scannerTitle}>Scan Asset QR</Text>
+            <View style={{ width: 42 }} />
+          </View>
+
+          <View style={styles.cameraWrap}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={({ data }) => handleScanned(String(data ?? ''))}
+            />
+            <View style={styles.scanFrame} />
+            <Text style={styles.scanHint}>Align the QR code inside the frame</Text>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -254,6 +372,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
+  },
+  assetCodeRow: {
+    gap: 10,
+  },
+  clearButton: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  clearButtonText: {
+    color: '#1a3a5c',
+    fontSize: 12,
+    fontWeight: '700',
   },
   orContainer: {
     flexDirection: 'row',
@@ -343,5 +477,49 @@ const styles = StyleSheet.create({
   },
   spacer: {
     height: 24,
+  },
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  scannerHeader: {
+    height: 56,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0F172A',
+  },
+  scannerClose: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerTitle: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  cameraWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanFrame: {
+    width: 250,
+    height: 250,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: '#FBBF24',
+    backgroundColor: 'rgba(0,0,0,0.15)',
+  },
+  scanHint: {
+    marginTop: 18,
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

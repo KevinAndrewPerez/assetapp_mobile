@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export type RequestStatus = 'Pending' | 'Approved' | 'Rejected';
-export type RequestType = 'Repair' | 'Pullout' | 'Approval' | 'Replacement' | 'Other';
+export type RequestType = 'Repair' | 'Pullout' | 'Disposal' | 'Turn Over' | 'Approval' | 'Replacement' | 'Other';
 
 export interface RequestItem {
   id: string;
@@ -51,6 +51,14 @@ const typeStyles = {
   Pullout: {
     backgroundColor: '#E0F2FE',
     color: '#0369A1',
+  },
+  Disposal: {
+    backgroundColor: '#FEE2E2',
+    color: '#B91C1C',
+  },
+  'Turn Over': {
+    backgroundColor: '#FEF3C7',
+    color: '#B45309',
   },
   Approval: {
     backgroundColor: '#ECFCCB',

@@ -51,7 +51,8 @@
           "photosPermission": "Allow NUTrace to save QR codes to your gallery.",
           "savePhotosPermission": "Allow NUTrace to save QR codes to your gallery."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,

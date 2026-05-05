@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import * as FileSystem from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 
 export type AssetSummary = {
   id: string;
@@ -206,10 +208,10 @@ export async function fetchAssetLifecycle(assetId: string): Promise<LifecycleEve
   }
 
   const events = [
-    ...(auditRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'audit', idx)),
-    ...(repairRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'repair', idx)),
-    ...(replacementRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'replacement', idx)),
-    ...(disposalRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'disposal', idx)),
+    ...(auditRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'audit', idx)),
+    ...(repairRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'repair', idx)),
+    ...(replacementRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'replacement', idx)),
+    ...(disposalRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'disposal', idx)),
   ];
 
   return events.sort((a, b) => {
@@ -234,10 +236,10 @@ export async function fetchActivityTimeline(): Promise<LifecycleEvent[]> {
   }
 
   const events = [
-    ...(auditRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'audit', idx)),
-    ...(repairRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'repair', idx)),
-    ...(replacementRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'replacement', idx)),
-    ...(disposalRes.data ?? []).map((row, idx) => normalizeLifecycleRow(row, 'disposal', idx)),
+    ...(auditRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'audit', idx)),
+    ...(repairRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'repair', idx)),
+    ...(replacementRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'replacement', idx)),
+    ...(disposalRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'disposal', idx)),
   ];
 
   return events.sort((a, b) => {
@@ -284,7 +286,7 @@ export async function registerAsset(payload: {
     manufacture: payload.manufacturer,
     serial_Number: payload.serialNumber,
     asset_location: payload.location,
-    asset_photo: payload.imageUrl,
+    url: payload.imageUrl,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
@@ -324,29 +326,50 @@ export async function insertDisposalEvent(payload: Record<string, any>) {
 
 export async function uploadAssetPhoto(assetId: string, uri: string) {
   try {
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const fileExt = uri.split('.').pop();
+    const cleanedUri = uri.split('?')[0]?.split('#')[0] ?? uri;
+    const rawExt = cleanedUri.includes('.') ? cleanedUri.split('.').pop() : '';
+    const fileExt = String(rawExt || 'jpg').toLowerCase();
     const fileName = `${assetId}_${Date.now()}.${fileExt}`;
     const filePath = `photos/${fileName}`;
 
-    // IMPORTANT: Ensure a bucket named 'assets' exists in your Supabase Storage
-    const { data, error } = await supabase.storage
-      .from('assets')
-      .upload(filePath, blob);
+    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+    const arrayBuffer = decode(base64);
+
+    const contentType =
+      fileExt === 'png'
+        ? 'image/png'
+        : fileExt === 'webp'
+        ? 'image/webp'
+        : fileExt === 'heic'
+        ? 'image/heic'
+        : fileExt === 'heif'
+        ? 'image/heif'
+        : 'image/jpeg';
+
+    const { error } = await supabase.storage.from('assets').upload(filePath, arrayBuffer, {
+      contentType,
+      cacheControl: '3600',
+      upsert: false,
+    });
 
     if (error) {
       if (error.message.includes('Bucket not found')) {
         throw new Error('Supabase Storage bucket "assets" not found. Please create it in your Supabase dashboard.');
       }
+      if (
+        error.message.toLowerCase().includes('row-level security') ||
+        error.message.toLowerCase().includes('violates row-level security')
+      ) {
+        throw new Error(
+          'Supabase Storage upload blocked by Row Level Security (RLS). Add an INSERT policy for storage.objects on bucket "assets" (or disable RLS for storage.objects) so the client can upload files.',
+        );
+      }
       throw error;
     }
 
-    const { data: { publicUrl } } = supabase.storage
-      .from('assets')
-      .getPublicUrl(filePath);
+    const { data } = supabase.storage.from('assets').getPublicUrl(filePath);
 
-    return publicUrl;
+    return data.publicUrl;
   } catch (error) {
     console.error('Error uploading photo:', error);
     throw error;
