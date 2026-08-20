@@ -36,7 +36,7 @@ export default function App() {
       const userJson = await AsyncStorage.getItem('user');
       if (userJson) {
         const user = JSON.parse(userJson);
-        setUserName(user.full_name || 'Admin');
+        setUserName(user.employee_numbers?.Full_Name || user.full_name || 'Admin');
       }
 
       const [assetsRes, deploysRes, repairsRes, requestsRes, timelineRes] = await Promise.all([
@@ -113,6 +113,24 @@ export default function App() {
       variant: 'secondary' as const,
       onPress: () => router.push('/pullout'),
     },
+    {
+      title: 'Make Repair',
+      subtitle: 'Request asset repair',
+      icon: 'wrench',
+      backgroundColor: '#FFFFFF',
+      iconColor: '#F59E0B',
+      variant: 'default' as const,
+      onPress: () => router.push('/repair'),
+    },
+    {
+      title: 'Record Replacement',
+      subtitle: 'Manage replacement records',
+      icon: 'sync',
+      backgroundColor: '#FFFFFF',
+      iconColor: '#8B5CF6',
+      variant: 'default' as const,
+      onPress: () => router.push('/replacement'),
+    },
   ];
 
   const formatRelativeTime = (ts: string) => {
@@ -132,18 +150,18 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Dashboard</Text>
         <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell-outline" size={24} color="#1F2937" />
+          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
           <View style={styles.notificationBadge}>
             <Text style={styles.badgeText}>3</Text>
           </View>
         </TouchableOpacity>
       </View>
-
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+      <SafeAreaView style={styles.container}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <UserCard
           name={userName}
           role="Administrator"
@@ -215,11 +233,16 @@ export default function App() {
 
         <View style={styles.spacer} />
       </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -229,14 +252,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    paddingVertical: 18,
+    paddingTop: 48,
+    paddingBottom: 16,
+    backgroundColor: '#0C134F',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
   },
   notificationButton: {
     position: 'relative',
@@ -258,7 +284,8 @@ const styles = StyleSheet.create({
     color: '#1E3A5F',
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 100,
+    paddingTop: 12,
   },
   section: {
     marginVertical: 8,
@@ -279,7 +306,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   spacer: {
-    height: 40,
+    height: 20,
   },
   emptyText: {
     textAlign: 'center',

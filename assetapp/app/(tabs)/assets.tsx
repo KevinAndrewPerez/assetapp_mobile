@@ -54,12 +54,12 @@ export default function AssetsScreen() {
       const deptsWithHeads = await Promise.all(depts.map(async (d) => {
         const { data: head } = await supabase
           .from('users')
-          .select('full_name, email')
+          .select('email, employee_numbers(Full_Name)')
           .eq('department_id', d.id)
           .eq('role', 'Department Head')
           .limit(1)
           .single();
-        return { ...d, headName: head?.full_name || 'Unassigned', headEmail: head?.email || 'N/A' };
+          return { ...d, headName: (head as any)?.employee_numbers?.Full_Name || 'Unassigned', headEmail: head?.email || 'N/A' };
       }));
       
       setDepartments(deptsWithHeads);
@@ -124,14 +124,17 @@ export default function AssetsScreen() {
     : departments.filter(d => d.id === userDeptId);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Assets & Custodianship</Text>
         <TouchableOpacity style={styles.notificationButton}>
           <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-          <View style={styles.badge}><Text style={styles.badgeText}>3</Text></View>
+          <View style={styles.notificationBadge}>
+            <Text style={styles.badgeText}>3</Text>
+          </View>
         </TouchableOpacity>
       </View>
+      <SafeAreaView style={styles.container}>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {visibleDepartments.map((dept) => {
@@ -260,7 +263,8 @@ export default function AssetsScreen() {
         value={selectedQrValue} 
         title={selectedQrTitle} 
       />
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
@@ -278,14 +282,52 @@ function StatBox({ label, count, total, color }: { label: string, count: number,
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  screenContainer: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { backgroundColor: '#1E3A5F', padding: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  headerTitle: { color: '#FFF', fontSize: 20, fontWeight: '700' },
-  notificationButton: { position: 'relative' },
-  badge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#FBBF24', borderRadius: 10, width: 18, height: 18, justifyContent: 'center', alignItems: 'center' },
-  badgeText: { fontSize: 10, fontWeight: '700', color: '#1E3A5F' },
-  scrollContent: { padding: 16 },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    paddingTop: 48,
+    paddingBottom: 16,
+    backgroundColor: '#0C134F',
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
+  },
+  notificationButton: {
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#FDB833',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E3A5F',
+  },
+  scrollContent: { padding: 16, paddingTop: 12 },
   deptCard: { backgroundColor: '#FFF', borderRadius: 20, marginBottom: 16, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
   deptHeader: { padding: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   deptName: { fontSize: 18, fontWeight: '700', color: '#1E3A5F', marginBottom: 4 },

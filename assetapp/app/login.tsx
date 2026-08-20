@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { enrichUserWithEmployeeData, StoredUser } from '../lib/userService';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -49,13 +50,15 @@ export default function LoginScreen() {
         return;
       }
 
-      const user = data[0];
+      const user = data[0] as StoredUser;
       console.log('Current User Role:', user.role);
-      await AsyncStorage.setItem('user', JSON.stringify(user));
 
-      if (user.role === 'Admin' || user.role === 'AssetOfficer') {
+      const enrichedUser = await enrichUserWithEmployeeData(user);
+      await AsyncStorage.setItem('user', JSON.stringify(enrichedUser));
+
+      if (enrichedUser.role === 'Admin' || enrichedUser.role === 'AssetOfficer') {
         router.replace('/(tabs)');
-      } else if (user.role === 'Employee' || user.role === 'Department Head') {
+      } else if (enrichedUser.role === 'Employee' || enrichedUser.role === 'Department Head') {
         router.replace('/(user-tabs)' as any);
       } else {
         setGeneralError('Unauthorized role');

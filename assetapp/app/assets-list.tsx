@@ -92,7 +92,7 @@ export default function AssetsListScreen() {
     [search, activeTag, department, departmentId, assets, user, isAdmin],
   );
 
-  const departmentName = department || (isAdmin ? 'All Assets' : assets.find(a => String(a.departmentId) === String(user?.department_id))?.department || 'My Department');
+  const departmentName = department || (isAdmin ? 'All Assets' : assets.find(a => String(a.departmentId) === String(user?.department_id))?.department || (user?.department ?? (user as any)?.employee_numbers?.Full_Name ?? user?.full_name ?? 'My Assets'));
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'N/A';

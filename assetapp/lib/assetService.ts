@@ -132,7 +132,7 @@ async function insertRecord(table: string, payload: any) {
 export async function fetchAssets(): Promise<AssetSummary[]> {
   const { data, error } = await supabase
     .from('assets')
-    .select('*, users(full_name, departments(Name))')
+    .select('*, users(employee_numbers("Full_Name"), departments("Name"))')
     .order('updated_at', { ascending: false });
     
   if (error) {
@@ -143,7 +143,7 @@ export async function fetchAssets(): Promise<AssetSummary[]> {
 
 export async function fetchAssetsWithDepartments(): Promise<{ assets: AssetSummary[], departments: any[] }> {
   const [assetsRes, deptsRes] = await Promise.all([
-    supabase.from('assets').select('*, users(full_name, departments(Name))'),
+    supabase.from('assets').select('*, users(employee_numbers("Full_Name"), departments("Name"))'),
     supabase.from('departments').select('*').eq('status', 'Active')
   ]);
 
@@ -224,9 +224,9 @@ export async function fetchAssetLifecycle(assetId: string): Promise<LifecycleEve
 
 export async function fetchActivityTimeline(): Promise<LifecycleEvent[]> {
   const [auditRes, repairRes, replacementRes, disposalRes] = await Promise.all([
-    supabase.from('audit_logs').select('*, assets(Asset_name, Asset_code), users(full_name, role), requests(id, request_type)'),
-    supabase.from('repairs').select('*, assets(Asset_name, Asset_code), requests(id, request_type)'),
-    supabase.from('replacements').select('*, old_assets:old_asset_id(Asset_name, Asset_code), requests(id, request_type)'),
+    supabase.from('audit_logs').select('*, assets("Asset_name", "Asset_code"), users(role, employee_numbers("Full_Name")), requests(id, request_type)'),
+    supabase.from('repairs').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)'),
+    supabase.from('replacements').select('*, old_assets:old_assets_id(Asset_name, Asset_code), requests(id, request_type)'),
     supabase.from('disposals').select('*, assets(Asset_name, Asset_code), requests(id, request_type)'),
   ]);
 

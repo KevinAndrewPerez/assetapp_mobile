@@ -5,15 +5,13 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Platform,
   ActivityIndicator,
   DimensionValue,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { fetchUserAssets, fetchUserRequests, getStoredUser, StoredUser, UserAsset, UserRequest } from '@/lib/userService';
+import { fetchUserAssets, fetchUserRequests, getStoredUser, StoredUser, UserAsset, UserRequest, enrichUserWithEmployeeData } from '@/lib/userService';
 
 export default function UserDashboard() {
   const router = useRouter();
@@ -28,11 +26,13 @@ export default function UserDashboard() {
       try {
         const storedUser = await getStoredUser();
         if (!storedUser) return;
-        setUser(storedUser);
+
+        const enrichedUser = await enrichUserWithEmployeeData(storedUser);
+        setUser(enrichedUser);
 
         const [userAssets, userRequests] = await Promise.all([
-          fetchUserAssets(storedUser),
-          fetchUserRequests(storedUser),
+          fetchUserAssets(enrichedUser),
+          fetchUserRequests(enrichedUser),
         ]);
 
         setAssets(userAssets);
@@ -47,6 +47,32 @@ export default function UserDashboard() {
     loadData();
   }, []);
 
+  const getUserName = (u: StoredUser | null) => {
+    if (!u) return '';
+    const empNumbers = Array.isArray((u as any)?.employee_numbers)
+      ? (u as any).employee_numbers[0]
+      : (u as any)?.employee_numbers;
+    return (
+      empNumbers?.Full_Name ||
+      u.full_name ||
+      (u as any)?.employeeNumber?.Full_Name ||
+      ''
+    );
+  };
+
+  const getUserDepartment = (u: StoredUser | null) => {
+    if (!u) return '';
+    const dept = Array.isArray((u as any)?.departments)
+      ? (u as any).departments[0]
+      : (u as any)?.departments;
+    return (
+      (u as any)?.departmentName ||
+      dept?.Name ||
+      u?.department ||
+      ''
+    );
+  };
+
   const lifecycleStatus = useMemo(() => {
     const counts: Record<string, number> = {
       Acquired: 0,
@@ -57,9 +83,17 @@ export default function UserDashboard() {
     };
 
     assets.forEach((asset) => {
-      const status = asset.status;
-      if (status in counts) {
-        counts[status] = (counts[status] ?? 0) + 1;
+      const rawStatus = String(asset.status || '').trim();
+      let mappedStatus = rawStatus;
+      if (rawStatus === 'Pullout' || rawStatus === 'Pulled Out' || rawStatus === 'Pull-Out') mappedStatus = 'Pulled Out';
+      else if (rawStatus === 'Disposal' || rawStatus === 'Disposed') mappedStatus = 'Disposed';
+      else if (rawStatus === 'Acquisition' || rawStatus === 'Acquired' || rawStatus === 'New') mappedStatus = 'Acquired';
+      else if (rawStatus === 'Repair' || rawStatus === 'For Repair' || rawStatus === 'Needs Repair') mappedStatus = 'For Repair';
+      else if (rawStatus === 'Active' || rawStatus === 'Deployed') mappedStatus = 'Active';
+      if (mappedStatus in counts) {
+        counts[mappedStatus] = (counts[mappedStatus] ?? 0) + 1;
+      } else {
+        counts.Acquired = (counts.Acquired ?? 0) + 1;
       }
     });
 
@@ -82,55 +116,63 @@ export default function UserDashboard() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.screenContainer}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Dashboard</Text>
+          <TouchableOpacity style={styles.notificationButton}>
+            <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
+            <View style={styles.notificationBadge}>
+              <Text style={styles.badgeText}>3</Text>
+            </View>
+          </TouchableOpacity>
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#f4b942" />
+        <View style={styles.container}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#f4b942" />
+          </View>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
+  const userName = getUserName(user);
+  const userDept = getUserDepartment(user);
+
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Custom Header */}
+    <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Dashboard</Text>
         <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell-badge-outline" size={24} color="#FFFFFF" />
+          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
+          <View style={styles.notificationBadge}>
+            <Text style={styles.badgeText}>3</Text>
+          </View>
         </TouchableOpacity>
       </View>
-
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <View style={styles.container}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.contentWrapper}>
         {/* Welcome Card */}
         <LinearGradient
-          colors={['#1a3a5c', '#254b7d']}
+          colors={['#1E3A5F', '#2C5282']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.welcomeCard}
         >
-          <Text style={styles.welcomeText}>Welcome, {user?.full_name ?? user?.email ?? 'User'}</Text>
+          <Text style={styles.nameText}>{userName || 'User'}</Text>
           <Text style={styles.roleText}>
-            {user?.role ?? 'Member'}{user?.department ? ` • ${user.department}` : ''}
+            {userDept || 'No Department'}
           </Text>
         </LinearGradient>
 
         {/* Asset Summary Card */}
         <View style={styles.summaryCard}>
           <View style={styles.summaryHeader}>
-            <View style={styles.summaryTitleSection}>
-              <Text style={styles.collegeName} numberOfLines={1} ellipsizeMode="tail">
-                {user?.department ?? 'My Department'}
-              </Text>
-              <Text style={styles.unitHead} numberOfLines={1} ellipsizeMode="tail">
-                {user?.full_name ?? 'Your Name'}{user?.role ? ` - ${user.role}` : ''}
-              </Text>
+            <View style={styles.totalAssetsContainerLeft}>
+              <Text style={styles.totalAssetsValue}>{assets.length}</Text>
             </View>
             <View style={styles.totalAssetsContainer}>
-              <Text style={styles.totalAssetsValue}>{assets.length}</Text>
-              <Text style={styles.totalAssetsLabel}>Total Assets</Text>
+              <Text style={styles.totalAssetsLabel}>MY ASSETS</Text>
             </View>
           </View>
 
@@ -209,7 +251,7 @@ export default function UserDashboard() {
             onPress={() => router.push('/submit-request' as any)}
           >
             <LinearGradient
-              colors={['#f4b942', '#f8d082']}
+              colors={['#FDB833', '#F6AD55']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.submitGradient}
@@ -249,35 +291,64 @@ export default function UserDashboard() {
         </View>
 
         <View style={styles.spacer} />
+        </View>
       </ScrollView>
-    </SafeAreaView>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   header: {
-    backgroundColor: '#1a3a5c',
+    backgroundColor: '#0C134F',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    paddingTop: Platform.OS === 'ios' ? 10 : 15,
+    paddingHorizontal: 16,
+    paddingVertical: 0,
+    paddingTop: 48,
+    paddingBottom: 12,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: '700',
     color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
   },
   notificationButton: {
-    padding: 4,
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#FDB833',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E3A5F',
   },
   scrollContent: {
-    padding: 16,
+    paddingBottom: 100,
+  },
+  contentWrapper: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   welcomeCard: {
     padding: 24,
@@ -289,15 +360,16 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 5,
   },
-  welcomeText: {
-    fontSize: 22,
-    fontWeight: '700',
+  nameText: {
+    fontSize: 26,
+    fontWeight: '800',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   roleText: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '500',
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
@@ -319,36 +391,27 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     gap: 12,
   },
-  summaryTitleSection: {
-    flex: 1,
-  },
-  collegeName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a3a5c',
-    marginBottom: 4,
-  },
-  unitHead: {
-    fontSize: 13,
-    color: '#64748B',
-    lineHeight: 18,
+  totalAssetsContainerLeft: {
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
   totalAssetsContainer: {
     alignItems: 'flex-end',
+    justifyContent: 'center',
     minWidth: 80,
   },
   totalAssetsValue: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#1a3a5c',
-    lineHeight: 28,
+    fontSize: 40,
+    fontWeight: '900',
+    color: '#0C134F',
+    lineHeight: 44,
   },
   totalAssetsLabel: {
-    fontSize: 9,
+    fontSize: 13,
     color: '#64748B',
-    fontWeight: '700',
+    fontWeight: '800',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   progressBarWrapper: {
     width: '100%',
@@ -428,7 +491,7 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#E2E8F0',
     marginHorizontal: 4,
-    marginTop: -24, // Align with the badges
+    marginTop: -24,
   },
   section: {
     marginBottom: 24,
@@ -446,13 +509,13 @@ const styles = StyleSheet.create({
   },
   viewAllText: {
     fontSize: 12,
-    color: '#f4b942',
+    color: '#FDB833',
     fontWeight: '600',
   },
   submitButton: {
     borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#f4b942',
+    shadowColor: '#FDB833',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,

@@ -10,6 +10,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { RequestCard, RequestItem, RequestStatus } from '@/components/requests/request-card';
 import { updateRequestStatus } from '@/lib/userService';
@@ -26,38 +27,55 @@ export default function RequestsScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchRequests = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('requests')
-        .select('id, request_type, status, Note, created_at, profiles:user_id(full_name, department_id), assets(Asset_code, Asset_name)');
+  try {
+    setLoading(true);
 
-      if (error) throw error;
+    const { data, error } = await supabase
+      .from('requests')
+      .select(`
+        id, 
+        request_type, 
+        status, 
+        Note, 
+        created_at, 
+        users:user_id (
+          department_id,
+          employee_numbers (
+            Full_Name
+          )
+        ), 
+        assets (Asset_code, Asset_name)
+      `);
 
-      const mappedItems: RequestItem[] = (data as any[] || []).map((req: any) => {        const profile = req.profiles?.[0];
-        return {
-          id: String(req.id),
-          title: req.assets?.Asset_name || 'Unknown Asset',
-          requestId: `REQ-${req.id}`,
-          assetName: req.assets?.Asset_name || 'Unknown',
-          assetId: req.assets?.Asset_code || 'N/A',
-          requestType: req.request_type,
-          department: profile?.department_id || 'N/A',
-          submittedBy: profile?.full_name || 'Unknown',
-          dateSubmitted: new Date(req.created_at).toLocaleDateString(),
-          reason: req.Note || '',
-          status: req.status,
-          statusLabel: req.status as RequestStatus,
-        };
-      });
+    if (error) throw error;
 
-      setItems(mappedItems);
-    } catch (error) {
-      console.error('Failed to fetch requests:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    const mappedItems: RequestItem[] = (data as any[] || []).map((req: any) => {
+      const user = req.users;
+      const fullName = user?.employee_numbers?.Full_Name || 'Unknown';
+
+      return {
+        id: String(req.id),
+        title: req.assets?.Asset_name || 'Unknown Asset',
+        requestId: `REQ-${req.id}`,
+        assetName: req.assets?.Asset_name || 'Unknown',
+        assetId: req.assets?.Asset_code || 'N/A',
+        requestType: req.request_type,
+        department: user?.department_id || 'N/A',
+        submittedBy: fullName,
+        dateSubmitted: new Date(req.created_at).toLocaleDateString(),
+        reason: req.Note || '',
+        status: req.status,
+        statusLabel: req.status as RequestStatus,
+      };
+    });
+
+    setItems(mappedItems);
+  } catch (error) {
+    console.error('Failed to fetch requests:', error);
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     fetchRequests();
@@ -81,14 +99,22 @@ export default function RequestsScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.screenContainer}>
         <View style={styles.header}>
-          <Text style={styles.title}>Requests</Text>
+          <Text style={styles.headerTitle}>Requests</Text>
+          <TouchableOpacity style={styles.notificationButton}>
+            <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
+            <View style={styles.notificationBadge}>
+              <Text style={styles.badgeText}>3</Text>
+            </View>
+          </TouchableOpacity>
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0F172A" />
-        </View>
-      </SafeAreaView>
+        <SafeAreaView style={styles.container}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#0F172A" />
+          </View>
+        </SafeAreaView>
+      </View>
     );
   }
 
@@ -111,14 +137,17 @@ export default function RequestsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.title}>Requests</Text>
-        <View style={styles.notificationContainer}>
-          <Text style={styles.notificationText}>3</Text>
-        </View>
+        <Text style={styles.headerTitle}>Requests</Text>
+        <TouchableOpacity style={styles.notificationButton}>
+          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
+          <View style={styles.notificationBadge}>
+            <Text style={styles.badgeText}>3</Text>
+          </View>
+        </TouchableOpacity>
       </View>
-
+      <SafeAreaView style={styles.container}>
       <View style={styles.tabRow}>
         {tabs.map((tab) => {
           const active = tab === activeTab;
@@ -152,14 +181,19 @@ export default function RequestsScreen() {
           </View>
         )}
       </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   loadingContainer: {
     flex: 1,
@@ -171,25 +205,36 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 16,
-    backgroundColor: '#0F172A',
+    paddingVertical: 18,
+    paddingTop: 48,
+    paddingBottom: 16,
+    backgroundColor: '#0C134F',
   },
-  title: {
-    fontSize: 20,
+  headerTitle: {
+    fontSize: 24,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
   },
-  notificationContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 999,
-    backgroundColor: '#F59E0B',
+  notificationButton: {
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#FDB833',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  notificationText: {
-    color: '#0F172A',
+  badgeText: {
+    fontSize: 11,
     fontWeight: '700',
+    color: '#1E3A5F',
   },
   tabRow: {
     flexDirection: 'row',

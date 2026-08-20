@@ -63,7 +63,7 @@ export default function MyRequests() {
 
   if (loading && requests.length === 0) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.screenContainer}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>My Requests</Text>
           <View style={styles.headerActions}>
@@ -76,20 +76,24 @@ export default function MyRequests() {
               <Text style={styles.newRequestText}>New</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.notificationButton}>
-              <MaterialCommunityIcons name="bell-badge-outline" size={24} color="#FFFFFF" />
+              <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
+              <View style={styles.notificationBadge}>
+                <Text style={styles.badgeText}>3</Text>
+              </View>
             </TouchableOpacity>
           </View>
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#f4b942" />
-        </View>
-      </SafeAreaView>
+        <SafeAreaView style={styles.container}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#f4b942" />
+          </View>
+        </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Custom Header */}
+    <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Requests</Text>
         <View style={styles.headerActions}>
@@ -102,10 +106,14 @@ export default function MyRequests() {
             <Text style={styles.newRequestText}>New</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.notificationButton}>
-            <MaterialCommunityIcons name="bell-badge-outline" size={24} color="#FFFFFF" />
+            <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
+            <View style={styles.notificationBadge}>
+              <Text style={styles.badgeText}>3</Text>
+            </View>
           </TouchableOpacity>
         </View>
       </View>
+      <SafeAreaView style={styles.container}>
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
@@ -165,31 +173,56 @@ export default function MyRequests() {
         )}
         <View style={styles.spacer} />
       </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   header: {
-    backgroundColor: '#1a3a5c',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    paddingTop: Platform.OS === 'ios' ? 10 : 15,
+    paddingHorizontal: 16,
+    paddingVertical: 0,
+    paddingTop: 48,
+    paddingBottom: 12,
+    backgroundColor: '#0C134F',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: '700',
     color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
   },
   notificationButton: {
-    padding: 4,
+    position: 'relative',
+    marginLeft: 4,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#FDB833',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E3A5F',
   },
   headerActions: {
     flexDirection: 'row',
@@ -200,7 +233,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#f4b942',
+    backgroundColor: '#FDB833',
     paddingHorizontal: 12,
     height: 32,
     borderRadius: 999,
@@ -214,6 +247,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
+    paddingTop: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
@@ -274,10 +308,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
   },
   qrPlaceholder: {
     alignItems: 'center',

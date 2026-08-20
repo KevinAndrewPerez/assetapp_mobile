@@ -9,33 +9,41 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: "#f4b942",
-        tabBarInactiveTintColor: "#cbd5e1",
+        tabBarActiveTintColor: "#FDB833",
+        tabBarInactiveTintColor: "#94a3b8",
         headerShown: false,
         tabBarHideOnKeyboard: true,
         tabBarButton: HapticTab,
         tabBarStyle: {
-          backgroundColor: "#1a3a5c",
+          backgroundColor: "#0C134F",
           borderTopWidth: 0,
-          height: Platform.OS === 'ios' ? 85 : 65,
-          paddingBottom: Platform.OS === 'ios' ? 25 : 10,
+          height: Platform.OS === 'ios' ? 70 : 62,
+          paddingBottom: Platform.OS === 'ios' ? 16 : 8,
           paddingTop: 10,
-          elevation: 0,
-          shadowOpacity: 0,
+          paddingHorizontal: 8,
+          marginHorizontal: 16,
+          marginBottom: 12,
+          borderRadius: 24,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.15,
+          shadowRadius: 12,
+          position: 'absolute',
+          bottom: 0,
+          left: 16,
+          right: 16,
           display: 'flex',
+          overflow: 'visible',
         },
         tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
-          marginTop: 0,
-          paddingBottom: 2,
-          width: '100%',
-          textAlign: 'center',
+          display: 'none',
         },
         tabBarItemStyle: {
           flex: 1,
           alignItems: 'center',
           justifyContent: 'center',
+          overflow: 'visible',
         },
       }}
     >
@@ -45,7 +53,7 @@ export default function TabLayout() {
           title: "Dashboard",
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "home" : "home-outline"} size={22} color={color} />
+              <MaterialCommunityIcons name={focused ? "home" : "home-outline"} size={26} color={color} />
               {focused && <View style={styles.activeIndicator} />}
             </View>
           ),
@@ -57,7 +65,7 @@ export default function TabLayout() {
           title: "Assets",
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "cube" : "cube-outline"} size={22} color={color} />
+              <MaterialCommunityIcons name={focused ? "cube" : "cube-outline"} size={26} color={color} />
               {focused && <View style={styles.activeIndicator} />}
             </View>
           ),
@@ -69,7 +77,7 @@ export default function TabLayout() {
           title: "Requests",
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "file-document" : "file-document-outline"} size={22} color={color} />
+              <MaterialCommunityIcons name={focused ? "file-document" : "file-document-outline"} size={26} color={color} />
               {focused && <View style={styles.activeIndicator} />}
             </View>
           ),
@@ -81,7 +89,7 @@ export default function TabLayout() {
           title: "Profile",
           tabBarIcon: ({ color, focused }) => (
             <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "account" : "account-outline"} size={22} color={color} />
+              <MaterialCommunityIcons name={focused ? "account" : "account-outline"} size={26} color={color} />
               {focused && <View style={styles.activeIndicator} />}
             </View>
           ),
@@ -113,15 +121,15 @@ const styles = StyleSheet.create({
   iconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: '100%',
-    height: '100%',
+    width: 56,
+    height: 56,
   },
   activeIndicator: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? -34 : -30,
+    bottom: 2,
     width: 28,
     height: 3,
-    backgroundColor: '#f4b942',
-    borderRadius: 1.5,
+    backgroundColor: '#FDB833',
+    borderRadius: 2,
   },
 });

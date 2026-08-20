@@ -2,7 +2,14 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-export type RequestStatus = 'Pending' | 'Approved' | 'Rejected';
+export type RequestStatus =
+  | 'Pending'
+  | 'Approved'
+  | 'Rejected'
+  | 'In Progress'
+  | 'Completed'
+  | 'Cancelled'
+  | 'Received';
 export type RequestType = 'Repair' | 'Pullout' | 'Disposal' | 'Turn Over' | 'Approval' | 'Replacement' | 'Other';
 
 export interface RequestItem {
@@ -18,6 +25,8 @@ export interface RequestItem {
   reason: string;
   status: RequestStatus;
   statusLabel: string;
+  priority?: 'Low' | 'Medium' | 'High';
+  completedAt?: string;
 }
 
 interface RequestCardProps {
@@ -40,6 +49,22 @@ const statusStyles = {
   Rejected: {
     backgroundColor: '#FEE2E2',
     color: '#B91C1C',
+  },
+  'In Progress': {
+    backgroundColor: '#DBEAFE',
+    color: '#1D4ED8',
+  },
+  Completed: {
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
+  },
+  Cancelled: {
+    backgroundColor: '#F3F4F6',
+    color: '#374151',
+  },
+  Received: {
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
   },
 };
 
