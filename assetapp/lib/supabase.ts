@@ -43,4 +43,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+export const SUPABASE_URL = supabaseUrl;
+export const SUPABASE_ANON_KEY = supabaseAnonKey;
 export const supabaseStorage = supabase;

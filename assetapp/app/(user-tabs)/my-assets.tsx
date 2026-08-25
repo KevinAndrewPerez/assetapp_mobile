@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
@@ -11,30 +10,139 @@ import {
   Image,
   Modal,
   Dimensions,
+  Animated,
+  Easing,
+  Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
+  enrichUserWithEmployeeData,
+  fetchAssetCategories,
   fetchUserAssets,
   fetchUserPendingRequestsCount,
   getStoredUser,
+  StoredUser,
   UserAsset,
 } from '@/lib/userService';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const RAIL_WIDTH = 180;
+const CARD_MIN_HEIGHT = 98;
+const CARD_GAP = 12;
+const TAB_HEIGHT = 64;
+const TAB_WIDTH = 28;
+const STACK_TOTAL_HEIGHT = 3 * CARD_MIN_HEIGHT + 2 * CARD_GAP;
 
 export default function MyAssets() {
+  const [user, setUser] = useState<StoredUser | null>(null);
   const [assets, setAssets] = useState<UserAsset[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [isDeptHead, setIsDeptHead] = useState(false);
+  const [onlyMyAssets, setOnlyMyAssets] = useState(false);
+  const [draftOnlyMy, setDraftOnlyMy] = useState(false);
+  const [draftCategories, setDraftCategories] = useState<string[]>([]);
+
+  const [toastText, setToastText] = useState<string | null>(null);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showResultsToast = useMemo(
+    () => (count: number) => {
+      const label = `${count} result${count === 1 ? '' : 's'}`;
+      setToastText(label);
+      Animated.sequence([
+        Animated.timing(toastOpacity, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.delay(1350),
+        Animated.timing(toastOpacity, {
+          toValue: 0,
+          duration: 360,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setToastText((cur) => (cur === label ? null : cur));
+      });
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setToastText(null), 1350 + 220 + 420);
+    },
+    [toastOpacity],
+  );
 
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState('');
   const [selectedImageTitle, setSelectedImageTitle] = useState('');
 
   const [imgScale, setImgScale] = useState(1);
+  const [qrVisibleFor, setQrVisibleFor] = useState<Record<string, boolean>>({});
+  const [railOpen, setRailOpen] = useState(false);
+  const fadeAnims = useRef<Record<string, Animated.Value>>({});
+  const railProgress = useRef(new Animated.Value(0)).current;
+
+  const tabOpacity = railProgress.interpolate({
+    inputRange: [0, 0.6, 1],
+    outputRange: [1, 0.35, 0.08],
+    extrapolate: 'clamp',
+  });
+
+  const railTranslateX = railProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-RAIL_WIDTH, 0],
+  });
+
+  const setRailState = (open: boolean) => {
+    const to = open ? 1 : 0;
+    Animated.spring(railProgress, {
+      toValue: to,
+      useNativeDriver: true,
+      tension: 75,
+      friction: 9,
+    }).start();
+    setRailOpen(open);
+  };
+
+  const toggleRail = () => setRailState(!railOpen);
+
+  const getFadeAnim = (id: string) => {
+    if (!fadeAnims.current[id]) {
+      fadeAnims.current[id] = new Animated.Value(1);
+    }
+    return fadeAnims.current[id];
+  };
+
+  const getShowQR = (id: string) => Boolean(qrVisibleFor[id]);
+
+  const toggleShowQR = (id: string) => {
+    const current = getShowQR(id);
+    const fade = getFadeAnim(id);
+    Animated.sequence([
+      Animated.timing(fade, {
+        toValue: 0.3,
+        duration: 120,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }),
+      Animated.timing(fade, {
+        toValue: 1,
+        duration: 200,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }),
+    ]).start();
+    setQrVisibleFor((prev) => ({ ...prev, [id]: !current }));
+  };
 
   const openImageModal = (url: string, title: string) => {
     setSelectedImageUrl(url);
@@ -67,16 +175,30 @@ export default function MyAssets() {
     const loadAssets = async () => {
       setLoading(true);
       try {
-        const user = await getStoredUser();
-        if (!user) return;
+        const stored = await getStoredUser();
+        if (!stored) return;
+        const enriched = await enrichUserWithEmployeeData(stored);
+        setUser(enriched);
 
-        const [fetchedAssets, pending] = await Promise.all([
-          fetchUserAssets(user),
-          fetchUserPendingRequestsCount(user),
+        const role = String(enriched.role ?? 'Employee').trim();
+        const head = role === 'Department Head';
+        setIsDeptHead(head);
+
+        const scope: 'own' | 'department' = head ? 'department' : 'own';
+        setOnlyMyAssets(false);
+        setSelectedCategories([]);
+        setDraftOnlyMy(false);
+        setDraftCategories([]);
+
+        const [fetchedAssets, pending, cats] = await Promise.all([
+          fetchUserAssets(enriched, scope),
+          fetchUserPendingRequestsCount(enriched),
+          fetchAssetCategories(),
         ]);
 
         setAssets(fetchedAssets);
         setPendingCount(pending);
+        setCategories(cats);
         setExpandedId((prev) => prev ?? (fetchedAssets?.[0]?.id ? String(fetchedAssets[0].id) : null));
       } catch (error) {
         console.error('Failed to load user assets:', error);
@@ -98,20 +220,29 @@ export default function MyAssets() {
     () =>
       assets.filter((asset) => {
         const query = searchQuery.toLowerCase();
-        return (
+        const matchesSearch =
           asset.name.toLowerCase().includes(query) ||
           asset.category.toLowerCase().includes(query) ||
-          asset.barcode.toLowerCase().includes(query)
-        );
+          asset.barcode.toLowerCase().includes(query);
+        const matchesCategory =
+          selectedCategories.length === 0 || selectedCategories.includes(asset.category);
+        const matchesOwnOnly =
+          !onlyMyAssets || !isDeptHead || String(asset.userId) === String(user?.id);
+        return matchesSearch && matchesCategory && matchesOwnOnly;
       }),
-    [assets, searchQuery],
+    [assets, searchQuery, selectedCategories, onlyMyAssets, isDeptHead, user],
   );
+
+  const hasActiveFilters =
+    selectedCategories.length > 0 || (isDeptHead && onlyMyAssets);
+
+  const headerTitle = isDeptHead ? 'Department Assets' : 'My Assets';
 
   if (loading) {
     return (
       <View style={styles.screenContainer}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Assets</Text>
+          <Text style={styles.headerTitle}>{headerTitle}</Text>
           <TouchableOpacity style={styles.notificationButton}>
             <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
             <View style={styles.notificationBadge}>
@@ -119,11 +250,11 @@ export default function MyAssets() {
             </View>
           </TouchableOpacity>
         </View>
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { justifyContent: 'center' }]}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#f4b942" />
           </View>
-        </SafeAreaView>
+        </View>
       </View>
     );
   }
@@ -131,7 +262,7 @@ export default function MyAssets() {
   return (
     <View style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Assets</Text>
+        <Text style={styles.headerTitle}>{headerTitle}</Text>
         <TouchableOpacity style={styles.notificationButton}>
           <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
           <View style={styles.notificationBadge}>
@@ -139,7 +270,7 @@ export default function MyAssets() {
           </View>
         </TouchableOpacity>
       </View>
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
 
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
@@ -152,34 +283,92 @@ export default function MyAssets() {
             onChangeText={setSearchQuery}
           />
         </View>
-        <TouchableOpacity style={styles.filterButton}>
-          <MaterialCommunityIcons name="filter-variant" size={20} color="#1a3a5c" />
+        <TouchableOpacity
+          style={[styles.filterButton, hasActiveFilters ? styles.filterButtonActive : null]}
+          onPress={() => {
+            setDraftOnlyMy(onlyMyAssets);
+            setDraftCategories([...selectedCategories]);
+            setFilterModalVisible(true);
+          }}
+        >
+          <MaterialCommunityIcons
+            name="filter-variant"
+            size={20}
+            color={hasActiveFilters ? '#FFFFFF' : '#1a3a5c'}
+          />
+          {hasActiveFilters ? (
+            <View style={styles.filterActiveDot} />
+          ) : null}
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Stat Cards Row */}
-        <View style={styles.statsRow}>
-          <StatCard
-            label="Total Assets"
-            value={String(totalAssets)}
-            icon="database"
-            gradientColors={['#344CB7', '#577BC1']}
-          />
-          <StatCard
-            label="Active Assets"
-            value={String(activeAssets)}
-            icon="check-circle"
-            gradientColors={['#000957', '#344CB7']}
-          />
-          <StatCard
-            label="Pending Requests"
-            value={String(pendingCount)}
-            icon="clock-outline"
-            gradientColors={['#FFEB00', '#F4C430']}
-            darkText
-          />
+
+
+      {/* Floating Left Stat Rail (slide-in) */}
+      <Animated.View
+        pointerEvents="box-none"
+        style={[
+          styles.statRailOuter,
+          { transform: [{ translateX: railTranslateX }] },
+        ]}
+      >
+        <View
+          style={[styles.statRailInner, { width: RAIL_WIDTH }]}
+          pointerEvents="auto"
+        >
+          <TouchableOpacity
+            activeOpacity={0.92}
+            style={styles.statRailStack}
+            onPress={() => {
+              if (railOpen) toggleRail();
+            }}
+          >
+            <StatCard
+              label="Total Assets"
+              value={String(totalAssets)}
+              icon="database"
+              gradientColors={['#344CB7', '#577BC1']}
+            />
+            <StatCard
+              label="Active Assets"
+              value={String(activeAssets)}
+              icon="check-circle"
+              gradientColors={['#000957', '#344CB7']}
+            />
+            <StatCard
+              label="Pending"
+              subLabel="Requests"
+              value={String(pendingCount)}
+              icon="clock-outline"
+              gradientColors={['#FFEB00', '#F4C430']}
+              darkText
+            />
+          </TouchableOpacity>
         </View>
+        <Animated.View
+          pointerEvents="auto"
+          style={[styles.statRailTab, { opacity: tabOpacity }]}
+        >
+          <LinearGradient
+            colors={['#FFEB00', '#F4C430']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={toggleRail}
+            style={StyleSheet.absoluteFill}
+          />
+          <MaterialCommunityIcons
+            name={railOpen ? 'chevron-left' : 'chevron-right'}
+            size={20}
+            color="#0C134F"
+          />
+        </Animated.View>
+      </Animated.View>
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
         {filteredAssets.length === 0 ? (
           <View style={styles.emptyState}>
@@ -197,7 +386,7 @@ export default function MyAssets() {
                   <Text style={styles.assetName}>{asset.name}</Text>
                   <Text style={styles.assetCategory}>{asset.category}</Text>
                   <View style={styles.barcodeContainer}>
-                    <MaterialCommunityIcons name="barcode-scan" size={14} color="#64748B" />
+                    <MaterialCommunityIcons name="barcode-scan" size={14} color="rgba(255,255,255,0.7)" />
                     <Text style={styles.barcodeText}>{asset.barcode}</Text>
                   </View>
                 </View>
@@ -208,43 +397,110 @@ export default function MyAssets() {
                   <MaterialCommunityIcons
                     name={expandedId === asset.id ? 'chevron-up' : 'chevron-down'}
                     size={22}
-                    color="#94A3B8"
+                    color="rgba(255,255,255,0.7)"
                   />
                 </View>
               </TouchableOpacity>
 
               {expandedId === asset.id && (
                 <View style={styles.assetDetails}>
-                  <TouchableOpacity
-                    style={styles.imageSection}
-                    onPress={() => asset.imageUrl ? openImageModal(asset.imageUrl!, asset.name) : undefined}
-                    activeOpacity={0.9}
-                  >
+                  <View style={styles.imageSection}>
                     <LinearGradient
                       colors={['#F1F5F9', '#E2E8F0']}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 1 }}
                       style={styles.imageGradient}
                     >
-                      {asset.imageUrl ? (
-                        <Image
-                          source={{ uri: asset.imageUrl }}
-                          style={styles.assetImage}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={styles.imagePlaceholder}>
-                          <MaterialCommunityIcons name="image-off-outline" size={64} color="#94A3B8" />
-                          <Text style={styles.imagePlaceholderText}>No image available</Text>
+                      <Animated.View
+                        style={[
+                          styles.imageStageWrap,
+                          { opacity: getFadeAnim(asset.id) },
+                        ]}
+                      >
+                        <View style={styles.mediaBox}>
+                          <View
+                            style={[
+                              styles.mediaTypeBadge,
+                              { backgroundColor: getShowQR(asset.id) ? '#000957' : '#FFEB00' },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.mediaTypeBadgeText,
+                                { color: getShowQR(asset.id) ? '#FFFFFF' : '#0C134F' },
+                              ]}
+                            >
+                              {getShowQR(asset.id) ? 'QR CODE' : 'PHOTO'}
+                            </Text>
+                          </View>
+
+                          {getShowQR(asset.id) ? (
+                            asset.qrCodeUrl ? (
+                              <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={() => openImageModal(asset.qrCodeUrl!, `${asset.name} QR Code`)}
+                                style={styles.imageTouchArea}
+                              >
+                                <Image
+                                  source={{ uri: asset.qrCodeUrl }}
+                                  style={styles.assetImage}
+                                  resizeMode="contain"
+                                  onLoadStart={() => console.log(`[QR] Loading ${asset.name}:`, asset.qrCodeUrl)}
+                                  onError={(e) => console.warn(`[QR] Failed ${asset.name}:`, asset.qrCodeUrl, e.nativeEvent?.error ?? e)}
+                                />
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={styles.imagePlaceholder}>
+                                <MaterialCommunityIcons name="qrcode-remove" size={64} color="#94A3B8" />
+                                <Text style={styles.imagePlaceholderText}>No QR Code provided</Text>
+                              </View>
+                            )
+                          ) : (
+                            asset.imageUrl ? (
+                              <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={() => openImageModal(asset.imageUrl!, asset.name)}
+                                style={styles.imageTouchArea}
+                              >
+                                <Image
+                                  source={{ uri: asset.imageUrl }}
+                                  style={styles.assetImage}
+                                  resizeMode="cover"
+                                  onLoadStart={() => console.log(`[IMG] Loading ${asset.name}:`, asset.imageUrl)}
+                                  onError={(e) => console.warn(`[IMG] Failed ${asset.name}:`, asset.imageUrl, e.nativeEvent?.error ?? e)}
+                                />
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={styles.imagePlaceholder}>
+                                <MaterialCommunityIcons name="image-off-outline" size={64} color="#94A3B8" />
+                                <Text style={styles.imagePlaceholderText}>No Image provided</Text>
+                              </View>
+                            )
+                          )}
                         </View>
-                      )}
-                      <Text style={styles.imageHint}>Tap image to expand</Text>
-                      <View style={styles.imageAssetIdRow}>
-                        <MaterialCommunityIcons name="barcode-scan" size={16} color="#0C134F" />
-                        <Text style={styles.imageAssetIdText}>{asset.barcode}</Text>
+                      </Animated.View>
+
+                      <View style={styles.hintRow}>
+                        <Text style={styles.imageHint}>
+                          Tap here to view the {getShowQR(asset.id) ? 'Photo' : 'QR Code'}
+                        </Text>
+                        <MaterialCommunityIcons
+                          name="arrow-down"
+                          size={16}
+                          color="#334155"
+                          style={styles.hintArrow}
+                        />
                       </View>
+
+                      <TouchableOpacity
+                        style={styles.imageAssetIdRow}
+                        onPress={() => toggleShowQR(asset.id)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.imageAssetIdText}>{asset.barcode}</Text>
+                      </TouchableOpacity>
                     </LinearGradient>
-                  </TouchableOpacity>
+                  </View>
 
                   <View style={styles.detailList}>
                     <DetailItem icon="pound" label="Serial Number" value={asset.serialNumber} />
@@ -261,6 +517,272 @@ export default function MyAssets() {
         )}
         <View style={styles.spacer} />
       </ScrollView>
+
+      {/* Category Filter Modal */}
+      <Modal
+        visible={filterModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFilterModalVisible(false)}
+        statusBarTranslucent
+      >
+        <View style={styles.filterModalBackdrop}>
+          <TouchableOpacity
+            activeOpacity={1}
+            style={StyleSheet.absoluteFill}
+            onPress={() => setFilterModalVisible(false)}
+          />
+          <View style={styles.filterModalCard}>
+            <View style={styles.filterModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <MaterialCommunityIcons
+                  name="filter-variant"
+                  size={22}
+                  color="#0C134F"
+                />
+                <Text style={styles.filterModalTitle}>Filter by Category</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setFilterModalVisible(false)}
+                style={styles.filterModalClose}
+              >
+                <MaterialCommunityIcons name="close" size={22} color="#0C134F" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.filterModalBodyHeader}>
+              <Text style={styles.filterSubtitle}>
+                {(() => {
+                  const shown = assets.filter((a) => {
+                    const mCat = draftCategories.length === 0 || draftCategories.includes(a.category);
+                    const mOwn = !draftOnlyMy || !isDeptHead || String(a.userId) === String(user?.id);
+                    return mCat && mOwn;
+                  }).length;
+                  return `Showing ${shown} of ${assets.length} assets`;
+                })()}
+              </Text>
+              {(draftCategories.length > 0 || (isDeptHead && draftOnlyMy)) ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    setDraftCategories([]);
+                    if (isDeptHead) setDraftOnlyMy(false);
+                  }}
+                  style={styles.clearFilterBtn}
+                >
+                  <MaterialCommunityIcons name="close-circle-outline" size={16} color="#EF4444" />
+                  <Text style={styles.clearFilterText}>Clear</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            <ScrollView
+              style={styles.filterChipsScroll}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.filterChipsWrap}
+            >
+              {isDeptHead ? (
+                <TouchableOpacity
+                  style={[
+                    styles.categoryChip,
+                    draftOnlyMy ? styles.categoryChipSelectedSoft : null,
+                  ]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setDraftOnlyMy((p) => !p);
+                  }}
+                >
+                  <View style={styles.categoryChipLeft}>
+                    {draftOnlyMy ? (
+                      <View style={styles.chipCheckCircle}>
+                        <MaterialCommunityIcons name="check" size={12} color="#FFFFFF" />
+                      </View>
+                    ) : (
+                      <View style={styles.chipEmptyCircle} />
+                    )}
+                    <MaterialCommunityIcons
+                      name="account-tie-outline"
+                      size={16}
+                      color="#0C134F"
+                      style={{ marginLeft: 8 }}
+                    />
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        draftOnlyMy ? styles.categoryChipTextActiveSoft : null,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      My Assets
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.categoryChipCount,
+                      draftOnlyMy ? styles.categoryChipCountActiveSoft : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryChipCountText,
+                        draftOnlyMy ? { color: '#FFFFFF' } : null,
+                      ]}
+                    >
+                      {assets.filter((a) => String(a.userId) === String(user?.id)).length}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+
+              <TouchableOpacity
+                style={[
+                  styles.categoryChip,
+                  draftCategories.length === 0 ? styles.categoryChipSelectedSoft : null,
+                ]}
+                activeOpacity={0.85}
+                onPress={() => {
+                  setDraftCategories([]);
+                }}
+              >
+                <View style={styles.categoryChipLeft}>
+                  {draftCategories.length === 0 ? (
+                    <View style={styles.chipCheckCircle}>
+                      <MaterialCommunityIcons name="check" size={12} color="#FFFFFF" />
+                    </View>
+                  ) : (
+                    <View style={styles.chipEmptyCircle} />
+                  )}
+                  <MaterialCommunityIcons
+                    name="view-grid-outline"
+                    size={16}
+                    color="#0C134F"
+                    style={{ marginLeft: 8 }}
+                  />
+                  <Text
+                    style={[
+                      styles.categoryChipText,
+                      draftCategories.length === 0 ? styles.categoryChipTextActiveSoft : null,
+                    ]}
+                  >
+                    All Categories
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {categories.map((cat) => {
+                const count = assets.filter((a) => a.category === cat).length;
+                const active = draftCategories.includes(cat);
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[
+                      styles.categoryChip,
+                      active ? styles.categoryChipSelectedSoft : null,
+                    ]}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setDraftCategories((prev) =>
+                        prev.includes(cat) ? prev.filter((x) => x !== cat) : [...prev, cat],
+                      );
+                    }}
+                  >
+                    <View style={styles.categoryChipLeft}>
+                      {active ? (
+                        <View style={styles.chipCheckCircle}>
+                          <MaterialCommunityIcons name="check" size={12} color="#FFFFFF" />
+                        </View>
+                      ) : (
+                        <View style={styles.chipEmptyCircle} />
+                      )}
+                      <MaterialCommunityIcons
+                        name="folder-outline"
+                        size={16}
+                        color="#0C134F"
+                        style={{ marginLeft: 8 }}
+                      />
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          active ? styles.categoryChipTextActiveSoft : null,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {cat}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.categoryChipCount,
+                        active ? styles.categoryChipCountActiveSoft : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryChipCountText,
+                          active ? { color: '#FFFFFF' } : null,
+                        ]}
+                      >
+                        {count}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.filterModalFooter}>
+              <TouchableOpacity
+                style={styles.secondaryBtn}
+                onPress={() => {
+                  setDraftCategories([]);
+                  if (isDeptHead) setDraftOnlyMy(false);
+                }}
+              >
+                <MaterialCommunityIcons name="refresh" size={16} color="#0C134F" />
+                <Text style={styles.secondaryBtnText}>Reset</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => {
+                  const appliedCategories = [...draftCategories];
+                  const appliedOnlyMy = !!draftOnlyMy && !!isDeptHead;
+                  setSelectedCategories(appliedCategories);
+                  if (isDeptHead) setOnlyMyAssets(appliedOnlyMy);
+                  setFilterModalVisible(false);
+                  const count = assets.filter((a) => {
+                    const mCat = appliedCategories.length === 0 || appliedCategories.includes(a.category);
+                    const mOwn = !appliedOnlyMy || String(a.userId) === String(user?.id);
+                    return mCat && mOwn;
+                  }).length;
+                  showResultsToast(count);
+                }}
+              >
+                <MaterialCommunityIcons name="check" size={16} color="#FFFFFF" />
+                <Text style={styles.primaryBtnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Results Count Toast */}
+      {toastText ? (
+        <View
+          pointerEvents="none"
+          style={styles.resultsToast}
+        >
+          <Animated.View
+            style={[styles.resultsToastCard, { opacity: toastOpacity }]}
+          >
+            <MaterialCommunityIcons
+              name="filter-variant"
+              size={16}
+              color="#FFFFFF"
+              style={{ marginRight: 6 }}
+            />
+            <Text style={styles.resultsToastText}>{toastText}</Text>
+          </Animated.View>
+        </View>
+      ) : null}
 
       {/* Image Zoom Modal */}
       <Modal
@@ -315,19 +837,21 @@ export default function MyAssets() {
         </View>
       </Modal>
 
-      </SafeAreaView>
+      </View>
     </View>
   );
 }
 
 function StatCard({
   label,
+  subLabel,
   value,
   icon,
   gradientColors,
   darkText,
 }: {
   label: string;
+  subLabel?: string;
   value: string;
   icon: string;
   gradientColors: [string, string];
@@ -347,7 +871,12 @@ function StatCard({
         style={styles.statCardGradient}
       >
         <View style={styles.statCardTop}>
-          <Text style={[styles.statCardLabel, { color: labelColor }]}>{label}</Text>
+          <View style={styles.statCardLabelCol}>
+            <Text style={[styles.statCardLabel, { color: labelColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{label}</Text>
+            {!!subLabel && (
+              <Text style={[styles.statCardSubLabel, { color: labelColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{subLabel}</Text>
+            )}
+          </View>
           <View style={[styles.statCardIconWrap, { backgroundColor: iconBg }]}>
             <MaterialCommunityIcons name={icon as any} size={18} color={iconColor} />
           </View>
@@ -456,14 +985,52 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+    paddingBottom: 96,
   },
   statsRow: {
     flexDirection: 'row',
     gap: 10,
     marginBottom: 20,
   },
+  statRailOuter: {
+    position: 'absolute',
+    top: 92,
+    left: 0,
+    width: RAIL_WIDTH + TAB_WIDTH,
+    height: STACK_TOTAL_HEIGHT + 40,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    zIndex: 120,
+  },
+  statRailInner: {
+    paddingVertical: 20,
+    paddingLeft: 10,
+    paddingRight: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0)',
+  },
+  statRailStack: {
+    gap: CARD_GAP,
+  },
+  statRailTab: {
+    position: 'absolute',
+    left: RAIL_WIDTH,
+    top: STACK_TOTAL_HEIGHT / 2 - TAB_HEIGHT / 2 + 20,
+    width: TAB_WIDTH,
+    height: TAB_HEIGHT,
+    borderTopRightRadius: 14,
+    borderBottomRightRadius: 14,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 3, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 5,
+  },
   statCardWrap: {
-    flex: 1,
+    width: '100%',
     borderRadius: 14,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -474,20 +1041,36 @@ const styles = StyleSheet.create({
   },
   statCardGradient: {
     padding: 14,
+    paddingRight: 12,
     borderRadius: 14,
-    minHeight: 92,
+    minHeight: 98,
   },
   statCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 8,
+  },
+  statCardLabelCol: {
+    flex: 1,
+    paddingRight: 6,
+    justifyContent: 'center',
+    minHeight: 32,
   },
   statCardLabel: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: 0.3,
-    flex: 1,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
+  statCardSubLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   statCardIconWrap: {
     width: 32,
@@ -495,6 +1078,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 6,
   },
   statCardValue: {
     fontSize: 26,
@@ -502,17 +1086,17 @@ const styles = StyleSheet.create({
     lineHeight: 30,
   },
   assetCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#0C134F',
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: 'rgba(85, 105, 158, 0.35)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
   },
   assetHeader: {
     flexDirection: 'row',
@@ -528,14 +1112,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   assetName: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#1e293b',
-    marginBottom: 4,
+    color: '#FFFFFF',
+    marginBottom: 6,
   },
   assetCategory: {
     fontSize: 13,
-    color: '#64748B',
+    color: 'rgba(255, 255, 255, 0.75)',
     marginBottom: 6,
   },
   barcodeContainer: {
@@ -546,7 +1130,7 @@ const styles = StyleSheet.create({
   barcodeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: 'rgba(255, 255, 255, 0.7)',
   },
   statusTag: {
     paddingHorizontal: 10,
@@ -560,7 +1144,7 @@ const styles = StyleSheet.create({
   assetDetails: {
     marginTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: 'rgba(255, 255, 255, 0.15)',
     paddingTop: 16,
   },
   imageSection: {
@@ -571,6 +1155,32 @@ const styles = StyleSheet.create({
   imageGradient: {
     paddingVertical: 16,
     paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  mediaTypeBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    zIndex: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 12,
+  },
+  mediaTypeBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  imageStageWrap: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  mediaBox: {
+    width: '100%',
+    position: 'relative',
+  },
+  imageTouchArea: {
+    width: '100%',
     alignItems: 'center',
   },
   assetImage: {
@@ -590,42 +1200,53 @@ const styles = StyleSheet.create({
   imagePlaceholderText: {
     marginTop: 8,
     color: '#94A3B8',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
   },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 14,
+  },
   imageHint: {
-    marginTop: 12,
     color: '#334155',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  hintArrow: {
+    marginLeft: 6,
   },
   imageAssetIdRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
     marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    borderRadius: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
     elevation: 1,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    width: '100%',
   },
   imageAssetIdText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     color: '#0C134F',
     letterSpacing: 0.6,
+    textAlign: 'center',
   },
   detailList: {
     gap: 10,
   },
   detailItemBox: {
     width: '100%',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderRadius: 14,
     padding: 14,
   },
@@ -637,14 +1258,14 @@ const styles = StyleSheet.create({
   },
   detailItemLabel: {
     fontSize: 10,
-    color: '#94A3B8',
+    color: '#64748B',
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   detailItemValue: {
     fontSize: 15,
-    color: '#1a3a5c',
+    color: '#0C134F',
     fontWeight: '700',
   },
   emptyState: {
@@ -723,5 +1344,288 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     minWidth: 50,
     textAlign: 'center',
+  },
+  // Filter button
+  filterButtonActive: {
+    backgroundColor: '#0C134F',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  filterActiveDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FFEB00',
+  },
+  // Active filter row below search
+  activeFilterRow: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  activeFilterChipsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    flex: 1,
+  },
+  activeFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0C134F',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    gap: 6,
+  },
+  activeFilterChipScope: {
+    backgroundColor: '#B45309',
+  },
+  activeFilterChipText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    maxWidth: SCREEN_WIDTH * 0.55,
+  },
+  activeFilterChipClose: {
+    marginLeft: 2,
+    paddingHorizontal: 2,
+  },
+  activeFilterCount: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  // Filter results toast
+  resultsToast: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: Platform.OS === 'ios' ? 110 : 104,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  resultsToastCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(12, 19, 79, 0.92)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  resultsToastText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
+  // Filter modal
+  filterModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(8, 12, 40, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  filterModalCard: {
+    width: '100%',
+    maxHeight: '82%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 12,
+  },
+  filterModalHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  filterModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0C134F',
+  },
+  filterModalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  filterModalBodyHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  filterSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  clearFilterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+  },
+  clearFilterText: {
+    fontSize: 12,
+    color: '#EF4444',
+    fontWeight: '700',
+  },
+  filterChipsScroll: {
+    maxHeight: SCREEN_HEIGHT * 0.45,
+  },
+  filterChipsWrap: {
+    paddingHorizontal: 18,
+    paddingTop: 4,
+    paddingBottom: 18,
+    gap: 10,
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+  },
+  categoryChipSelected: {
+    backgroundColor: '#0C134F',
+    borderColor: '#0C134F',
+  },
+  categoryChipLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  categoryChipText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0C134F',
+    flexShrink: 1,
+  },
+  categoryChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  categoryChipCount: {
+    minWidth: 28,
+    height: 26,
+    paddingHorizontal: 8,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+  },
+  categoryChipCountActive: {
+    backgroundColor: '#FFEB00',
+  },
+  categoryChipCountText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  categoryChipSelectedSoft: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
+  categoryChipTextActiveSoft: {
+    color: '#0C134F',
+    fontWeight: '700',
+  },
+  categoryChipCountActiveSoft: {
+    backgroundColor: '#0C134F',
+  },
+  chipEmptyCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.4,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+  },
+  chipCheckCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.4,
+    borderColor: '#0C134F',
+    backgroundColor: '#0C134F',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterModalFooter: {
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  secondaryBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0C134F',
+  },
+  primaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: '#0C134F',
+  },
+  primaryBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

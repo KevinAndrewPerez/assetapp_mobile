@@ -5,7 +5,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   TouchableOpacity,
   Platform,
   ActivityIndicator,
@@ -83,11 +82,11 @@ export default function MyRequests() {
             </TouchableOpacity>
           </View>
         </View>
-        <SafeAreaView style={styles.container}>
+        <View style={styles.container}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#f4b942" />
           </View>
-        </SafeAreaView>
+        </View>
       </View>
     );
   }
@@ -113,7 +112,7 @@ export default function MyRequests() {
           </TouchableOpacity>
         </View>
       </View>
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
@@ -173,7 +172,7 @@ export default function MyRequests() {
         )}
         <View style={styles.spacer} />
       </ScrollView>
-      </SafeAreaView>
+      </View>
     </View>
   );
 }
@@ -271,6 +270,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+    paddingBottom: 112,
   },
   requestCard: {
     backgroundColor: '#FFFFFF',

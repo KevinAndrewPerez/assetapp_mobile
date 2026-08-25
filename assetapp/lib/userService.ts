@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from './supabase';
+import { supabase, SUPABASE_URL } from './supabase';
 
 export type StoredUser = {
   id?: number | string;
@@ -15,10 +15,12 @@ export type StoredUser = {
 
 export type UserAsset = {
   id: string;
+  userId: string;
   name: string;
   category: string;
   barcode: string;
   qrCode?: string;
+  qrCodeUrl?: string;
   status: string;
   statusColor: string;
   statusBg: string;
@@ -48,6 +50,74 @@ export type UserRequest = {
   assetId: string;
   submittedBy: string;
   department: string;
+};
+
+const KNOWN_STORAGE_BUCKETS = ['assets', 'qr_codes', 'photos', 'public', 'asset_files'];
+const PUBLIC_PREFIX = '/storage/v1/object/public/';
+
+const encodePathSegments = (path: string): string => {
+  return path
+    .split('/')
+    .map((seg) => encodeURIComponent(seg).replace(/%2F/g, '/'))
+    .join('/');
+};
+
+const manualPublicUrl = (bucket: string, objectPath: string): string | null => {
+  if (!SUPABASE_URL || !bucket || !objectPath) return null;
+  const base = SUPABASE_URL.replace(/\/$/, '');
+  const safeBucket = encodeURIComponent(bucket);
+  const safePath = encodePathSegments(objectPath.replace(/^\//, ''));
+  if (!safePath) return null;
+  return base + PUBLIC_PREFIX + safeBucket + '/' + safePath;
+};
+
+const resolveStorageUrl = (raw: any, fallbackBucket = 'assets'): string => {
+  if (!raw) return '';
+  const str = String(raw).trim();
+  if (!str) return '';
+  if (str.startsWith('http://') || str.startsWith('https://')) return str;
+  if (str.startsWith('//')) return 'https:' + str;
+  if (str.startsWith('data:')) return str;
+  if (str.startsWith(PUBLIC_PREFIX) && SUPABASE_URL) {
+    return SUPABASE_URL.replace(/\/$/, '') + str;
+  }
+
+  const attempts: Array<{ bucket: string; path: string }> = [];
+  const firstSlash = str.indexOf('/');
+  const prefixCandidate = firstSlash > 0 ? str.substring(0, firstSlash) : null;
+  const restAfterPrefix = firstSlash > 0 ? str.substring(firstSlash + 1) : '';
+
+  if (prefixCandidate && restAfterPrefix && prefixCandidate.length <= 50 && !prefixCandidate.includes('.')) {
+    attempts.push({ bucket: prefixCandidate, path: restAfterPrefix });
+    attempts.push({ bucket: fallbackBucket, path: str });
+  } else {
+    attempts.push({ bucket: fallbackBucket, path: str });
+  }
+
+  for (const b of KNOWN_STORAGE_BUCKETS) {
+    attempts.push({ bucket: b, path: str });
+  }
+
+  for (let i = attempts.length - 1; i >= 0; i--) {
+    const { bucket, path } = attempts[i];
+    if (path.includes('/')) {
+      const p2 = path.substring(path.indexOf('/') + 1);
+      if (p2) attempts.push({ bucket, path: p2 });
+    }
+  }
+
+  const deduped = new Map<string, string>();
+  for (const { bucket, path } of attempts) {
+    const manual = manualPublicUrl(bucket, path);
+    if (manual) deduped.set(manual, manual);
+    try {
+      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+      if (data?.publicUrl) deduped.set(data.publicUrl, data.publicUrl);
+    } catch {}
+  }
+  const candidates = Array.from(deduped.values());
+  if (candidates.length) return candidates[0];
+  return str;
 };
 
 const normalizeUserAsset = (row: any): UserAsset => {
@@ -83,8 +153,9 @@ const normalizeUserAsset = (row: any): UserAsset => {
 
   const acquisitionRaw = row.accusion_date ?? row.acquisition_date ?? '';
   const warrantyRaw = row.warranty_months ?? row.warrantyMonths;
-  let nextMaintenance = '';
-  if (acquisitionRaw && warrantyRaw) {
+  const nativeNextMaint = row.next_maintenance_date ?? row.nextMaintenanceDate ?? null;
+  let nextMaintenance = nativeNextMaint ? String(nativeNextMaint) : '';
+  if (!nextMaintenance && acquisitionRaw && warrantyRaw) {
     try {
       const d = new Date(String(acquisitionRaw));
       const months = Number(warrantyRaw) || 0;
@@ -95,7 +166,7 @@ const normalizeUserAsset = (row: any): UserAsset => {
     } catch {}
   }
 
-  const purchasePriceRaw = row.purchase_Price ?? row.purchasePrice ?? row.purchase_price;
+  const purchasePriceRaw = row.purchase_Price ?? row.purchasePrice ?? row.purchase_price ?? row.accusion_cost;
   let purchasePrice = '';
   if (purchasePriceRaw !== null && purchasePriceRaw !== undefined && String(purchasePriceRaw) !== '') {
     const num = Number(purchasePriceRaw);
@@ -106,24 +177,31 @@ const normalizeUserAsset = (row: any): UserAsset => {
     }
   }
 
-  const assetFileImage = Array.isArray(row.asset_files)
-    ? (row.asset_files[0] as any)?.file_path || (row.asset_files[0] as any)?.url
-    : (row.asset_files as any)?.file_path || (row.asset_files as any)?.url;
+  const assetFilesList = Array.isArray(row.asset_files) ? row.asset_files : (row.asset_files ? [row.asset_files] : []);
+  const firstAssetFile = assetFilesList[0] || null;
+  const assetFileImage =
+    firstAssetFile?.url ||
+    firstAssetFile?.file_path ||
+    (firstAssetFile as any)?.FilePath ||
+    '';
 
-  let imageUrl = String(row.url ?? row.imageUrl ?? row.image ?? assetFileImage ?? '');
-  if (imageUrl && !imageUrl.startsWith('http') && imageUrl.startsWith('photos/')) {
-    try {
-      const { data } = supabase.storage.from('assets').getPublicUrl(imageUrl);
-      if (data?.publicUrl) imageUrl = data.publicUrl;
-    } catch {}
-  }
+  const qrCodeRawPath = row.qr_code_path || row.qrCode || '';
+  const qrCodeRawUrl = (row as any).qr_code_url || '';
+
+  const imageUrl = resolveStorageUrl(
+    row.url ?? row.imageUrl ?? row.image ?? assetFileImage ?? '',
+    'assets',
+  );
+  const qrCodeUrl = resolveStorageUrl(qrCodeRawUrl || qrCodeRawPath || '', 'assets');
 
   return {
     id: String(row.id ?? ''),
+    userId: String(row.user_id ?? ''),
     name: String(row.Asset_name ?? row.name ?? 'Untitled Asset'),
     category: String(row.Category ?? row.category ?? 'Unknown'),
     barcode: String(row.Asset_code ?? row.barcode ?? ''),
-    qrCode: String(row.qr_code_path ?? ''),
+    qrCode: qrCodeRawPath ? String(qrCodeRawPath) : '',
+    qrCodeUrl,
     status,
     statusColor,
     statusBg,
@@ -285,6 +363,8 @@ export async function enrichUserWithEmployeeData(user: StoredUser): Promise<Stor
     return {
       ...user,
       ...data,
+      role: (data as any).role ?? user.role ?? 'Employee',
+      department_id: (data as any).department_id ?? (user as any).department_id ?? empNumbers?.Department_id,
       employee_numbers: empNumbers || (user as any).employee_numbers,
       department: deptName || user.department,
       departmentName: deptName,
@@ -295,35 +375,144 @@ export async function enrichUserWithEmployeeData(user: StoredUser): Promise<Stor
   }
 }
 
-export async function fetchUserAssets(user: StoredUser): Promise<UserAsset[]> {
+export async function fetchUserAssets(
+  user: StoredUser,
+  scope: 'own' | 'department' = 'own',
+): Promise<UserAsset[]> {
   const userId = String(user.id ?? '');
   if (!userId) return [];
 
-  let { data, error } = await supabase
-    .from('assets')
-    .select(`
-      *,
-      users ( employee_numbers("Full_Name"), departments("Name") ),
-      asset_files ( file_path, url )
-    `)
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false });
+  let rows: any[] = [];
+  const userDepartmentId =
+    (user as any).department_id ??
+    (Array.isArray((user as any).employee_numbers) ? (user as any).employee_numbers[0]?.Department_id : (user as any).employee_numbers?.Department_id) ??
+    null;
 
-  if (error) {
-    console.warn('Join-select failed, falling back to basic select:', error.message);
-    const fallback = await supabase
+  try {
+    const baseQuery = supabase
       .from('assets')
-      .select('*')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
-    if (fallback.error) {
-      console.error('Failed to fetch user assets:', fallback.error.message);
-      throw fallback.error;
+      .select(`*, users ( employee_numbers("Full_Name"), departments("Name") )`);
+
+    let finalQuery: any = baseQuery;
+    if (scope === 'department' && userDepartmentId != null) {
+      finalQuery = finalQuery.not('user_id', 'is', null);
+    } else {
+      finalQuery = finalQuery.eq('user_id', userId);
     }
-    data = fallback.data;
+
+    finalQuery = finalQuery.order('updated_at', { ascending: false });
+
+    const { data, error } = await finalQuery;
+
+    if (error || !data) {
+      let fallbackBuilder = supabase.from('assets').select('*');
+      if (scope === 'department' && userDepartmentId != null) {
+        fallbackBuilder = fallbackBuilder.not('user_id', 'is', null) as any;
+      } else {
+        fallbackBuilder = fallbackBuilder.eq('user_id', userId) as any;
+      }
+      fallbackBuilder = fallbackBuilder.order('updated_at', { ascending: false });
+      const fallback = await fallbackBuilder;
+      if (fallback.error || !fallback.data) {
+        console.error('Failed to fetch user assets:', fallback.error?.message);
+        throw fallback.error ?? new Error('No asset data');
+      }
+      rows = fallback.data;
+    } else {
+      rows = data;
+    }
+
+    if (scope === 'department' && userDepartmentId != null && rows.length > 0) {
+      const relevantUserIds = new Set<string>();
+      try {
+        const deptIdNum = Number(userDepartmentId);
+        if (Number.isFinite(deptIdNum) && deptIdNum > 0) {
+          const { data: deptUsers }: any = await supabase
+            .from('users')
+            .select('id, department_id, employee_numbers("Department_id")')
+            .or(`department_id.eq.${deptIdNum}`);
+          if (Array.isArray(deptUsers)) {
+            for (const du of deptUsers) {
+              const empNumbers = Array.isArray(du.employee_numbers) ? du.employee_numbers[0] : du.employee_numbers;
+              const matchesDept =
+                String(du.department_id) === String(deptIdNum) ||
+                String(empNumbers?.Department_id) === String(deptIdNum);
+              if (matchesDept && du.id != null) relevantUserIds.add(String(du.id));
+            }
+          }
+        }
+      } catch (deptErr: any) {
+        console.warn('Could not resolve dept-scoped users, using raw assets:', deptErr?.message);
+      }
+
+      if (relevantUserIds.size > 0) {
+        rows = rows.filter((r: any) => relevantUserIds.has(String(r.user_id)));
+      }
+    }
+  } catch (err: any) {
+    console.error('Failed to fetch user assets:', err?.message);
+    throw err;
   }
 
-  return (data ?? []).map(normalizeUserAsset);
+  const assetIds = rows
+    .map((r) => (r.id === null || r.id === undefined ? null : Number(r.id)))
+    .filter((v): v is number => Number.isFinite(v));
+
+  const filesByAssetId = new Map<number, any[]>();
+  try {
+    if (assetIds.length > 0) {
+      const query = supabase
+        .from('asset_files')
+        .select('"Asset_file_ID", "Asset_id", file_name, file_path, url, mime_type');
+      const fileResult = await (query as any).in('Asset_id', assetIds);
+      const files = fileResult?.data;
+      if (Array.isArray(files)) {
+        files.forEach((f: any) => {
+          const rawId = f != null ? (f['Asset_id'] ?? f.asset_id ?? f.AssetId ?? null) : null;
+          if (rawId === null || rawId === undefined || rawId === '') return;
+          const n = Number(rawId);
+          if (Number.isInteger(n) && n > 0) {
+            const list = filesByAssetId.get(n) ?? [];
+            list.push(f);
+            filesByAssetId.set(n, list);
+          }
+        });
+      } else if (fileResult?.error) {
+        console.warn('asset_files in() query failed, trying alternative:', fileResult.error?.message);
+        const fallback: any[] = [];
+        for (const aid of assetIds.slice(0, 30)) {
+          try {
+            const r = await supabase
+              .from('asset_files')
+              .select('*')
+              .eq('"Asset_id"', aid);
+            if (Array.isArray(r?.data)) fallback.push(...r.data.map((x: any) => ({ ...x, __aid: aid })));
+          } catch {}
+        }
+        fallback.forEach((f: any) => {
+          const n = Number(f.__aid ?? f['Asset_id'] ?? f.asset_id);
+          if (Number.isInteger(n) && n > 0) {
+            const list = filesByAssetId.get(n) ?? [];
+            list.push(f);
+            filesByAssetId.set(n, list);
+          }
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn('Failed to fetch asset_files separately:', err?.message);
+  }
+
+  return rows.map((raw) => {
+    const assetId = Number(raw.id);
+    if (Number.isFinite(assetId)) {
+      const rawFiles = filesByAssetId.get(assetId);
+      if (rawFiles && rawFiles.length > 0) {
+        raw = { ...raw, asset_files: rawFiles };
+      }
+    }
+    return normalizeUserAsset(raw);
+  });
 }
 
 export async function fetchUserPendingRequestsCount(user: StoredUser): Promise<number> {
@@ -342,6 +531,58 @@ export async function fetchUserPendingRequestsCount(user: StoredUser): Promise<n
   }
 
   return count ?? 0;
+}
+
+export async function fetchAssetCategories(): Promise<string[]> {
+  try {
+    const KNOWN_CATEGORIES = [
+      'Furnitures and Fixtures',
+      'General and Office Equipment',
+      'Info and Equipment',
+      'laboratory Apparatus and equipment',
+      'library books',
+      'Motor vehicles',
+      'P.E Equipment',
+      'Low value Asset',
+    ];
+
+    let live: string[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('assets')
+        .select('Category')
+        .not('Category', 'is', null);
+
+      if (!error && Array.isArray(data)) {
+        const seen = new Set<string>();
+        for (const r of data) {
+          const cat = (r as any).Category;
+          if (typeof cat === 'string' && cat.trim().length > 0 && !seen.has(cat)) {
+            seen.add(cat);
+            live.push(cat);
+          }
+        }
+      }
+    } catch (e) {
+      live = [];
+    }
+
+    const merged = new Set<string>([...KNOWN_CATEGORIES, ...live]);
+    const result = Array.from(merged).sort((a, b) => a.localeCompare(b));
+    return result.length > 0 ? result : KNOWN_CATEGORIES;
+  } catch (err) {
+    console.warn('[fetchAssetCategories] failed:', err);
+    return [
+      'Furnitures and Fixtures',
+      'General and Office Equipment',
+      'Info and Equipment',
+      'laboratory Apparatus and equipment',
+      'library books',
+      'Motor vehicles',
+      'P.E Equipment',
+      'Low value Asset',
+    ];
+  }
 }
 
 export async function fetchUserRequests(user: StoredUser): Promise<UserRequest[]> {

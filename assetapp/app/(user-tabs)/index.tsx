@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,20 @@ export default function UserDashboard() {
   const [assets, setAssets] = useState<UserAsset[]>([]);
   const [requests, setRequests] = useState<UserRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [assetScope, setAssetScope] = useState<'own' | 'department'>('own');
+  const [scopeLoading, setScopeLoading] = useState(false);
+
+  const isDepartmentHead = (u: StoredUser | null) => {
+    if (!u) return false;
+    const r = String(u.role ?? 'Employee').trim();
+    return r === 'Department Head';
+  };
+
+  const resolveEffectiveScope = (u: StoredUser | null, scope: 'own' | 'department'): 'own' | 'department' => {
+    return isDepartmentHead(u) ? scope : 'own';
+  };
+
+  const initialLoadDone = useRef(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -30,8 +44,9 @@ export default function UserDashboard() {
         const enrichedUser = await enrichUserWithEmployeeData(storedUser);
         setUser(enrichedUser);
 
+        const effScope = resolveEffectiveScope(enrichedUser, assetScope);
         const [userAssets, userRequests] = await Promise.all([
-          fetchUserAssets(enrichedUser),
+          fetchUserAssets(enrichedUser, effScope),
           fetchUserRequests(enrichedUser),
         ]);
 
@@ -40,12 +55,34 @@ export default function UserDashboard() {
       } catch (error) {
         console.error('Dashboard load failed:', error);
       } finally {
+        initialLoadDone.current = true;
         setLoading(false);
       }
     };
 
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!initialLoadDone.current || !user) return;
+    const effScope = resolveEffectiveScope(user, assetScope);
+    let cancelled = false;
+    (async () => {
+      setScopeLoading(true);
+      try {
+        const nextAssets = await fetchUserAssets(user, effScope);
+        if (!cancelled) setAssets(nextAssets);
+      } catch (e) {
+        console.error('Scope reload failed:', e);
+      } finally {
+        if (!cancelled) setScopeLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assetScope, user]);
 
   const getUserName = (u: StoredUser | null) => {
     if (!u) return '';
@@ -154,7 +191,7 @@ export default function UserDashboard() {
         <View style={styles.contentWrapper}>
         {/* Welcome Card */}
         <LinearGradient
-          colors={['#1E3A5F', '#2C5282']}
+          colors={['#18206B', '#0C134F']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.welcomeCard}
@@ -162,6 +199,8 @@ export default function UserDashboard() {
           <Text style={styles.nameText}>{userName || 'User'}</Text>
           <Text style={styles.roleText}>
             {userDept || 'No Department'}
+            {' | '}
+            {isDepartmentHead(user) ? 'Department Head' : 'Employee'}
           </Text>
         </LinearGradient>
 
@@ -172,7 +211,40 @@ export default function UserDashboard() {
               <Text style={styles.totalAssetsValue}>{assets.length}</Text>
             </View>
             <View style={styles.totalAssetsContainer}>
-              <Text style={styles.totalAssetsLabel}>MY ASSETS</Text>
+              {isDepartmentHead(user) ? (
+                <View style={styles.scopeToggleWrap}>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (!scopeLoading) setAssetScope(assetScope === 'own' ? 'department' : 'own');
+                    }}
+                    style={[
+                      styles.scopeToggleBtn,
+                      scopeLoading ? styles.scopeToggleBtnLoading : null,
+                    ]}
+                    disabled={scopeLoading}
+                  >
+                    <Text style={[
+                      styles.totalAssetsLabel,
+                      scopeLoading ? styles.scopeToggleTextDim : null,
+                    ]}>
+                      {assetScope === 'own' ? 'MY ASSETS' : 'ALL ASSETS'}
+                    </Text>
+                    {scopeLoading ? (
+                      <ActivityIndicator size="small" color="#FDB833" style={styles.scopeToggleIcon} />
+                    ) : (
+                      <MaterialCommunityIcons
+                        name="swap-horizontal"
+                        size={14}
+                        color="#FDB833"
+                        style={styles.scopeToggleIcon}
+                      />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text style={styles.totalAssetsLabel}>MY ASSETS</Text>
+              )}
             </View>
           </View>
 
@@ -244,8 +316,7 @@ export default function UserDashboard() {
         </View>
 
         {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={[styles.section, { marginTop: 0, paddingTop: 0 }]}>
           <TouchableOpacity 
             style={styles.submitButton}
             onPress={() => router.push('/submit-request' as any)}
@@ -412,6 +483,29 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
+  },
+  scopeToggleWrap: {
+    alignItems: 'flex-end',
+  },
+  scopeToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: 'rgba(253, 184, 51, 0.35)',
+  },
+  scopeToggleBtnLoading: {
+    opacity: 0.85,
+  },
+  scopeToggleTextDim: {
+    opacity: 0.7,
+  },
+  scopeToggleIcon: {
+    marginLeft: 2,
   },
   progressBarWrapper: {
     width: '100%',

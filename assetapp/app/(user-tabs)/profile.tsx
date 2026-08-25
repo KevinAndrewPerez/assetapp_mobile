@@ -1,9 +1,8 @@
-﻿﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   ScrollView,
   Platform,
@@ -53,23 +52,25 @@ export default function UserProfile() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.screenContainer}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Profile</Text>
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#f4b942" />
+        <View style={styles.container}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#f4b942" />
+          </View>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Profile</Text>
       </View>
-
+      <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
@@ -119,30 +120,40 @@ export default function UserProfile() {
           <Text style={styles.footerText}>NU TRACE v1.0.0 • National University Lipa</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
   header: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    paddingTop: Platform.OS === 'ios' ? 10 : 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    backgroundColor: '#0C134F',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 0,
+    paddingTop: 48,
+    paddingBottom: 12,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#1a3a5c',
+    color: '#FFFFFF',
+    flex: 1,
+    textAlign: 'center',
   },
   scrollContent: {
     padding: 16,
+    paddingBottom: 112,
   },
   profileCard: {
     backgroundColor: '#1a3a5c',

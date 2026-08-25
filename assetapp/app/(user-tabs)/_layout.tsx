@@ -1,49 +1,75 @@
 import { Tabs } from "expo-router";
-import React from "react";
-import { View, StyleSheet, Platform } from "react-native";
+import React, { useRef, useEffect } from "react";
+import { View, StyleSheet, Platform, Animated } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 
 import { HapticTab } from "@/components/haptic-tab";
+
+function AnimatedTabIcon({ name, color, focused, size = 24 }: { name: string; color: string; focused: boolean; size?: number }) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: focused ? 1.28 : 1,
+      useNativeDriver: true,
+      tension: 120,
+      friction: 7,
+    }).start();
+  }, [focused, scale]);
+
+  return (
+    <Animated.View style={[styles.iconWrap, { transform: [{ scale }] }]}>
+      <MaterialCommunityIcons name={name as any} size={size} color={color} />
+    </Animated.View>
+  );
+}
 
 export default function UserLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: "#FDB833",
-        tabBarInactiveTintColor: "#94a3b8",
+        tabBarActiveTintColor: "#0C134F",
+        tabBarInactiveTintColor: "rgba(12, 19, 79, 0.55)",
         headerShown: false,
         tabBarHideOnKeyboard: true,
+        tabBarShowLabel: false,
         tabBarButton: HapticTab,
+        tabBarBackground: () => (
+          <LinearGradient
+            colors={['#FDB833', '#F59E0B']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        ),
         tabBarStyle: {
-          backgroundColor: "#0C134F",
+          backgroundColor: "transparent",
           borderTopWidth: 0,
-          height: Platform.OS === 'ios' ? 70 : 62,
-          paddingBottom: Platform.OS === 'ios' ? 16 : 8,
-          paddingTop: 10,
-          paddingHorizontal: 8,
-          marginHorizontal: 16,
-          marginBottom: 12,
-          borderRadius: 24,
-          elevation: 8,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.15,
-          shadowRadius: 12,
+          height: Platform.OS === 'ios' ? 58 : 52,
+          paddingBottom: 0,
+          paddingTop: 0,
+          paddingHorizontal: 2,
+          marginHorizontal: 14,
+          marginBottom: Platform.OS === 'ios' ? 28 : 24,
+          marginTop: 0,
+          borderRadius: 28,
+          elevation: 7,
+          shadowColor: '#0C134F',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.12,
+          shadowRadius: 8,
           position: 'absolute',
-          bottom: 0,
-          left: 16,
-          right: 16,
-          display: 'flex',
-          overflow: 'visible',
-        },
-        tabBarLabelStyle: {
-          display: 'none',
+          borderWidth: 0,
+          overflow: 'hidden',
         },
         tabBarItemStyle: {
           flex: 1,
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'visible',
+          paddingVertical: 0,
+          margin: 0,
         },
       }}
     >
@@ -52,10 +78,12 @@ export default function UserLayout() {
         options={{
           title: "Dashboard",
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "home" : "home-outline"} size={26} color={color} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <AnimatedTabIcon
+              name={focused ? "home" : "home-outline"}
+              size={24}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -64,10 +92,12 @@ export default function UserLayout() {
         options={{
           title: "My Assets",
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "cube" : "cube-outline"} size={26} color={color} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <AnimatedTabIcon
+              name={focused ? "cube" : "cube-outline"}
+              size={24}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -76,10 +106,12 @@ export default function UserLayout() {
         options={{
           title: "My Requests",
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "file-document" : "file-document-outline"} size={26} color={color} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <AnimatedTabIcon
+              name={focused ? "file-document" : "file-document-outline"}
+              size={24}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -88,10 +120,12 @@ export default function UserLayout() {
         options={{
           title: "Profile",
           tabBarIcon: ({ color, focused }) => (
-            <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name={focused ? "account" : "account-outline"} size={26} color={color} />
-              {focused && <View style={styles.activeIndicator} />}
-            </View>
+            <AnimatedTabIcon
+              name={focused ? "account" : "account-outline"}
+              size={24}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -100,18 +134,10 @@ export default function UserLayout() {
 }
 
 const styles = StyleSheet.create({
-  iconContainer: {
+  iconWrap: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 56,
-    height: 56,
-  },
-  activeIndicator: {
-    position: 'absolute',
-    bottom: 2,
-    width: 28,
-    height: 3,
-    backgroundColor: '#FDB833',
-    borderRadius: 2,
+    width: 48,
+    height: 48,
   },
 });
