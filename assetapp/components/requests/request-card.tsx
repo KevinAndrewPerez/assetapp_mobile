@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export type RequestStatus =
@@ -11,6 +11,25 @@ export type RequestStatus =
   | 'Cancelled'
   | 'Received';
 export type RequestType = 'Repair' | 'Pullout' | 'Disposal' | 'Turn Over' | 'Approval' | 'Replacement' | 'Other';
+
+/**
+ * A real asset row resolved for a request. Requests often leave `asset_id`
+ * NULL and link assets through the per-asset log tables (repairs / pullouts /
+ * replacements), so screens resolve and attach these explicitly.
+ */
+export type LinkedAsset = {
+  id?: string | number | null;
+  code: string;
+  name: string;
+  category?: string;
+  condition?: string;
+  serialNumber?: string;
+  location?: string;
+  purchasePrice?: string;
+  warrantyMonths?: string;
+  lifecycleStatus?: string;
+  imageUrl?: string;
+};
 
 export interface RequestItem {
   id: string;
@@ -27,6 +46,8 @@ export interface RequestItem {
   statusLabel: string;
   priority?: 'Low' | 'Medium' | 'High';
   completedAt?: string;
+  /** Assets actually linked to this request (may be several per request). */
+  linkedAssets?: LinkedAsset[];
 }
 
 interface RequestCardProps {
@@ -35,6 +56,7 @@ interface RequestCardProps {
   onToggle: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  onViewDetails?: () => void;
 }
 
 const statusStyles = {
@@ -99,7 +121,7 @@ const typeStyles = {
   },
 };
 
-export function RequestCard({ item, expanded, onToggle, onApprove, onReject }: RequestCardProps) {
+export function RequestCard({ item, expanded, onToggle, onApprove, onReject, onViewDetails }: RequestCardProps) {
   const statusStyle = statusStyles[item.status];
   const requestTypeStyle = typeStyles[item.requestType] ?? typeStyles.Approval;
 
@@ -137,14 +159,39 @@ export function RequestCard({ item, expanded, onToggle, onApprove, onReject }: R
             <Text style={styles.detailLabel}>Request ID</Text>
             <Text style={styles.detailValue}>{item.requestId}</Text>
           </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Asset Name</Text>
-            <Text style={styles.detailValue}>{item.assetName}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Asset ID</Text>
-            <Text style={styles.detailValue}>{item.assetId}</Text>
-          </View>
+          {item.linkedAssets && item.linkedAssets.length > 0 ? (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>
+                Linked Assets ({item.linkedAssets.length})
+              </Text>
+              {item.linkedAssets.map((a, i) => (
+                <View key={i} style={styles.linkedAssetRow}>
+                  {a.imageUrl ? (
+                    <Image source={{ uri: a.imageUrl }} style={styles.linkedAssetThumb} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.linkedAssetThumb, styles.linkedAssetThumbPlaceholder]}>
+                      <MaterialCommunityIcons name="cube-outline" size={16} color="#94A3B8" />
+                    </View>
+                  )}
+                  <Text style={[styles.detailValue, { flex: 1 }]} numberOfLines={2}>
+                    {a.name}
+                    {a.code ? ` — ${a.code}` : ''}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Asset Name</Text>
+                <Text style={styles.detailValue}>{item.assetName}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Asset ID</Text>
+                <Text style={styles.detailValue}>{item.assetId}</Text>
+              </View>
+            </>
+          )}
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Request Type</Text>
             <Text style={styles.detailValue}>{item.requestType}</Text>
@@ -178,6 +225,13 @@ export function RequestCard({ item, expanded, onToggle, onApprove, onReject }: R
                 <Text style={styles.actionButtonText}>Reject</Text>
               </TouchableOpacity>
             </View>
+          ) : null}
+
+          {onViewDetails ? (
+            <TouchableOpacity style={styles.viewDetailsButton} activeOpacity={0.8} onPress={onViewDetails}>
+              <MaterialCommunityIcons name="text-box-search-outline" size={17} color="#1E3A5F" />
+              <Text style={styles.viewDetailsText}>View Full Details</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
       )}
@@ -267,6 +321,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
     fontWeight: '600',
+  },
+  linkedAssetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 8,
+    marginTop: 8,
+  },
+  linkedAssetThumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+  },
+  linkedAssetThumbPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewDetailsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    borderRadius: 14,
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  viewDetailsText: {
+    color: '#1E3A5F',
+    fontWeight: '700',
+    fontSize: 13,
   },
   actionRow: {
     flexDirection: 'row',

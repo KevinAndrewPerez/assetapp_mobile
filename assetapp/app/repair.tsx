@@ -15,13 +15,36 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
-import { RequestItem } from '@/components/requests/request-card';
+import { LinkedAsset, RequestItem } from '@/components/requests/request-card';
 import { updateRequestStatus } from '@/lib/userService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const filterTabs = ['All Requests', 'Pending', 'In Progress', 'Completed', 'Cancelled'] as const;
 type FilterTab = typeof filterTabs[number];
 type RepairStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
+
+const formatPrice = (raw: any): string | undefined => {
+  if (raw === null || raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  if (Number.isNaN(n)) return String(raw);
+  return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+/**
+ * Map a raw asset row to the shape used on the repair cards.
+ */
+const toLinkedAsset = (a: any): LinkedAsset => ({
+  id: a?.id,
+  code: String(a?.Asset_code ?? ''),
+  name: String(a?.Asset_name ?? 'Unknown Asset'),
+  category: a?.Category ? String(a.Category) : undefined,
+  condition: a?.Condition ? String(a.Condition) : undefined,
+  serialNumber: a?.serial_Number ? String(a.serial_Number) : undefined,
+  location: a?.asset_location ? String(a.asset_location) : undefined,
+  purchasePrice: formatPrice(a?.purchase_Price),
+  warrantyMonths: a?.warranty_months != null ? String(a.warranty_months) : undefined,
+  lifecycleStatus: a?.Lifecycle_Status ? String(a.Lifecycle_Status) : undefined,
+});
 
 const normalizeRepairStatus = (rawStatus?: string | null): RepairStatus => {
   const status = String(rawStatus ?? '').trim().toLowerCase();
@@ -94,6 +117,10 @@ export default function RepairModule() {
     try {
       setLoading(true);
 
+      // Many requests leave `asset_id` NULL — the actual asset links live on
+      // the per-asset `repairs` log rows (repairs.Assets_id per Request_id).
+      // Resolve each request's asset(s) from BOTH sources so rows never render
+      // as "Unknown Asset".
       const { data, error } = await supabase
         .from('requests')
         .select(`
@@ -118,18 +145,84 @@ export default function RepairModule() {
 
       if (error) throw error;
 
-      const mappedItems: RequestItem[] = (data as any[] || []).map((req: any) => {
+      const reqRows: any[] = data || [];
+      const reqIds = reqRows.map((r: any) => String(r.id)).filter(Boolean);
+
+      let repairRows: any[] = [];
+      if (reqIds.length > 0) {
+        const { data: repData, error: repErr } = await supabase
+          .from('repairs')
+          .select('Repair_id, Request_id, Assets_id, status')
+          .in('Request_id', reqIds);
+        if (repErr) {
+          console.error('Failed to fetch repairs for asset resolution:', repErr.message);
+        } else {
+          repairRows = repData || [];
+        }
+      }
+
+      const repairsByRequest = new Map<string, any[]>();
+      repairRows.forEach((row: any) => {
+        const key = String(row.Request_id ?? '');
+        if (!key) return;
+        const list = repairsByRequest.get(key) ?? [];
+        list.push(row);
+        repairsByRequest.set(key, list);
+      });
+
+      const wantedAssetIds: number[] = [];
+      const wantAsset = (raw: any) => {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n > 0 && !wantedAssetIds.includes(n)) wantedAssetIds.push(n);
+      };
+      reqRows.forEach((req: any) => {
+        wantAsset(req.asset_id);
+        (repairsByRequest.get(String(req.id)) ?? []).forEach((r: any) => wantAsset(r.Assets_id));
+      });
+
+      let assetRows: any[] = [];
+      if (wantedAssetIds.length > 0) {
+        const { data: aData, error: aErr } = await supabase
+          .from('assets')
+          .select('id, Asset_code, Asset_name, Category, Condition, serial_Number, asset_location, purchase_Price, warranty_months, Lifecycle_Status')
+          .in('id', wantedAssetIds);
+        if (aErr) {
+          console.error('Failed to fetch assets for repair rows:', aErr.message);
+        } else {
+          assetRows = aData || [];
+        }
+      }
+      const assetsById = new Map(assetRows.map((a: any) => [String(a.id), a]));
+
+      const mappedItems: RequestItem[] = reqRows.map((req: any) => {
         const user = req.users;
         const fullName = user?.employee_numbers?.Full_Name || 'Unknown';
         const departmentName = user?.departments?.Name || user?.department_id || 'N/A';
         const normalizedStatus = normalizeRepairStatus(req.status);
 
+        // Direct request link first, then any per-asset repairs-log links.
+        const seen = new Set<string>();
+        const linked: LinkedAsset[] = [];
+        const pushAsset = (raw: any) => {
+          if (!raw || raw.id == null) return;
+          const id = String(raw.id);
+          if (seen.has(id)) return;
+          seen.add(id);
+          linked.push(toLinkedAsset(raw));
+        };
+        if (req.asset_id != null) pushAsset(assetsById.get(String(req.asset_id)));
+        (repairsByRequest.get(String(req.id)) ?? []).forEach((r: any) => {
+          pushAsset(assetsById.get(String(r.Assets_id)));
+        });
+
+        const mainAsset = linked[0];
         return {
           id: String(req.id),
-          title: req.assets?.Asset_name || 'Unknown Asset',
+          title: mainAsset?.name ?? 'No asset linked',
           requestId: `REP-${req.id}`,
-          assetName: req.assets?.Asset_name || 'Unknown',
-          assetId: req.assets?.Asset_code || 'N/A',
+          assetName: mainAsset?.name ?? 'No asset linked',
+          assetId: mainAsset?.code || 'N/A',
+          linkedAssets: linked.length > 0 ? linked : undefined,
           requestType: 'Repair',
           department: String(departmentName),
           submittedBy: fullName,
@@ -346,6 +439,9 @@ export default function RepairModule() {
                       <View style={styles.assetTextWrap}>
                         <Text style={styles.assetName}>{item.title}</Text>
                         <Text style={styles.assetCode}>{item.assetId}</Text>
+                        {item.linkedAssets && item.linkedAssets.length > 1 ? (
+                          <Text style={styles.assetExtra}>{`${item.linkedAssets.length} assets linked`}</Text>
+                        ) : null}
                         <Text style={styles.requestorText}>Requested by: {item.submittedBy}</Text>
                         <View style={[styles.statusPillCompact, { backgroundColor: statusStyle.backgroundColor }]}>
                           <Text style={[styles.statusTextCompact, { color: statusStyle.color }]}>{item.status}</Text>
@@ -402,37 +498,62 @@ export default function RepairModule() {
                       <View style={styles.detailSection}>
                         <Text style={styles.detailLabel}>Asset details</Text>
                         <View style={styles.assetInfoStack}>
-                          <View style={styles.assetInfoItem}>
-                            <Text style={styles.assetInfoLabel}>Serial Number</Text>
-                            <Text style={styles.assetInfoValue}>{item.assetId}</Text>
-                          </View>
-                          <View style={styles.assetInfoItem}>
-                            <Text style={styles.assetInfoLabel}>Condition</Text>
-                            <Text style={styles.assetInfoValue}>Good</Text>
-                          </View>
-                          <View style={styles.assetInfoItem}>
-                            <Text style={styles.assetInfoLabel}>Purchase Price</Text>
-                            <Text style={styles.assetInfoValue}>₱0.00</Text>
-                          </View>
-                          <View style={styles.assetInfoItem}>
-                            <Text style={styles.assetInfoLabel}>Warranty (Months)</Text>
-                            <Text style={styles.assetInfoValue}>12</Text>
-                          </View>
-                          <View style={styles.assetInfoItem}>
-                            <Text style={styles.assetInfoLabel}>Location</Text>
-                            <Text style={styles.assetInfoValue}>Room 101</Text>
-                          </View>
-                          <TouchableOpacity
-                            style={styles.imagePlaceholderCard}
-                            activeOpacity={0.8}
-                            onPress={() => setSelectedImage(item.assetId ? 'no-image' : null)}
-                          >
-                            <Text style={styles.assetInfoLabel}>Image</Text>
-                            <View style={styles.imagePlaceholder}>
-                              <MaterialCommunityIcons name="image-outline" size={24} color="#6B7280" />
-                              <Text style={styles.imagePlaceholderText}>No Image Attached</Text>
+                          {item.linkedAssets && item.linkedAssets.length > 0 ? (
+                            item.linkedAssets.map((asset, idx) => (
+                              <View key={asset.id ?? asset.code ?? idx} style={styles.assetInfoItem}>
+                                <Text style={styles.detailAssetName}>{asset.name}</Text>
+                                <Text style={styles.detailAssetCode}>{asset.code || '—'}</Text>
+                                {asset.lifecycleStatus ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Lifecycle Status</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.lifecycleStatus}</Text>
+                                  </View>
+                                ) : null}
+                                {asset.category ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Category</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.category}</Text>
+                                  </View>
+                                ) : null}
+                                {asset.condition ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Condition</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.condition}</Text>
+                                  </View>
+                                ) : null}
+                                {asset.serialNumber ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Serial Number</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.serialNumber}</Text>
+                                  </View>
+                                ) : null}
+                                {asset.location ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Location</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.location}</Text>
+                                  </View>
+                                ) : null}
+                                {asset.purchasePrice ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Purchase Price</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.purchasePrice}</Text>
+                                  </View>
+                                ) : null}
+                                {asset.warrantyMonths ? (
+                                  <View style={styles.assetMiniRow}>
+                                    <Text style={styles.assetInfoLabel}>Warranty (Months)</Text>
+                                    <Text style={styles.assetInfoValue}>{asset.warrantyMonths}</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                            ))
+                          ) : (
+                            <View style={styles.assetInfoItem}>
+                              <Text style={styles.assetInfoValue}>
+                                No asset has been linked to this request yet.
+                              </Text>
                             </View>
-                          </TouchableOpacity>
+                          )}
                         </View>
                       </View>
 
@@ -706,6 +827,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     letterSpacing: 0.1,
   },
+  assetExtra: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563EB',
+    marginTop: 3,
+  },
   requestorText: {
     fontSize: 12,
     color: '#475569',
@@ -876,6 +1003,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#0F172A',
+  },
+  detailAssetName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  detailAssetCode: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 6,
+    letterSpacing: 0.2,
+  },
+  assetMiniRow: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF2F7',
+    paddingTop: 8,
   },
   imagePlaceholderCard: {
     width: '100%',

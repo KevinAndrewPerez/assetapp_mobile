@@ -4,7 +4,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
   ActivityIndicator,
@@ -16,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { fetchAssetsWithDepartments, AssetSummary, updateDepartmentHead } from '../../lib/assetService';
 import { getStoredUser } from '../../lib/userService';
 import { supabase } from '../../lib/supabase';
+import NotificationBell from '@/components/notification-bell';
 import QRCode from 'react-native-qrcode-svg';
 import QRViewModal from '../../components/QRViewModal';
 
@@ -31,8 +31,8 @@ export default function AssetsScreen() {
   // Edit Dept Head Modal
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingDept, setEditingDept] = useState<any>(null);
-  const [newHeadName, setNewHeadName] = useState('');
-  const [newHeadEmail, setNewHeadEmail] = useState('');
+  const [deptUsers, setDeptUsers] = useState<any[]>([]);
+  const [selectedHeadUserId, setSelectedHeadUserId] = useState<string | number | null>(null);
   const [updating, setUpdating] = useState(false);
 
   // QR Modal
@@ -81,26 +81,43 @@ export default function AssetsScreen() {
     setQrModalVisible(true);
   };
 
-  const handleEditHead = (dept: any) => {
+  const handleEditHead = async (dept: any) => {
     setEditingDept(dept);
-    // In a real app, you'd fetch the current head from the users table
-    setNewHeadName('');
-    setNewHeadEmail('');
+    setSelectedHeadUserId(null);
+    setDeptUsers([]);
     setEditModalVisible(true);
+
+    // List every user in this department so the admin can pick a new head
+    // from the department itself (including the current head).
+    try {
+      const { data } = await supabase
+        .from('users')
+        .select('id, email, role, employee_numbers(Full_Name, Employee_number)')
+        .eq('department_id', dept.id)
+        .order('role', { ascending: true });
+      setDeptUsers(data || []);
+    } catch (err) {
+      console.error('Failed to load department users:', err);
+    }
+  };
+
+  const selectHeadUser = (user: any) => {
+    setSelectedHeadUserId(user.id);
   };
 
   const saveDeptHead = async () => {
-    if (!newHeadName || !newHeadEmail) {
-      Alert.alert('Missing Info', 'Please fill in both name and email.');
+    if (selectedHeadUserId == null) {
+      Alert.alert('Missing Info', 'Pick a user from the list to make them the Department Head.');
       return;
     }
     setUpdating(true);
     try {
-      await updateDepartmentHead(editingDept.id, newHeadName, newHeadEmail);
+      await updateDepartmentHead(editingDept.id, { userId: selectedHeadUserId });
       Alert.alert('Success', 'Department head updated successfully.');
       setEditModalVisible(false);
       loadData();
     } catch (error) {
+      console.error('Failed to update department head:', error);
       Alert.alert('Error', 'Failed to update department head.');
     } finally {
       setUpdating(false);
@@ -127,12 +144,7 @@ export default function AssetsScreen() {
     <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Assets & Custodianship</Text>
-        <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.badgeText}>3</Text>
-          </View>
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
       <SafeAreaView style={styles.container}>
 
@@ -232,19 +244,49 @@ export default function AssetsScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Edit Department Head</Text>
-            <TextInput 
-              style={styles.modalInput} 
-              placeholder="Full Name" 
-              value={newHeadName} 
-              onChangeText={setNewHeadName} 
-            />
-            <TextInput 
-              style={styles.modalInput} 
-              placeholder="Email Address" 
-              value={newHeadEmail} 
-              onChangeText={setNewHeadEmail}
-              keyboardType="email-address"
-            />
+            <Text style={styles.modalSubtitle}>
+              {editingDept?.Name} — pick a user from this department
+            </Text>
+
+            {deptUsers.length > 0 ? (
+              <ScrollView style={styles.userPickerList}>
+                {deptUsers.map((user) => {
+                  const name = user.employee_numbers?.Full_Name || user.employee_numbers?.[0]?.Full_Name || 'Unnamed';
+                  const selected = String(selectedHeadUserId) === String(user.id);
+                  return (
+                    <TouchableOpacity
+                      key={String(user.id)}
+                      style={[styles.userPickerItem, selected && styles.userPickerItemSelected]}
+                      onPress={() => selectHeadUser(user)}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.userPickerAvatar}>
+                        <Text style={styles.userPickerAvatarText}>
+                          {(name || '?').charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={styles.userPickerTextWrap}>
+                        <Text style={styles.userPickerName}>{name}</Text>
+                        <Text style={styles.userPickerEmail}>{user.email}</Text>
+                        <Text style={styles.userPickerRole}>
+                          {user.role === 'Department Head' ? 'Current Department Head' : 'Member'}
+                        </Text>
+                      </View>
+                      <MaterialCommunityIcons
+                        name={selected ? 'radiobox-marked' : 'radiobox-blank'}
+                        size={22}
+                        color={selected ? '#FBBF24' : '#CBD5E1'}
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <Text style={styles.noUsersText}>
+                No users in this department yet. Add users to this department first, then assign one as the Department Head.
+              </Text>
+            )}
+
             <View style={styles.modalButtons}>
               <TouchableOpacity style={styles.cancelButton} onPress={() => setEditModalVisible(false)}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -354,8 +396,42 @@ const styles = StyleSheet.create({
   viewAllText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#FFF', borderRadius: 20, padding: 24 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1E3A5F', marginBottom: 20 },
-  modalInput: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 14, marginBottom: 12, fontSize: 15 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1E3A5F', marginBottom: 4 },
+  modalSubtitle: { fontSize: 13, color: '#64748B', marginBottom: 14 },
+  userPickerList: { maxHeight: 240, marginBottom: 14 },
+  userPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  userPickerItemSelected: {
+    borderColor: '#FBBF24',
+    backgroundColor: '#FFFBEB',
+  },
+  userPickerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1E3A5F',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userPickerAvatarText: {
+    color: '#FBBF24',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  userPickerTextWrap: { flex: 1 },
+  userPickerName: { fontSize: 14, fontWeight: '700', color: '#1E3A5F' },
+  userPickerEmail: { fontSize: 12, color: '#64748B', marginTop: 1 },
+  userPickerRole: { fontSize: 11, color: '#FBBF24', fontWeight: '700', marginTop: 2 },
+  noUsersText: { fontSize: 13, color: '#64748B', marginBottom: 12, lineHeight: 18 },
   modalButtons: { flexDirection: 'row', gap: 12, marginTop: 12 },
   cancelButton: { flex: 1, padding: 14, alignItems: 'center' },
   cancelButtonText: { color: '#64748B', fontWeight: '600' },

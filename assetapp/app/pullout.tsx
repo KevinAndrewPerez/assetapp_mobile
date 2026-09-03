@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import NotificationBell from '@/components/notification-bell';
 import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../lib/supabase";
@@ -38,6 +39,16 @@ type AssetRow = {
   Category?: string | null;
   department?: string | null;
   Lifecycle_Status?: string | null;
+};
+
+const pulloutStatusLabel = (raw?: string | null): string => {
+  const v = String(raw ?? "").toLowerCase();
+  if (!v) return "Recorded";
+  if (v.includes("complete")) return "Completed";
+  if (v.includes("approv")) return "Approved";
+  if (v.includes("pend")) return "Pending";
+  if (v.includes("cancel")) return "Cancelled";
+  return String(raw ?? "");
 };
 
 export default function PulloutScreen() {
@@ -66,68 +77,65 @@ export default function PulloutScreen() {
   const loadLogs = async () => {
     setLoading(true);
     try {
+      // Pullout records live in the `pullouts` table (id, request_id,
+      // asset_id, Approve_by, Description, notes, pullout_date, status,
+      // destination, expected_return_date). Join the linked asset so rows can
+      // be rendered with code/name/category.
       const { data: logRows, error } = await supabase
-        .from("disposals")
-        .select("*")
+        .from("pullouts")
+        .select("*, assets(id, Asset_code, Asset_name, Category, Lifecycle_Status)")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      const pulloutRows = (logRows ?? []).filter((row: PulloutLogRow) => {
-        const status = String(row.status ?? "").toLowerCase().replace(/[-_]/g, " ").trim();
-        const title = String(row.title ?? "").toLowerCase();
-        return status === "pulled out" || status === "pullout" || title.includes("pull");
+
+      const mappedRows: PulloutLogRow[] = (logRows ?? []).map((row: any) => {
+        const asset = Array.isArray(row.assets) ? row.assets[0] : row.assets;
+        return {
+          ...row,
+          id: String(row.id ?? ""),
+          asset_id: String(asset?.Asset_code ?? row.asset_id ?? ""),
+          title: String(asset?.Asset_name ?? ""),
+          description: String(row.notes ?? row.Description ?? ""),
+          performed_by: String(row.Approve_by ?? ""),
+          status: String(row.status ?? ""),
+          assets: asset ?? null,
+          pullout_date: row.pullout_date ?? null,
+          destination: row.destination ?? null,
+          expected_return_date: row.expected_return_date ?? null,
+        };
       });
 
-      setLogs(pulloutRows);
+      setLogs(mappedRows);
 
-      const assetReferences = Array.from(
+      const byCode: Record<string, AssetRow> = {};
+      (logRows ?? []).forEach((row: any) => {
+        const a = Array.isArray(row.assets) ? row.assets[0] : row.assets;
+        if (!a) return;
+        if (a.Asset_code) byCode[String(a.Asset_code).trim()] = a;
+        if (a.id !== null && a.id !== undefined) byCode[String(a.id)] = a;
+        if (row.asset_id !== null && row.asset_id !== undefined) byCode[String(row.asset_id)] = a;
+      });
+      setAssetsByCode(byCode);
+
+      const approverEmails = Array.from(
         new Set(
-          pulloutRows
-            .map((row) => String(row.asset_id ?? "").trim())
+          mappedRows
+            .map((row) => String(row.performed_by ?? "").trim())
             .filter(Boolean)
         )
       );
 
-      if (assetReferences.length > 0) {
-        const { data: assetRows, error: assetErr } = await supabase
-          .from("assets")
-          .select("id, Asset_code, Asset_name, Category, department, Lifecycle_Status")
-          .or(`Asset_code.in.(${assetReferences.join(",")}),id.in.(${assetReferences.join(",")})`);
-
-        if (assetErr) throw assetErr;
-
-        const byCode: Record<string, AssetRow> = {};
-        (assetRows ?? []).forEach((a: AssetRow) => {
-          const code = String(a.Asset_code ?? "").trim();
-          const id = String(a.id ?? "").trim();
-          if (code) byCode[code] = a;
-          if (id) byCode[id] = a;
-        });
-        setAssetsByCode(byCode);
-      } else {
-        setAssetsByCode({});
-      }
-
-      const performerIds = Array.from(
-        new Set(
-          pulloutRows
-            .map((row) => row.performed_by)
-            .filter((v) => v !== null && v !== undefined)
-            .map((v) => String(v))
-            .filter(Boolean)
-        )
-      );
-
-      if (performerIds.length > 0) {
+      if (approverEmails.length > 0) {
         const { data: userRows, error: userErr } = await supabase
           .from("users")
-          .select("id, full_name")
-          .in("id", performerIds);
+          .select("email, employee_numbers(Full_Name)")
+          .in("email", approverEmails);
 
         if (!userErr) {
           const byId: Record<string, { full_name?: string | null }> = {};
           (userRows ?? []).forEach((u: any) => {
-            byId[String(u.id)] = { full_name: u.full_name };
+            const emp = Array.isArray(u.employee_numbers) ? u.employee_numbers[0] : u.employee_numbers;
+            byId[String(u.email)] = { full_name: emp?.Full_Name || null };
           });
           setUsersById(byId);
         }
@@ -223,7 +231,7 @@ export default function PulloutScreen() {
     try {
       const { data: asset, error } = await supabase
         .from("assets")
-        .select("Asset_code, Asset_name, Category, department, Lifecycle_Status")
+        .select("id, Asset_code, Asset_name, Category, Lifecycle_Status")
         .eq("Asset_code", code)
         .maybeSingle();
 
@@ -259,26 +267,50 @@ export default function PulloutScreen() {
     setSubmitting(true);
     try {
       const user = await getStoredUser();
-      const performedBy = user?.id ?? user?.full_name ?? "Admin";
+      const approver = String(user?.email ?? user?.full_name ?? "Admin");
       const note = reason.trim() || "Pulled out via QR scan";
       const now = new Date().toISOString();
+      const d = new Date();
+      const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-      const { error: logError } = await supabase.from("disposals").insert([
+      // Asset_id is an int8 FK — resolve the scanned code to its numeric id.
+      const pendingId = pendingAsset?.id;
+      const resolved =
+        pendingId !== null && pendingId !== undefined && pendingId !== ""
+          ? { data: { id: pendingId } }
+          : await supabase
+              .from("assets")
+              .select("id")
+              .eq("Asset_code", pendingCode)
+              .maybeSingle();
+      const assetId = (resolved as any)?.data?.id;
+      if (assetId === null || assetId === undefined) {
+        throw new Error("Could not resolve the scanned asset to its database id.");
+      }
+
+      // Real pullouts columns: asset_id, Approve_by, Description, notes,
+      // pullout_date, status, destination, expected_return_date.
+      const { error: logError } = await supabase.from("pullouts").insert([
         {
-          asset_id: pendingCode,
-          title: "Pulled Out",
-          description: note,
-          performed_by: performedBy,
-          status: "Pulled Out",
+          asset_id: assetId,
+          Approve_by: approver,
+          Description: note === "Pulled out via QR scan" ? "Pullout" : note,
+          notes: note,
+          pullout_date: dateOnly,
+          status: "approved",
+          destination: null,
+          expected_return_date: null,
           created_at: now,
+          updated_at: now,
         },
       ]);
       if (logError) throw logError;
 
+      // The web side uses the literal status value "Pullout".
       const { error: assetError } = await supabase
         .from("assets")
-        .update({ Lifecycle_Status: "Pulled Out", updated_at: now })
-        .eq("Asset_code", pendingCode);
+        .update({ Lifecycle_Status: "Pullout", updated_at: now })
+        .eq("id", assetId);
       if (assetError) throw assetError;
 
       setReasonModalVisible(false);
@@ -321,14 +353,7 @@ export default function PulloutScreen() {
           style={styles.notificationButton}
           activeOpacity={0.8}
         >
-          <MaterialCommunityIcons
-            name="bell-outline"
-            size={24}
-            color="#FFFFFF"
-          />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.notificationBadgeText}>3</Text>
-          </View>
+          <NotificationBell />
         </TouchableOpacity>
       </View>
 
@@ -406,11 +431,13 @@ export default function PulloutScreen() {
             const asset = assetsByCode[code];
             const title = String(asset?.Asset_name ?? row.title ?? "Unknown Asset");
             const category = String(asset?.Category ?? "Unknown");
-            const department = String(asset?.department ?? "N/A");
+            const destination = String(row.destination ?? "N/A");
             const requestedBy =
               usersById[String(row.performed_by ?? "")]?.full_name ??
               String(row.performed_by ?? "N/A");
             const reasonText = String(row.description ?? "N/A");
+            const statusLabel = pulloutStatusLabel(row.status);
+            const dateShown = formatDateTime(row.created_at);
 
             return (
               <View key={String(row.id)} style={styles.disposalCard}>
@@ -418,11 +445,15 @@ export default function PulloutScreen() {
               <View style={styles.categoryTag}>
                 <Text style={styles.categoryTagText}>{category}</Text>
               </View>
-              <Text style={styles.cardDate}>{formatDateTime(row.created_at)}</Text>
+              <Text style={styles.cardDate}>{dateShown}</Text>
             </View>
             <Text style={styles.disposalTitle}>{title}</Text>
-            <Text style={styles.cardMeta}>{`Department: ${department}`}</Text>
-            <Text style={styles.cardMeta}>{`Requested by: ${requestedBy}`}</Text>
+            <Text style={styles.assetCodeLine}>{code}</Text>
+            <View style={styles.statusLine}>
+              <Text style={[styles.statusTextChip, statusLabel === "Completed" ? styles.statusDone : styles.statusOpen]}>{statusLabel}</Text>
+            </View>
+            <Text style={styles.cardMeta}>{`Destination: ${destination}`}</Text>
+            <Text style={styles.cardMeta}>{`Recorded by: ${requestedBy}`}</Text>
             <Text style={styles.cardReasonTitle}>Reason</Text>
             <Text style={styles.cardReason}>{reasonText}</Text>
               </View>
@@ -761,7 +792,33 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: "#0F172A",
+    marginBottom: 4,
+  },
+  assetCodeLine: {
+    fontSize: 12,
+    color: "#64748B",
+    marginBottom: 8,
+    letterSpacing: 0.2,
+  },
+  statusLine: {
+    flexDirection: "row",
     marginBottom: 10,
+  },
+  statusTextChip: {
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  statusDone: {
+    backgroundColor: "#DCFCE7",
+    color: "#166534",
+  },
+  statusOpen: {
+    backgroundColor: "#DBEAFE",
+    color: "#1D4ED8",
   },
   cardMeta: {
     color: "#4B5563",

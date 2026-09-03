@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Image,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -15,6 +16,7 @@ import { getStoredUser } from '../lib/userService';
 import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
 import QRViewModal from '../components/QRViewModal';
+import NotificationBell from '@/components/notification-bell';
 
 export default function AssetsListScreen() {
   const router = useRouter();
@@ -115,9 +117,7 @@ export default function AssetsListScreen() {
         <View style={styles.headerText}>
           <Text style={styles.headerTitle}>{departmentName}</Text>
         </View>
-        <TouchableOpacity style={styles.notificationBadge}>
-          <Text style={styles.notificationBadgeText}>3</Text>
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -188,6 +188,17 @@ export default function AssetsListScreen() {
 
               {expanded && (
                 <View style={styles.assetDetails}>
+                  {item.imageUrl ? (
+                    <View style={styles.photoCard}>
+                      <Image source={{ uri: item.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
+                    </View>
+                  ) : (
+                    <View style={styles.photoPlaceholder}>
+                      <MaterialCommunityIcons name="image-off-outline" size={28} color="#94A3B8" />
+                      <Text style={styles.photoPlaceholderText}>No photo on file</Text>
+                    </View>
+                  )}
+
                   <TouchableOpacity
                     style={styles.qrSection}
                     onPress={() => openQrModal(item.assetId, item.title)}
@@ -423,6 +434,32 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     paddingTop: 20,
+  },
+  photoCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+    backgroundColor: '#F1F5F9',
+  },
+  assetPhoto: {
+    width: '100%',
+    height: 180,
+  },
+  photoPlaceholder: {
+    height: 120,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginBottom: 16,
+  },
+  photoPlaceholderText: {
+    fontSize: 12,
+    color: '#94A3B8',
   },
   qrSection: {
     borderRadius: 20,

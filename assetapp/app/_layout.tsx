@@ -62,10 +62,13 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(user-tabs)" />
         <Stack.Screen name="submit-request" />
+        <Stack.Screen name="request-detail" />
         <Stack.Screen name="modal" options={{ presentation: "modal", title: "Modal" }} />
         <Stack.Screen name="assets" />
         <Stack.Screen name="asset-registry" />
         <Stack.Screen name="activity-log" />
+        <Stack.Screen name="notifications" />
+        <Stack.Screen name="maintenance" />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

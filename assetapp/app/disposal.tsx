@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import NotificationBell from '@/components/notification-bell';
 import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../lib/supabase";
@@ -66,68 +67,75 @@ export default function DisposalScreen() {
   const loadLogs = async () => {
     setLoading(true);
     try {
+      // disposals has no title/status/performed_by columns and `asset_id` is an
+      // int8 FK, not a code. Real columns: Disposal_ID, Asset_id, Request_id,
+      // notes, Approve_by, Description, disposal_date, disposal_reason.
+      // Join the linked asset so rows can be rendered with code/name/status.
       const { data: logRows, error } = await supabase
         .from("disposals")
-        .select("*")
+        .select("*, assets(id, Asset_code, Asset_name, Category, Lifecycle_Status)")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      const disposalRows = (logRows ?? []).filter((row: DisposalLogRow) => {
-        const status = String(row.status ?? "").toLowerCase().replace(/[-_]/g, " ").trim();
-        const title = String(row.title ?? "").toLowerCase();
-        return status === "disposed" || status === "disposal" || title.includes("dispos");
+
+      const mappedRows: DisposalLogRow[] = (logRows ?? []).map((row: any) => {
+        const asset = Array.isArray(row.assets) ? row.assets[0] : row.assets;
+        const kindText = [
+          String(row.Description ?? ""),
+          String(asset?.Lifecycle_Status ?? ""),
+          String(row.disposal_reason ?? ""),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .replace(/[-_]/g, " ")
+          .trim();
+        return {
+          ...row,
+          id: String(row.Disposal_ID ?? row.id ?? ""),
+          asset_id: String(asset?.Asset_code ?? row.Asset_id ?? ""),
+          title: String(asset?.Asset_name ?? ""),
+          description: String(row.disposal_reason ?? row.notes ?? row.Description ?? ""),
+          performed_by: String(row.Approve_by ?? ""),
+          status: kindText,
+          assets: asset ?? null,
+        };
       });
+
+      const disposalRows = mappedRows.filter((row) =>
+        String(row.status ?? "").includes("dispos")
+      );
 
       setLogs(disposalRows);
 
-      const assetReferences = Array.from(
+      const byCode: Record<string, AssetRow> = {};
+      (logRows ?? []).forEach((row: any) => {
+        const a = Array.isArray(row.assets) ? row.assets[0] : row.assets;
+        if (!a) return;
+        if (a.Asset_code) byCode[String(a.Asset_code).trim()] = a;
+        if (a.id !== null && a.id !== undefined) byCode[String(a.id)] = a;
+        if (row.Asset_id !== null && row.Asset_id !== undefined) byCode[String(row.Asset_id)] = a;
+      });
+      setAssetsByCode(byCode);
+
+      const approverEmails = Array.from(
         new Set(
           disposalRows
-            .map((row) => String(row.asset_id ?? "").trim())
+            .map((row) => String(row.performed_by ?? "").trim())
             .filter(Boolean)
         )
       );
 
-      if (assetReferences.length > 0) {
-        const { data: assetRows, error: assetErr } = await supabase
-          .from("assets")
-          .select("id, Asset_code, Asset_name, Category, department, Lifecycle_Status")
-          .or(`Asset_code.in.(${assetReferences.join(",")}),id.in.(${assetReferences.join(",")})`);
-
-        if (assetErr) throw assetErr;
-
-        const byCode: Record<string, AssetRow> = {};
-        (assetRows ?? []).forEach((a: AssetRow) => {
-          const code = String(a.Asset_code ?? "").trim();
-          const id = String(a.id ?? "").trim();
-          if (code) byCode[code] = a;
-          if (id) byCode[id] = a;
-        });
-        setAssetsByCode(byCode);
-      } else {
-        setAssetsByCode({});
-      }
-
-      const performerIds = Array.from(
-        new Set(
-          disposalRows
-            .map((row) => row.performed_by)
-            .filter((v) => v !== null && v !== undefined)
-            .map((v) => String(v))
-            .filter(Boolean)
-        )
-      );
-
-      if (performerIds.length > 0) {
+      if (approverEmails.length > 0) {
         const { data: userRows, error: userErr } = await supabase
           .from("users")
-          .select("id, full_name")
-          .in("id", performerIds);
+          .select("email, employee_numbers(Full_Name)")
+          .in("email", approverEmails);
 
         if (!userErr) {
           const byId: Record<string, { full_name?: string | null }> = {};
           (userRows ?? []).forEach((u: any) => {
-            byId[String(u.id)] = { full_name: u.full_name };
+            const emp = Array.isArray(u.employee_numbers) ? u.employee_numbers[0] : u.employee_numbers;
+            byId[String(u.email)] = { full_name: emp?.Full_Name || null };
           });
           setUsersById(byId);
         }
@@ -223,7 +231,7 @@ export default function DisposalScreen() {
     try {
       const { data: asset, error } = await supabase
         .from("assets")
-        .select("Asset_code, Asset_name, Category, department, Lifecycle_Status")
+        .select("id, Asset_code, Asset_name, Category, Lifecycle_Status")
         .eq("Asset_code", code)
         .maybeSingle();
 
@@ -259,26 +267,46 @@ export default function DisposalScreen() {
     setSubmitting(true);
     try {
       const user = await getStoredUser();
-      const performedBy = user?.id ?? user?.full_name ?? "Admin";
+      const approver = String(user?.email ?? user?.full_name ?? "Admin");
       const note = reason.trim() || "Disposed via QR scan";
       const now = new Date().toISOString();
+      const d = new Date();
+      const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+      // Asset_id is an int8 FK — resolve the scanned code to its numeric id.
+      const pendingId = pendingAsset?.id;
+      const resolved =
+        pendingId !== null && pendingId !== undefined && pendingId !== ""
+          ? { data: { id: pendingId } }
+          : await supabase
+              .from("assets")
+              .select("id")
+              .eq("Asset_code", pendingCode)
+              .maybeSingle();
+      const assetId = (resolved as any)?.data?.id;
+      if (assetId === null || assetId === undefined) {
+        throw new Error("Could not resolve the scanned asset to its database id.");
+      }
 
       const { error: logError } = await supabase.from("disposals").insert([
         {
-          asset_id: pendingCode,
-          title: "Disposed",
-          description: note,
-          performed_by: performedBy,
-          status: "Disposed",
+          Asset_id: assetId,
+          notes: note,
+          Approve_by: approver,
+          Description: "Disposal",
+          disposal_date: dateOnly,
+          disposal_reason: note,
           created_at: now,
+          updated_at: now,
         },
       ]);
       if (logError) throw logError;
 
+      // The DB/web use the literal status value "Disposal".
       const { error: assetError } = await supabase
         .from("assets")
-        .update({ Lifecycle_Status: "Disposed", updated_at: now })
-        .eq("Asset_code", pendingCode);
+        .update({ Lifecycle_Status: "Disposal", updated_at: now })
+        .eq("id", assetId);
       if (assetError) throw assetError;
 
       setReasonModalVisible(false);
@@ -314,7 +342,7 @@ export default function DisposalScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const { error } = await supabase.from("disposals").delete().in("id", ids);
+              const { error } = await supabase.from("disposals").delete().in("Disposal_ID", ids);
               if (error) throw error;
               await loadLogs();
             } catch (e: any) {
@@ -355,14 +383,7 @@ export default function DisposalScreen() {
           style={styles.notificationButton}
           activeOpacity={0.8}
         >
-          <MaterialCommunityIcons
-            name="bell-outline"
-            size={24}
-            color="#FFFFFF"
-          />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.notificationBadgeText}>3</Text>
-          </View>
+          <NotificationBell />
         </TouchableOpacity>
       </View>
 

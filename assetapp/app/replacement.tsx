@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -13,155 +14,163 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { supabase } from '@/lib/supabase';
+import NotificationBell from '@/components/notification-bell';
+import {
+  fetchReplacementRecords,
+  linkReplacementAsset,
+  markReplacementReceived,
+  ReplacementRecord,
+} from '@/lib/assetService';
+import { getStoredUser } from '@/lib/userService';
 
-const filterTabs = ['All', 'Pending', 'Approved', 'Received'] as const;
+const filterTabs = ['All', 'Approved', 'Received'] as const;
 type FilterTab = typeof filterTabs[number];
-type ReplacementStatus = Exclude<FilterTab, 'All'>;
-
-type ReplacementItem = {
-  id: string;
-  oldAssetId: string;
-  oldAssetName: string;
-  newAssetId: string;
-  newAssetName: string;
-  requestedBy: string;
-  reason: string;
-  status: ReplacementStatus;
-  createdAt: string;
-};
-
-const getReplacementStatus = (status?: string | null): ReplacementStatus => {
-  const normalized = String(status ?? '').toLowerCase();
-  if (normalized.includes('receiv')) return 'Received';
-  if (normalized.includes('approv')) return 'Approved';
-  return 'Pending';
-};
-
-const getStatusStyle = (status: ReplacementStatus) => {
-  switch (status) {
-    case 'Approved':
-    case 'Received':
-      return { backgroundColor: '#DCFCE7', color: '#166534' };
-    default:
-      return { backgroundColor: '#FEF3C7', color: '#B45309' };
-  }
-};
 
 export default function ReplacementModule() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<FilterTab>('All');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [items, setItems] = useState<ReplacementItem[]>([]);
+  const [items, setItems] = useState<ReplacementRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [acting, setActing] = useState(false);
 
-  const fetchReplacementRequests = async () => {
+  // QR scanner for linking a new asset to a specific replacement.
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [scanTargetId, setScanTargetId] = useState<string | null>(null);
+  const [scanTargetOldCode, setScanTargetOldCode] = useState('');
+
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('requests')
-        .select(`
-          id,
-          status,
-          Note,
-          created_at,
-          asset_id,
-          user_id,
-          users:user_id (employee_numbers (Full_Name))
-        `)
-        .ilike('request_type', '%replacement%')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      const requests = (data as any[] || []);
-      const assetReferences = Array.from(new Set(
-        requests
-          .map((request) => String(request.asset_id ?? '').trim())
-          .filter(Boolean),
-      ));
-      const { data: assetRows, error: assetsError } = assetReferences.length > 0
-        ? await supabase.from('assets').select('id, Asset_code, Asset_name').or(
-          `id.in.(${assetReferences.join(',')}),Asset_code.in.(${assetReferences.join(',')})`,
-        )
-        : { data: [], error: null };
-
-      if (assetsError) throw assetsError;
-
-      const assetsByReference = new Map<string, { code: string; name: string }>();
-      (assetRows as any[] || []).forEach((asset) => {
-        const normalized = {
-          code: String(asset.Asset_code ?? asset.id ?? 'N/A'),
-          name: String(asset.Asset_name ?? 'Unknown Asset'),
-        };
-        if (asset.id !== null && asset.id !== undefined) assetsByReference.set(String(asset.id), normalized);
-        if (asset.Asset_code) assetsByReference.set(String(asset.Asset_code), normalized);
-      });
-
-      const mappedItems: ReplacementItem[] = requests.map((req: any) => {
-        const asset = assetsByReference.get(String(req.asset_id ?? '').trim());
-        return {
-          id: String(req.id),
-          oldAssetId: asset?.code || String(req.asset_id || 'N/A'),
-          oldAssetName: asset?.name || 'Unknown Asset',
-        newAssetId: 'Link new asset',
-        newAssetName: 'Replacement asset',
-        requestedBy: req.users?.employee_numbers?.Full_Name || 'Unknown',
-        reason: req.Note || 'Approved replacement request',
-        status: getReplacementStatus(req.status),
-        createdAt: new Date(req.created_at).toLocaleDateString(),
-        };
-      });
-
-      setItems(mappedItems);
+      const records = await fetchReplacementRecords();
+      setItems(records);
     } catch (error) {
-      console.error('Failed to fetch replacement requests:', error);
-      Alert.alert('Error', 'Failed to load replacement requests');
+      console.error('Failed to fetch replacement records:', error);
+      Alert.alert('Error', 'Failed to load replacement records');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchReplacementRequests();
+    fetchData();
   }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchReplacementRequests();
+    await fetchData();
     setRefreshing(false);
   };
 
   const counts = useMemo(() => ({
     All: items.length,
-    Pending: items.filter((item) => item.status === 'Pending').length,
     Approved: items.filter((item) => item.status === 'Approved').length,
     Received: items.filter((item) => item.status === 'Received').length,
   }), [items]);
 
-  const filteredRequests = useMemo(() => {
+  const filteredItems = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     return items.filter((item) => {
       const matchesTab = activeFilter === 'All' || item.status === activeFilter;
       const matchesSearch = normalizedQuery.length === 0 || [
-        item.oldAssetId,
-        item.oldAssetName,
+        item.oldAsset.code,
+        item.oldAsset.name,
+        item.newAsset?.code,
+        item.newAsset?.name,
         item.requestedBy,
-        item.reason,
         item.status,
       ].join(' ').toLowerCase().includes(normalizedQuery);
       return matchesTab && matchesSearch;
     });
   }, [activeFilter, items, searchQuery]);
 
-  if (loading) {
+  const openScanner = async (record: ReplacementRecord) => {
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) {
+        Alert.alert('Camera Permission', 'Camera permission is required to scan QR codes.');
+        return;
+      }
+    }
+    setScanTargetId(record.replacementId);
+    setScanTargetOldCode(record.oldAsset.code);
+    setScanned(false);
+    setScannerVisible(true);
+  };
+
+  const handleScanned = async (value: string) => {
+    if (scanned) return;
+    setScanned(true);
+    const code = String(value ?? '').trim();
+    if (!code) {
+      setScanned(false);
+      Alert.alert('Invalid QR', 'The scanned QR code is empty.');
+      return;
+    }
+
+    try {
+      const { data: assetRow, error: assetErr } = await supabase
+        .from('assets')
+        .select('id, Asset_code, Asset_name')
+        .eq('Asset_code', code)
+        .maybeSingle();
+
+      if (assetErr) throw assetErr;
+      if (!assetRow) {
+        Alert.alert('Invalid asset', 'No asset was found for the scanned code.');
+        return;
+      }
+
+      const user = await getStoredUser();
+      setActing(true);
+      await linkReplacementAsset(scanTargetId!, assetRow.id, user?.id ?? null);
+      Alert.alert(
+        'Asset linked',
+        `"${assetRow.Asset_name || assetRow.Asset_code}" is now the replacement asset.`,
+      );
+      setScannerVisible(false);
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to link replacement asset:', err);
+      Alert.alert('Link failed', (err as Error).message || 'Unable to link the replacement asset.');
+    } finally {
+      setActing(false);
+      setScanned(false);
+    }
+  };
+
+  const handleMarkReceived = async (record: ReplacementRecord) => {
+    try {
+      const user = await getStoredUser();
+      setActing(true);
+      await markReplacementReceived(record.replacementId, user?.id ?? null);
+      Alert.alert('Received', 'Replacement marked as received. New asset is Active; old asset is Pullout.');
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to mark replacement received:', err);
+      Alert.alert('Error', (err as Error).message || 'Unable to update the replacement status.');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const statusStyle = (status: string) =>
+    status === 'Received'
+      ? { backgroundColor: '#DCFCE7', color: '#166534' }
+      : { backgroundColor: '#DBEAFE', color: '#1D4ED8' };
+
+  if (loading && items.length === 0) {
     return (
       <View style={styles.screenContainer}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <MaterialCommunityIcons name="chevron-left" size={24} color="#FFFFFF" />
+            <MaterialCommunityIcons name="chevron-left" size={28} color="#FFFFFF" />
           </TouchableOpacity>
           <Text style={styles.title}>Replacement Records</Text>
           <View style={styles.headerSpacer} />
@@ -202,9 +211,7 @@ export default function ReplacementModule() {
                 placeholderTextColor="#94A3B8"
               />
             </View>
-            <TouchableOpacity style={styles.iconButton} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="bell-outline" size={18} color="#1E293B" />
-            </TouchableOpacity>
+            <NotificationBell color="#1E293B" />
             <TouchableOpacity style={styles.avatarButton} activeOpacity={0.8}>
               <Text style={styles.avatarText}>A</Text>
             </TouchableOpacity>
@@ -234,26 +241,27 @@ export default function ReplacementModule() {
           </ScrollView>
 
           <View style={styles.listContainer}>
-            {filteredRequests.length > 0 ? filteredRequests.map((item) => {
-              const isExpanded = expandedId === item.id;
-              const statusStyle = getStatusStyle(item.status);
+            {filteredItems.length > 0 ? filteredItems.map((item) => {
+              const isExpanded = expandedId === item.replacementId;
+              const st = statusStyle(item.status);
+              const canReceive = item.status === 'Approved';
               return (
-                <View key={item.id} style={styles.recordCard}>
+                <View key={item.replacementId} style={styles.recordCard}>
                   <TouchableOpacity
                     style={styles.recordHeader}
                     activeOpacity={0.8}
-                    onPress={() => setExpandedId(isExpanded ? null : item.id)}
+                    onPress={() => setExpandedId(isExpanded ? null : item.replacementId)}
                   >
                     <View style={styles.assetSummary}>
                       <View style={styles.assetIconWrap}>
                         <MaterialCommunityIcons name="sync" size={26} color="#2563EB" />
                       </View>
                       <View style={styles.assetTextWrap}>
-                        <Text style={styles.assetName}>{item.oldAssetName}</Text>
-                        <Text style={styles.assetCode}>{item.oldAssetId}</Text>
+                        <Text style={styles.assetName}>{item.oldAsset.name}</Text>
+                        <Text style={styles.assetCode}>{item.oldAsset.code}</Text>
                         <Text style={styles.requestorText}>Requested by: {item.requestedBy}</Text>
-                        <View style={[styles.statusPill, { backgroundColor: statusStyle.backgroundColor }]}>
-                          <Text style={[styles.statusText, { color: statusStyle.color }]}>{item.status}</Text>
+                        <View style={[styles.statusPill, { backgroundColor: st.backgroundColor }]}>
+                          <Text style={[styles.statusText, { color: st.color }]}>{item.status}</Text>
                         </View>
                       </View>
                     </View>
@@ -269,15 +277,22 @@ export default function ReplacementModule() {
                       <View style={styles.detailGrid}>
                         <View style={styles.detailBlock}>
                           <Text style={styles.detailLabel}>Old asset</Text>
-                          <Text style={styles.detailValue}>{item.oldAssetId}</Text>
-                          <Text style={styles.detailSubValue}>{item.oldAssetName}</Text>
+                          <Text style={styles.detailValue}>{item.oldAsset.code}</Text>
+                          <Text style={styles.detailSubValue}>{item.oldAsset.name}</Text>
                         </View>
                         <View style={styles.detailBlock}>
                           <Text style={styles.detailLabel}>New asset</Text>
-                          <Text style={styles.linkText}>{item.newAssetId}</Text>
-                          <Text style={styles.detailSubValue}>{item.newAssetName}</Text>
+                          {item.newAsset ? (
+                            <>
+                              <Text style={styles.detailValue}>{item.newAsset.code}</Text>
+                              <Text style={styles.detailSubValue}>{item.newAsset.name}</Text>
+                            </>
+                          ) : (
+                            <Text style={styles.detailSubValue}>No new asset linked yet</Text>
+                          )}
                         </View>
                       </View>
+
                       <View style={styles.detailSection}>
                         <Text style={styles.detailLabel}>Requested by</Text>
                         <Text style={styles.detailValue}>{item.requestedBy}</Text>
@@ -292,6 +307,39 @@ export default function ReplacementModule() {
                           <Text style={styles.notesText}>{item.reason}</Text>
                         </View>
                       </View>
+
+                      {canReceive && (
+                        <View style={styles.actionButtons}>
+                          <TouchableOpacity
+                            style={[styles.linkButton, acting && { opacity: 0.6 }]}
+                            activeOpacity={0.85}
+                            disabled={acting}
+                            onPress={() => openScanner(item)}
+                          >
+                            <MaterialCommunityIcons name="qrcode-scan" size={18} color="#FFFFFF" />
+                            <Text style={styles.linkButtonText}>
+                              {item.newAsset ? 'Change Replacement Asset' : 'Link Replacement Asset'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={[styles.receiveButton, (!item.newAsset || acting) && { opacity: 0.45 }]}
+                            activeOpacity={0.85}
+                            disabled={!item.newAsset || acting}
+                            onPress={() => handleMarkReceived(item)}
+                          >
+                            <MaterialCommunityIcons name="check-circle-outline" size={18} color="#FFFFFF" />
+                            <Text style={styles.receiveButtonText}>Mark Received</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
+                      {item.status === 'Received' && (
+                        <View style={styles.receivedNote}>
+                          <MaterialCommunityIcons name="check-circle" size={16} color="#166534" />
+                          <Text style={styles.receivedNoteText}>Replacement received — new asset Active, old asset Pullout.</Text>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
@@ -305,6 +353,32 @@ export default function ReplacementModule() {
           </View>
         </ScrollView>
       </SafeAreaView>
+
+      {/* QR scanner for linking a new replacement asset */}
+      <Modal visible={scannerVisible} animationType="slide">
+        <SafeAreaView style={styles.scannerContainer}>
+          <View style={styles.scannerHeader}>
+            <View style={{ width: 42 }} />
+            <Text style={styles.scannerTitle}>Scan Replacement Asset QR</Text>
+            <TouchableOpacity style={styles.scannerClose} onPress={() => setScannerVisible(false)} activeOpacity={0.8}>
+              <MaterialCommunityIcons name="close" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.cameraWrap}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={({ data }) => handleScanned(String(data ?? ''))}
+            />
+            <View style={styles.scanFrame} />
+            <Text style={styles.scanHint}>
+              Scan the QR of the asset replacing {scanTargetOldCode || 'the old asset'}
+            </Text>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
@@ -348,10 +422,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#0F172A' },
-  iconButton: {
-    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0',
-  },
   avatarButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EA5E9', justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#FFFFFF', fontWeight: '700' },
   filterScroll: { backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
@@ -382,9 +452,68 @@ const styles = StyleSheet.create({
   detailLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', textTransform: 'uppercase' },
   detailValue: { fontSize: 14, color: '#111827', fontWeight: '700', marginTop: 4 },
   detailSubValue: { fontSize: 12, color: '#64748B', marginTop: 3 },
-  linkText: { fontSize: 14, color: '#2563EB', fontWeight: '700', marginTop: 4 },
   notesBox: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 12 },
   notesText: { fontSize: 14, color: '#111827', lineHeight: 20 },
+  actionButtons: { gap: 10, marginTop: 4 },
+  linkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1E3A5F',
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  linkButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  receiveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  receiveButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  receivedNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    padding: 10,
+  },
+  receivedNoteText: { color: '#166534', fontSize: 12, fontWeight: '600', flex: 1 },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 42 },
   emptyStateText: { marginTop: 12, color: '#94A3B8', fontSize: 16, fontWeight: '600' },
-});
+  scannerContainer: { flex: 1, backgroundColor: '#0F172A' },
+  scannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#0F172A',
+  },
+  scannerClose: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerTitle: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  cameraWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  scanFrame: {
+    width: 250,
+    height: 250,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#FBBF24',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  scanHint: { marginTop: 18, color: '#E2E8F0', fontSize: 14, fontWeight: '600' },
+});

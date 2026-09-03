@@ -74,7 +74,7 @@ export default function ProfileScreen() {
     {
       id: 'notifications',
       icon: 'bell',
-      label: 'Notification Preferences',
+      label: 'Notifications',
       color: '#FBBF24',
     },
   ];
@@ -136,6 +136,9 @@ export default function ProfileScreen() {
               key={option.id}
               style={styles.settingItem}
               activeOpacity={0.7}
+              onPress={() => {
+                if (option.id === 'notifications') router.push('/notifications');
+              }}
             >
               <View style={[styles.settingIconContainer, { backgroundColor: `${option.color}20` }]}>
                 <MaterialCommunityIcons name={option.icon as any} size={20} color={option.color} />

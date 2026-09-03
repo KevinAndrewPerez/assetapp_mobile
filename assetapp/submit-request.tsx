@@ -40,7 +40,8 @@ export default function SubmitRequest() {
         return;
       }
 
-      await submitUserRequest(user, requestType.trim(), assetId.trim(), reason.trim());
+      const trimmedAsset = assetId.trim();
+      await submitUserRequest(user, requestType.trim(), trimmedAsset ? [trimmedAsset] : [], reason.trim());
       router.replace('/(user-tabs)/my-requests');
     } catch (submitError) {
       console.error('Request submission failed:', submitError);

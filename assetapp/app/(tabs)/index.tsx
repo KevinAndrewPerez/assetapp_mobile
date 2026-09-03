@@ -5,17 +5,16 @@ import {
   StyleSheet,
   ScrollView,
   SafeAreaView,
-  TouchableOpacity,
   RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { UserCard } from '@/components/dashboard/user-card';
 import { StatCard } from '@/components/dashboard/stat-card';
 import { ActivityItem } from '@/components/dashboard/activity-item';
 import { QuickLink } from '@/components/dashboard/quick-link';
+import NotificationBell from '@/components/notification-bell';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { fetchActivityTimeline, LifecycleEvent } from '@/lib/assetService';
 
@@ -96,6 +95,15 @@ export default function App() {
       subtitleColor: 'rgba(30, 58, 95, 0.7)',
     },
     {
+      title: 'Maintenance',
+      subtitle: 'Track due maintenance',
+      icon: 'calendar-check',
+      backgroundColor: '#FFFFFF',
+      iconColor: '#0EA5E9',
+      variant: 'default' as const,
+      onPress: () => router.push('/maintenance'),
+    },
+    {
       title: 'Record Disposal',
       subtitle: 'Log disposed assets',
       icon: 'trash-can-outline',
@@ -153,12 +161,7 @@ export default function App() {
     <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Dashboard</Text>
-        <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.badgeText}>3</Text>
-          </View>
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
       <SafeAreaView style={styles.container}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>

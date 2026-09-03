@@ -115,6 +115,13 @@ export default function AssetDetailsScreen() {
           </View>
         </View>
 
+        {/* Asset Photo (from asset_files) */}
+        {asset.imageUrl ? (
+          <View style={styles.photoCard}>
+            <Image source={{ uri: asset.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
+          </View>
+        ) : null}
+
         {/* QR Code Section */}
         <TouchableOpacity 
           style={styles.qrSection} 
@@ -298,6 +305,21 @@ const styles = StyleSheet.create({
   locationText: {
     fontSize: 14,
     color: '#64748B',
+  },
+  photoCard: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    marginBottom: 20,
+    backgroundColor: '#F1F5F9',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+  },
+  assetPhoto: {
+    width: '100%',
+    height: 200,
   },
   qrSection: {
     borderRadius: 24,

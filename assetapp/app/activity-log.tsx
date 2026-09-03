@@ -4,6 +4,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -12,13 +13,35 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
 import { fetchActivityTimeline, LifecycleEvent } from '../lib/assetService';
 import QRViewModal from '../components/QRViewModal';
+import NotificationBell from '@/components/notification-bell';
 
-const activityTags = ['All', 'New Assets', 'Repairs', 'Pull Outs'];
+const activityTags = ['All', 'New Assets', 'User Activity', 'Repairs', 'Pull Outs'];
+const PAGE_SIZE = 15;
+
+// An "asset registration" audit row: admin created a new asset (mobile writes
+// "Registered new asset: ...", the web writes "Registered asset ..." or
+// "New asset created via replacement #...").
+const isAssetRegistration = (a: LifecycleEvent): boolean => {
+  const raw = a.raw;
+  const notes = String(raw?.notes ?? raw?.action_description ?? a.title ?? '');
+  return raw?.action_type === 'CREATE' && /regist|new asset/i.test(notes);
+};
+
+// A "user activity" audit row: logins, request submissions and approvals.
+const isUserActivity = (a: LifecycleEvent): boolean => {
+  const raw = a.raw;
+  const actionType = String(raw?.action_type ?? '').toUpperCase();
+  const notes = String(raw?.notes ?? raw?.action_description ?? a.title ?? '');
+  if (['LOGIN', 'AUTH', 'APPROVAL', 'TRANSFER'].includes(actionType)) return true;
+  return /login|logout|submitted|approved|signed in/i.test(notes);
+};
 
 export default function ActivityLogScreen() {
   const router = useRouter();
   const [activeTag, setActiveTag] = useState('All');
+  const [search, setSearch] = useState('');
   const [activities, setActivities] = useState<LifecycleEvent[]>([]);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,8 +61,9 @@ export default function ActivityLogScreen() {
       setLoading(true);
       setError(null);
       try {
-        const timeline = await fetchActivityTimeline();
+        const timeline = await fetchActivityTimeline(100);
         setActivities(timeline);
+        setVisibleCount(PAGE_SIZE);
       } catch (err) {
         setError((err as Error).message || 'Unable to load activity timeline from Supabase');
       } finally {
@@ -51,12 +75,26 @@ export default function ActivityLogScreen() {
   }, []);
 
   const filteredActivities = useMemo(() => {
-    if (activeTag === 'All') return activities;
-    if (activeTag === 'New Assets') return activities.filter((a) => a.eventType === 'audit');
-    if (activeTag === 'Repairs') return activities.filter((a) => a.eventType === 'repair');
-    if (activeTag === 'Pull Outs') return activities.filter((a) => a.eventType === 'disposal');
-    return activities;
-  }, [activeTag, activities]);
+    let filtered: LifecycleEvent[];
+    if (activeTag === 'New Assets') filtered = activities.filter((a) => isAssetRegistration(a));
+    else if (activeTag === 'User Activity') filtered = activities.filter((a) => isUserActivity(a));
+    else if (activeTag === 'Repairs') filtered = activities.filter((a) => a.eventType === 'repair');
+    else if (activeTag === 'Pull Outs') filtered = activities.filter((a) => a.eventType === 'disposal');
+    else filtered = activities;
+
+    const needle = search.trim().toLowerCase();
+    if (needle) {
+      filtered = filtered.filter((a) =>
+        [a.title, a.assetId, a.assetName, a.performedBy, a.description, a.requestId]
+          .join(' ')
+          .toLowerCase()
+          .includes(needle),
+      );
+    }
+    return filtered;
+  }, [activeTag, activities, search]);
+
+  const pagedActivities = filteredActivities.slice(0, visibleCount);
 
   const formatTimestamp = (ts: string) => {
     try {
@@ -81,15 +119,31 @@ export default function ActivityLogScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Activity Log</Text>
-        <TouchableOpacity style={styles.notificationButton} activeOpacity={0.8}>
-          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.notificationBadgeText}>3</Text>
-          </View>
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.searchRow}>
+          <View style={styles.searchInputContainer}>
+            <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search activities..."
+              placeholderTextColor="#94A3B8"
+              value={search}
+              onChangeText={(text) => {
+                setSearch(text);
+                setVisibleCount(PAGE_SIZE);
+              }}
+            />
+            {search.length > 0 && (
+              <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <MaterialCommunityIcons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -110,7 +164,7 @@ export default function ActivityLogScreen() {
           })}
         </ScrollView>
 
-        {filteredActivities.map((activity, index) => (
+        {pagedActivities.map((activity, index) => (
           <View key={`${activity.id}-${index}`} style={styles.activityCard}>
             <View style={styles.activityHeader}>
               <View
@@ -183,6 +237,18 @@ export default function ActivityLogScreen() {
             <Text style={styles.emptyText}>No activities found for this filter.</Text>
           </View>
         ) : null}
+
+        {filteredActivities.length > visibleCount && (
+          <TouchableOpacity
+            style={styles.loadMoreButton}
+            activeOpacity={0.8}
+            onPress={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+          >
+            <Text style={styles.loadMoreText}>
+              Load more ({filteredActivities.length - visibleCount} remaining)
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       <QRViewModal
@@ -251,6 +317,37 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 40,
+  },
+  searchRow: {
+    marginBottom: 8,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 48,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1E293B',
+  },
+  loadMoreButton: {
+    backgroundColor: '#1E3A5F',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  loadMoreText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   tagScroll: {
     paddingVertical: 8,

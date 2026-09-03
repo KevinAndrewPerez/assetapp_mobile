@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Image,
   RefreshControl,
   View,
   Text,
@@ -13,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { fetchUserRequests, getStoredUser } from '@/lib/userService';
+import NotificationBell from '@/components/notification-bell';
 
 const tabs = ['All', 'Pending', 'Completed'] as const;
 type RequestTab = typeof tabs[number];
@@ -74,12 +76,7 @@ export default function MyRequests() {
               <MaterialCommunityIcons name="plus" size={18} color="#1a3a5c" />
               <Text style={styles.newRequestText}>New</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.notificationButton}>
-              <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-              <View style={styles.notificationBadge}>
-                <Text style={styles.badgeText}>3</Text>
-              </View>
-            </TouchableOpacity>
+            <NotificationBell />
           </View>
         </View>
         <View style={styles.container}>
@@ -104,12 +101,7 @@ export default function MyRequests() {
             <MaterialCommunityIcons name="plus" size={18} color="#1a3a5c" />
             <Text style={styles.newRequestText}>New</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.notificationButton}>
-            <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-            <View style={styles.notificationBadge}>
-              <Text style={styles.badgeText}>3</Text>
-            </View>
-          </TouchableOpacity>
+          <NotificationBell />
         </View>
       </View>
       <View style={styles.container}>
@@ -140,7 +132,12 @@ export default function MyRequests() {
           </View>
         ) : (
           filteredRequests.map((request) => (
-            <View key={request.id} style={styles.requestCard}>
+            <TouchableOpacity
+              key={request.id}
+              style={styles.requestCard}
+              activeOpacity={0.85}
+              onPress={() => router.push({ pathname: '/request-detail', params: { id: request.id } })}
+            >
               <View style={styles.cardHeader}>
                 <View style={styles.titleContainer}>
                   <Text style={styles.requestTitle}>{request.title}</Text>
@@ -153,10 +150,14 @@ export default function MyRequests() {
                     </View>
                   </View>
                 </View>
-                <View style={styles.qrPlaceholder}>
-                  <MaterialCommunityIcons name="qrcode" size={40} color="#f4b942" />
-                  <Text style={styles.barcodeText}>{request.barcode}</Text>
-                </View>
+                {request.imageUrl ? (
+                  <Image source={{ uri: request.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
+                ) : (
+                  <View style={styles.qrPlaceholder}>
+                    <MaterialCommunityIcons name="qrcode" size={40} color="#f4b942" />
+                    <Text style={styles.barcodeText}>{request.barcode || 'REQ'}</Text>
+                  </View>
+                )}
               </View>
 
               <View style={styles.cardFooter}>
@@ -167,7 +168,7 @@ export default function MyRequests() {
                   Date: <Text style={styles.dateText}>{request.dateSubmitted}</Text>
                 </Text>
               </View>
-            </View>
+            </TouchableOpacity>
           ))
         )}
         <View style={styles.spacer} />
@@ -317,6 +318,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 8,
     width: 90,
+  },
+  assetPhoto: {
+    width: 82,
+    height: 82,
+    borderRadius: 12,
+    backgroundColor: '#E2E8F0',
   },
   barcodeText: {
     fontSize: 9,

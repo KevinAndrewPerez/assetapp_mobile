@@ -90,7 +90,7 @@ export default function UserProfile() {
             {[
               { title: 'Edit Profile', icon: 'account-outline', color: '#f4b942' },
               { title: 'Change Password', icon: 'lock-outline', color: '#f4b942' },
-              { title: 'Notification Preferences', icon: 'bell-outline', color: '#f4b942' },
+              { title: 'Notifications', icon: 'bell-outline', color: '#f4b942' },
             ].map((item, index) => (
               <TouchableOpacity
                 key={item.title}
@@ -98,6 +98,9 @@ export default function UserProfile() {
                   styles.settingsItem,
                   index < 2 && styles.settingsDivider,
                 ]}
+                onPress={() => {
+                  if (item.title === 'Notifications') router.push('/notifications');
+                }}
               >
                 <View style={styles.settingsItemLeft}>
                   <View style={[styles.iconBg, { backgroundColor: '#FFFBEB' }]}> 

@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
+import NotificationBell from '@/components/notification-bell';
 import {
   enrichUserWithEmployeeData,
   fetchAssetCategories,
@@ -244,12 +245,7 @@ export default function MyAssets() {
       <View style={styles.screenContainer}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>{headerTitle}</Text>
-          <TouchableOpacity style={styles.notificationButton}>
-            <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-            <View style={styles.notificationBadge}>
-              <Text style={styles.badgeText}>3</Text>
-            </View>
-          </TouchableOpacity>
+          <NotificationBell />
         </View>
         <View style={[styles.container, { justifyContent: 'center' }]}>
           <View style={styles.loadingContainer}>
@@ -264,12 +260,7 @@ export default function MyAssets() {
     <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{headerTitle}</Text>
-        <TouchableOpacity style={styles.notificationButton}>
-          <MaterialCommunityIcons name="bell-outline" size={24} color="#FFFFFF" />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.badgeText}>3</Text>
-          </View>
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
       <View style={styles.container}>
         <View style={styles.searchSection}>
