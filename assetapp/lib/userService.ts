@@ -55,69 +55,83 @@ export type UserRequest = {
 const KNOWN_STORAGE_BUCKETS = ['assets', 'qr_codes', 'photos', 'public', 'asset_files'];
 const PUBLIC_PREFIX = '/storage/v1/object/public/';
 
-const encodePathSegments = (path: string): string => {
-  return path
-    .split('/')
-    .map((seg) => encodeURIComponent(seg).replace(/%2F/g, '/'))
-    .join('/');
-};
-
-const manualPublicUrl = (bucket: string, objectPath: string): string | null => {
-  if (!SUPABASE_URL || !bucket || !objectPath) return null;
-  const base = SUPABASE_URL.replace(/\/$/, '');
-  const safeBucket = encodeURIComponent(bucket);
-  const safePath = encodePathSegments(objectPath.replace(/^\//, ''));
-  if (!safePath) return null;
-  return base + PUBLIC_PREFIX + safeBucket + '/' + safePath;
-};
-
 const resolveStorageUrl = (raw: any, fallbackBucket = 'assets'): string => {
   if (!raw) return '';
-  const str = String(raw).trim();
-  if (!str) return '';
-  if (str.startsWith('http://') || str.startsWith('https://')) return str;
-  if (str.startsWith('//')) return 'https:' + str;
-  if (str.startsWith('data:')) return str;
-  if (str.startsWith(PUBLIC_PREFIX) && SUPABASE_URL) {
-    return SUPABASE_URL.replace(/\/$/, '') + str;
-  }
 
-  const attempts: Array<{ bucket: string; path: string }> = [];
-  const firstSlash = str.indexOf('/');
-  const prefixCandidate = firstSlash > 0 ? str.substring(0, firstSlash) : null;
-  const restAfterPrefix = firstSlash > 0 ? str.substring(firstSlash + 1) : '';
-
-  if (prefixCandidate && restAfterPrefix && prefixCandidate.length <= 50 && !prefixCandidate.includes('.')) {
-    attempts.push({ bucket: prefixCandidate, path: restAfterPrefix });
-    attempts.push({ bucket: fallbackBucket, path: str });
+  // Unwrap object or stringified JSON
+  let str = '';
+  if (typeof raw === 'object' && raw !== null) {
+    str = raw.url || raw.file_path || raw.path || raw.FilePath || '';
   } else {
-    attempts.push({ bucket: fallbackBucket, path: str });
-  }
-
-  for (const b of KNOWN_STORAGE_BUCKETS) {
-    attempts.push({ bucket: b, path: str });
-  }
-
-  for (let i = attempts.length - 1; i >= 0; i--) {
-    const { bucket, path } = attempts[i];
-    if (path.includes('/')) {
-      const p2 = path.substring(path.indexOf('/') + 1);
-      if (p2) attempts.push({ bucket, path: p2 });
+    str = String(raw).trim();
+    if (str.startsWith('{') && str.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(str);
+        str = parsed.url || parsed.file_path || parsed.path || parsed.FilePath || str;
+      } catch {}
     }
   }
 
-  const deduped = new Map<string, string>();
-  for (const { bucket, path } of attempts) {
-    const manual = manualPublicUrl(bucket, path);
-    if (manual) deduped.set(manual, manual);
-    try {
-      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-      if (data?.publicUrl) deduped.set(data.publicUrl, data.publicUrl);
-    } catch {}
+  if (!str) return '';
+
+  // ---------- Already a full URL ----------
+  if (str.startsWith('http://') || str.startsWith('https://')) {
+    // Fix the exact double-nested patterns that appear in the logs
+    str = str
+      .replace(
+        /\/storage\/v1\/object\/public\/assets\/storage\/assets\//g,
+        '/storage/v1/object/public/assets/'
+      )
+      .replace(
+        /\/storage\/v1\/object\/public\/assets\/storage\//g,
+        '/storage/v1/object/public/assets/'
+      )
+      .replace(
+        /\/storage\/assets\/storage\/assets\//g,
+        '/storage/v1/object/public/assets/'
+      );
+
+    return str;
   }
-  const candidates = Array.from(deduped.values());
-  if (candidates.length) return candidates[0];
-  return str;
+
+  // ---------- Relative path ----------
+  str = str.replace(/^\/+/, '');
+  str = str.replace(/^storage\/v1\/object\/public\//, '');
+
+  // Remove accidental "storage/assets/" or "assets/storage/assets/" prefixes
+  str = str
+    .replace(/^storage\/assets\//, '')
+    .replace(/^assets\/storage\/assets\//, '')
+    .replace(/^storage\//, '');
+
+  // Detect real bucket from the path
+  let targetBucket = fallbackBucket;
+  for (const bucket of KNOWN_STORAGE_BUCKETS) {
+    if (str.startsWith(`${bucket}/`)) {
+      targetBucket = bucket;
+      str = str.slice(bucket.length + 1);
+      break;
+    }
+  }
+
+  // Force everything into the only existing bucket (assets)
+  // QR codes live under assets/qr/
+  if (targetBucket === 'qr_codes') {
+    targetBucket = 'assets';
+    if (!str.startsWith('qr/')) {
+      str = `qr/${str}`;
+    }
+  }
+
+  // Encode each segment (important for iOS)
+  const encodedPath = str
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+
+  const { data } = supabase.storage.from(targetBucket).getPublicUrl(encodedPath);
+  return data?.publicUrl || '';
 };
 
 const normalizeUserAsset = (row: any): UserAsset => {
@@ -177,22 +191,20 @@ const normalizeUserAsset = (row: any): UserAsset => {
     }
   }
 
+  // Parse linked asset_files array properly
   const assetFilesList = Array.isArray(row.asset_files) ? row.asset_files : (row.asset_files ? [row.asset_files] : []);
   const firstAssetFile = assetFilesList[0] || null;
-  const assetFileImage =
-    firstAssetFile?.url ||
-    firstAssetFile?.file_path ||
-    (firstAssetFile as any)?.FilePath ||
-    '';
 
-  const qrCodeRawPath = row.qr_code_path || row.qrCode || '';
-  const qrCodeRawUrl = (row as any).qr_code_url || '';
-
+  // Resolve Image URL – always use the assets bucket
   const imageUrl = resolveStorageUrl(
-    row.url ?? row.imageUrl ?? row.image ?? assetFileImage ?? '',
-    'assets',
+    row.url ?? row.imageUrl ?? row.image_path ?? row.image ?? firstAssetFile ?? '',
+    'assets'
   );
-  const qrCodeUrl = resolveStorageUrl(qrCodeRawUrl || qrCodeRawPath || '', 'assets');
+
+  // Resolve QR Code URL – helper will rewrite qr_codes → assets/qr/
+  const qrCodeRawPath = row.qr_code_path || row.qr_code || row.qrCode || '';
+  const qrCodeRawUrl = row.qr_code_url || row.qrCodeUrl || '';
+  const qrCodeUrl = resolveStorageUrl(qrCodeRawUrl || qrCodeRawPath, 'qr_codes');
 
   return {
     id: String(row.id ?? ''),
@@ -589,7 +601,7 @@ export async function fetchUserRequests(user: StoredUser): Promise<UserRequest[]
   const userId = String(user.id ?? '');
   const { data, error } = await supabase
     .from('requests')
-    .select('id, request_type, status, Note, created_at, profiles:user_id(full_name, department_id), assets(Asset_code, Asset_name)').select('id, request_type, status, Note, created_at, users:user_id(department_id, employee_numbers(Full_Name)), assets(Asset_code, Asset_name)')
+    .select('id, request_type, status, Note, created_at, users:user_id(department_id, employee_numbers(Full_Name)), assets(Asset_code, Asset_name)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -679,7 +691,7 @@ export async function registerUser(payload: {
     email: payload.email,
     department_id: payload.departmentId,
     unit_heads_number: payload.unitHeadsNumber,
-    password: payload.password, // In a real app, this should be hashed on the server side
+    password: payload.password,
     role: payload.role ?? 'Employee',
     status: 'Active',
     created_at: new Date().toISOString(),

@@ -32,6 +32,7 @@ type DisposalLogRow = {
 };
 
 type AssetRow = {
+  id?: string | number | null;
   Asset_code?: string | null;
   Asset_name?: string | null;
   Category?: string | null;
@@ -72,14 +73,14 @@ export default function DisposalScreen() {
 
       if (error) throw error;
       const disposalRows = (logRows ?? []).filter((row: DisposalLogRow) => {
-        const status = String(row.status ?? "").toLowerCase();
+        const status = String(row.status ?? "").toLowerCase().replace(/[-_]/g, " ").trim();
         const title = String(row.title ?? "").toLowerCase();
-        return status === "disposed" || title.includes("dispos");
+        return status === "disposed" || status === "disposal" || title.includes("dispos");
       });
 
       setLogs(disposalRows);
 
-      const assetCodes = Array.from(
+      const assetReferences = Array.from(
         new Set(
           disposalRows
             .map((row) => String(row.asset_id ?? "").trim())
@@ -87,18 +88,20 @@ export default function DisposalScreen() {
         )
       );
 
-      if (assetCodes.length > 0) {
+      if (assetReferences.length > 0) {
         const { data: assetRows, error: assetErr } = await supabase
           .from("assets")
-          .select("Asset_code, Asset_name, Category, department, Lifecycle_Status")
-          .in("Asset_code", assetCodes);
+          .select("id, Asset_code, Asset_name, Category, department, Lifecycle_Status")
+          .or(`Asset_code.in.(${assetReferences.join(",")}),id.in.(${assetReferences.join(",")})`);
 
         if (assetErr) throw assetErr;
 
         const byCode: Record<string, AssetRow> = {};
         (assetRows ?? []).forEach((a: AssetRow) => {
           const code = String(a.Asset_code ?? "").trim();
+          const id = String(a.id ?? "").trim();
           if (code) byCode[code] = a;
+          if (id) byCode[id] = a;
         });
         setAssetsByCode(byCode);
       } else {

@@ -16,8 +16,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
 import QRViewModal from '../components/QRViewModal';
 
-const tags = ['All', 'Acquired', 'Active', 'For Repair', 'Pulled Out', 'Disposed'];
-
 export default function AssetsListScreen() {
   const router = useRouter();
   const { department, departmentId } = useLocalSearchParams() as { department?: string, departmentId?: string };
@@ -116,10 +114,6 @@ export default function AssetsListScreen() {
         </TouchableOpacity>
         <View style={styles.headerText}>
           <Text style={styles.headerTitle}>{departmentName}</Text>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backLink}>
-            <MaterialCommunityIcons name="chevron-left" size={16} color="#FBBF24" />
-            <Text style={styles.backLinkText}>Back to Departments</Text>
-          </TouchableOpacity>
         </View>
         <TouchableOpacity style={styles.notificationBadge}>
           <Text style={styles.notificationBadgeText}>3</Text>
@@ -284,17 +278,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  backLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  backLinkText: {
-    fontSize: 13,
-    color: '#FBBF24',
-    marginLeft: 2,
-    fontWeight: '600',
   },
   notificationBadge: {
     width: 32,

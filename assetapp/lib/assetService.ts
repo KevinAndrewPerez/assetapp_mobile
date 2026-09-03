@@ -44,17 +44,27 @@ const normalizeTimestamp = (value: unknown) => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 };
 
+const normalizeLifecycleStatus = (value: unknown) => {
+  const status = String(value ?? '').trim();
+  const normalized = status.toLowerCase().replace(/[-_]/g, ' ');
+
+  if (normalized === 'pullout' || normalized === 'pulled out') return 'Pulled Out';
+  if (normalized === 'disposal' || normalized === 'disposed') return 'Disposed';
+  if (normalized === 'repair') return 'For Repair';
+  return status || 'Unknown';
+};
+
 const normalizeAssetRecord = (record: any): AssetSummary => {
   const user = record.users || {};
   const department = user.departments || {};
   const deptName = department.Name || record.department || 'General';
-  const deptId = department.id || user.department_id || '';
+  const deptId = department.id || user.department_id || record.department_id || '';
   
   return {
     id: String(record.id ?? ''),
     assetId: String(record.Asset_code ?? record.asset_id ?? record.barcode ?? ''),
     title: String(record.Asset_name ?? record.name ?? record.title ?? 'Untitled Asset'),
-    status: String(record.Lifecycle_Status ?? record.status ?? 'Unknown'),
+    status: normalizeLifecycleStatus(record.Lifecycle_Status ?? record.status),
     serialNumber: String(record.serial_Number ?? record.serial_number ?? ''),
     location: String(record.asset_location ?? record.location ?? ''),
     department: String(deptName),
@@ -132,7 +142,7 @@ async function insertRecord(table: string, payload: any) {
 export async function fetchAssets(): Promise<AssetSummary[]> {
   const { data, error } = await supabase
     .from('assets')
-    .select('*, users(employee_numbers("Full_Name"), departments("Name"))')
+    .select('*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name"))')
     .order('updated_at', { ascending: false });
     
   if (error) {
@@ -143,7 +153,7 @@ export async function fetchAssets(): Promise<AssetSummary[]> {
 
 export async function fetchAssetsWithDepartments(): Promise<{ assets: AssetSummary[], departments: any[] }> {
   const [assetsRes, deptsRes] = await Promise.all([
-    supabase.from('assets').select('*, users(employee_numbers("Full_Name"), departments("Name"))'),
+    supabase.from('assets').select('*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name"))'),
     supabase.from('departments').select('*').eq('status', 'Active')
   ]);
 
