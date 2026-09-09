@@ -6,20 +6,28 @@ import { LinearGradient } from "expo-linear-gradient";
 
 import { HapticTab } from "@/components/haptic-tab";
 
-function AnimatedTabIcon({ name, color, focused, size = 24 }: { name: string; color: string; focused: boolean; size?: number }) {
+function AnimatedTabIcon({ name, color, focused, size = 28 }: { name: string; color: string; focused: boolean; size?: number }) {
   const scale = useRef(new Animated.Value(1)).current;
+  const rotate = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.spring(scale, {
-      toValue: focused ? 1.28 : 1,
-      useNativeDriver: true,
-      tension: 120,
-      friction: 7,
-    }).start();
-  }, [focused, scale]);
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: focused ? 1.15 : 1,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 6,
+      }),
+      Animated.timing(rotate, {
+        toValue: focused ? 1 : 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [focused]);
 
   return (
-    <Animated.View style={[styles.iconWrap, { transform: [{ scale }] }]}>
+    <Animated.View style={[styles.iconWrap, { transform: [{ scale }, { rotate: rotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '5deg'] }) }] }]}>
       <MaterialCommunityIcons name={name as any} size={size} color={color} />
     </Animated.View>
   );
@@ -46,19 +54,19 @@ export default function UserLayout() {
         tabBarStyle: {
           backgroundColor: "transparent",
           borderTopWidth: 0,
-          height: Platform.OS === 'ios' ? 58 : 52,
+          height: Platform.OS === 'ios' ? 76 : 70,
           paddingBottom: 0,
           paddingTop: 0,
           paddingHorizontal: 2,
-          marginHorizontal: 14,
+          marginHorizontal: 12,
           marginBottom: Platform.OS === 'ios' ? 28 : 24,
           marginTop: 0,
-          borderRadius: 28,
-          elevation: 7,
+          borderRadius: 30,
+          elevation: 10,
           shadowColor: '#0C134F',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.12,
-          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.15,
+          shadowRadius: 10,
           position: 'absolute',
           borderWidth: 0,
           overflow: 'hidden',
@@ -68,7 +76,7 @@ export default function UserLayout() {
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'visible',
-          paddingVertical: 0,
+          paddingVertical: 2,
           margin: 0,
         },
       }}
@@ -80,7 +88,7 @@ export default function UserLayout() {
           tabBarIcon: ({ color, focused }) => (
             <AnimatedTabIcon
               name={focused ? "home" : "home-outline"}
-              size={24}
+              size={28}
               color={color}
               focused={focused}
             />
@@ -94,7 +102,7 @@ export default function UserLayout() {
           tabBarIcon: ({ color, focused }) => (
             <AnimatedTabIcon
               name={focused ? "cube" : "cube-outline"}
-              size={24}
+              size={28}
               color={color}
               focused={focused}
             />
@@ -108,7 +116,7 @@ export default function UserLayout() {
           tabBarIcon: ({ color, focused }) => (
             <AnimatedTabIcon
               name={focused ? "file-document" : "file-document-outline"}
-              size={24}
+              size={28}
               color={color}
               focused={focused}
             />
@@ -122,7 +130,7 @@ export default function UserLayout() {
           tabBarIcon: ({ color, focused }) => (
             <AnimatedTabIcon
               name={focused ? "account" : "account-outline"}
-              size={24}
+              size={28}
               color={color}
               focused={focused}
             />
@@ -137,7 +145,5 @@ const styles = StyleSheet.create({
   iconWrap: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 48,
-    height: 48,
   },
 });

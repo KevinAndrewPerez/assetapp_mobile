@@ -7,10 +7,8 @@ interface QuickLinkProps {
   title: string;
   subtitle: string;
   icon: string;
-  backgroundColor: string;
   iconColor: string;
   onPress?: () => void;
-  variant?: 'primary' | 'secondary' | 'danger' | 'default';
   gradientColors?: string[];
   titleColor?: string;
   subtitleColor?: string;
@@ -20,45 +18,40 @@ export function QuickLink({
   title,
   subtitle,
   icon,
-  backgroundColor,
   iconColor,
   onPress,
-  variant = 'default',
   gradientColors,
   titleColor,
   subtitleColor,
 }: QuickLinkProps) {
   const content = (
     <>
-      <MaterialCommunityIcons name={icon as any} size={28} color={iconColor} />
+      <View style={styles.iconContainer}>
+        <MaterialCommunityIcons name={icon as any} size={30} color={iconColor} />
+      </View>
       <Text style={[styles.title, titleColor ? { color: titleColor } : null]}>{title}</Text>
       <Text style={[styles.subtitle, subtitleColor ? { color: subtitleColor } : null]}>{subtitle}</Text>
     </>
   );
 
-  const containerStyles = [
-    styles.container,
-    variant === 'danger' && styles.dangerBorder,
-    variant === 'secondary' && styles.secondaryBorder,
-  ];
-
   return (
     <TouchableOpacity
       style={styles.touchable}
       onPress={onPress}
-      activeOpacity={0.7}
+      activeOpacity={0.8}
     >
       {gradientColors && gradientColors.length >= 2 ? (
         <LinearGradient
           colors={gradientColors as any}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={containerStyles as any}
+          style={styles.container}
+          pointerEvents="box"
         >
           {content}
         </LinearGradient>
       ) : (
-        <View style={[containerStyles, { backgroundColor }] as any}>
+        <View style={[styles.container, { backgroundColor: '#FFFFFF' }]}>
           {content}
         </View>
       )}
@@ -74,27 +67,36 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     justifyContent: 'flex-start',
-    alignItems: 'flex-start',
-    minHeight: 140,
+    alignItems: 'center',
+    minHeight: 132,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  dangerBorder: {
-    borderWidth: 2,
-    borderColor: '#EF4444',
-  },
-  secondaryBorder: {
-    borderWidth: 2,
-    borderColor: '#1E3A5F',
+  iconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   title: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginTop: 12,
-    marginBottom: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 6,
+    marginBottom: 2,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 12,
-    color: 'rgba(0, 0, 0, 0.6)',
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.75)',
+    textAlign: 'center',
+    lineHeight: 14,
   },
 });

@@ -9,9 +9,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import {
   completeMaintenance,
@@ -20,19 +22,17 @@ import {
 } from '@/lib/assetService';
 import { getStoredUser } from '@/lib/userService';
 
-const statusColor = (status?: string) => {
-  switch (status) {
-    case 'Active':
-      return '#10B981';
-    case 'For Checking':
-      return '#F59E0B';
-    case 'Pullout':
-      return '#3B82F6';
-    case 'Disposal':
-      return '#EF4444';
-    default:
-      return '#64748B';
-  }
+const NAVY = '#0C134F';
+const NAVY_MID = '#1E3A5F';
+const GOLD = '#FBBF24';
+const GOLD_LIGHT = '#F59E0B';
+
+const STATUS_COLORS: Record<string, string> = {
+  'Active': '#10B981',
+  'For Checking': '#F59E0B',
+  'Pullout': '#3B82F6',
+  'Disposal': '#EF4444',
+  'For Repair': '#F59E0B',
 };
 
 export default function MaintenanceScreen() {
@@ -42,6 +42,10 @@ export default function MaintenanceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | number | null>(null);
+  const [modalData, setModalData] = useState<MaintenanceAlert | null>(null);
+  const [completionDate, setCompletionDate] = useState('');
+  const [maintenanceNotes, setMaintenanceNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -64,46 +68,57 @@ export default function MaintenanceScreen() {
     setRefreshing(false);
   };
 
-  const handleComplete = async (alertItem: MaintenanceAlert) => {
-    Alert.alert(
-      'Complete maintenance?',
-      `${alertItem.name} (${alertItem.assetId})\n\nMarking it complete will record today as the last maintenance date and schedule the next one based on its maintenance interval.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark Complete',
-          style: 'destructive',
-          onPress: async () => {
-            setCompletingId(alertItem.id);
-            try {
-              const user = await getStoredUser();
-              const result = await completeMaintenance({
-                assetId: alertItem.id,
-                actorId: user?.id,
-                notes: 'Maintenance completed via mobile app',
-              });
-              Alert.alert(
-                'Maintenance completed',
-                `${alertItem.name} is now "${result.status}".${
-                  result.nextMaintenanceDate
-                    ? ` Next maintenance scheduled for ${result.nextMaintenanceDate}.`
-                    : ' No next maintenance scheduled.'
-                }`,
-              );
-              await load();
-            } catch (err) {
-              Alert.alert('Could not complete maintenance', (err as Error).message || 'Please try again.');
-            } finally {
-              setCompletingId(null);
-            }
-          },
-        },
-      ],
-    );
+  const openCompleteModal = (alertItem: MaintenanceAlert) => {
+    setModalData(alertItem);
+    const today = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+    setCompletionDate(today);
+    setMaintenanceNotes('');
   };
 
-  const formatDate = (d?: string | null) => {
+  const closeCompleteModal = () => {
+    setModalData(null);
+    setCompletionDate('');
+    setMaintenanceNotes('');
+  };
+
+  const handleMarkComplete = async () => {
+    if (!modalData) return;
+    setSubmitting(true);
+    try {
+      const user = await getStoredUser();
+      const result = await completeMaintenance({
+        assetId: modalData.id,
+        actorId: user?.id,
+        notes: maintenanceNotes || 'Maintenance completed via mobile app',
+      });
+      Alert.alert(
+        'Maintenance Completed',
+        `${modalData.name} is now "${result.status}".${result.nextMaintenanceDate ? `\nNext maintenance scheduled for ${result.nextMaintenanceDate}.` : '\nNo next maintenance scheduled.'}`,
+      );
+      closeCompleteModal();
+      await load();
+    } catch (err) {
+      Alert.alert('Could not complete maintenance', (err as Error).message || 'Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const formatDateLong = (d?: string | null) => {
     if (!d) return 'Not scheduled';
+    try {
+      return new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
+        month: 'long',
+        day: '2-digit',
+        year: 'numeric',
+      });
+    } catch {
+      return d;
+    }
+  };
+
+  const formatDateShort = (d?: string | null) => {
+    if (!d) return 'N/A';
     try {
       return new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
         month: 'short',
@@ -132,12 +147,12 @@ export default function MaintenanceScreen() {
       >
         {loading ? (
           <View style={styles.centerState}>
-            <ActivityIndicator size="large" color="#0F172A" />
+            <ActivityIndicator size="large" color={NAVY} />
           </View>
         ) : error ? (
           <View style={styles.centerState}>
             <MaterialCommunityIcons name="cloud-alert-outline" size={44} color="#94A3B8" />
-            <Text style={styles.emptyTitle}>Couldn’t load maintenance alerts</Text>
+            <Text style={styles.emptyTitle}>Couldn&apos;t load maintenance alerts</Text>
             <Text style={styles.emptyText}>{error}</Text>
             <TouchableOpacity style={styles.retryButton} onPress={load} activeOpacity={0.8}>
               <Text style={styles.retryText}>Try again</Text>
@@ -150,6 +165,10 @@ export default function MaintenanceScreen() {
             <Text style={styles.emptyText}>
               Assets whose next maintenance date is today or overdue will appear here.
             </Text>
+            <TouchableOpacity style={styles.backButtonSimple} onPress={() => router.back()} activeOpacity={0.8}>
+              <MaterialCommunityIcons name="arrow-left" size={18} color={NAVY} />
+              <Text style={styles.backButtonText}>Back to assets</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <>
@@ -164,88 +183,205 @@ export default function MaintenanceScreen() {
             </View>
 
             {alerts.map((item) => {
-              const dueColor = item.daysOverdue > 0 ? '#DC2626' : '#F59E0B';
+              const isOverdue = item.daysOverdue > 0;
+              const dueColor = isOverdue ? '#DC2626' : GOLD_LIGHT;
+              const badgeColor = isOverdue ? '#EF4444' : GOLD;
+              const badgeLabel = isOverdue ? 'OVERDUE' : 'DUE SOON';
+              const statusColor = STATUS_COLORS[item.status || ''] || '#64748B';
+
               return (
-                <View key={String(item.id)} style={styles.card}>
-                  <View style={styles.cardTop}>
-                    <View style={styles.cardIcon}>
-                      <MaterialCommunityIcons
-                        name="calendar-clock"
-                        size={22}
-                        color={dueColor}
-                      />
+                <View key={String(item.id)} style={styles.assetCard}>
+                  {/* Card Header */}
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                      <View style={[styles.badgeContainer, { backgroundColor: `${badgeColor}18`, borderColor: badgeColor }]}>
+                        <MaterialCommunityIcons name="calendar-clock" size={18} color={badgeColor} />
+                      </View>
+                      <View style={styles.cardHeaderInfo}>
+                        <View style={styles.badgeRow}>
+                          <View style={[styles.badgePill, { backgroundColor: badgeColor }]}>
+                            <Text style={styles.badgeText}>{badgeLabel}</Text>
+                          </View>
+                          <Text style={styles.assetName}>{item.name}</Text>
+                        </View>
+                      </View>
                     </View>
-                    <View style={styles.cardInfo}>
-                      <Text style={styles.assetName} numberOfLines={1}>
-                        {item.name}
-                      </Text>
-                      <Text style={styles.assetCode}>{item.assetId}</Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.statusChip,
-                        { backgroundColor: `${statusColor(item.status)}18` },
-                      ]}
-                    >
-                      <Text style={[styles.statusText, { color: statusColor(item.status) }]}>
-                        {item.status || '—'}
-                      </Text>
+                    <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18`, borderColor: statusColor }]}>
+                      <MaterialCommunityIcons name="circle" size={8} color={statusColor} style={styles.statusDot} />
+                      <Text style={[styles.statusText, { color: statusColor }]}>{item.status || '—'}</Text>
                     </View>
                   </View>
 
+                  <Text style={styles.assetCode}>{item.assetId}</Text>
+
+                  {/* Detail Grid */}
                   <View style={styles.detailGrid}>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="calendar-alert" size={15} color="#64748B" />
-                      <Text style={styles.detailLabel}>Due</Text>
-                      <Text style={styles.detailValue}>{formatDate(item.nextMaintenanceDate)}</Text>
+                      <MaterialCommunityIcons name="calendar-check-outline" size={14} color="#94A3B8" />
+                      <Text style={styles.detailLabel}>ACQUISITION DATE</Text>
+                      <Text style={styles.detailValue}>—</Text>
                     </View>
-                    {item.custodian ? (
-                      <View style={styles.detailItem}>
-                        <MaterialCommunityIcons name="account-outline" size={15} color="#64748B" />
-                        <Text style={styles.detailLabel}>Custodian</Text>
-                        <Text style={styles.detailValue} numberOfLines={1}>
-                          {item.custodian}
-                        </Text>
-                      </View>
-                    ) : null}
-                    {item.location ? (
-                      <View style={styles.detailItem}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={15} color="#64748B" />
-                        <Text style={styles.detailLabel}>Location</Text>
-                        <Text style={styles.detailValue} numberOfLines={1}>
-                          {item.location}
-                        </Text>
-                      </View>
-                    ) : null}
+                    <View style={styles.detailItem}>
+                      <MaterialCommunityIcons name="cash-multiple-outline" size={14} color="#94A3B8" />
+                      <Text style={styles.detailLabel}>PURCHASE PRICE</Text>
+                      <Text style={styles.detailValue}>—</Text>
+                    </View>
+                    <View style={styles.detailItem}>
+                      <MaterialCommunityIcons name="barcode-outline" size={14} color="#94A3B8" />
+                      <Text style={styles.detailLabel}>SERIAL NUMBER</Text>
+                      <Text style={styles.detailValue}>—</Text>
+                    </View>
+                    <View style={styles.detailItem}>
+                      <MaterialCommunityIcons name="map-marker-outline" size={14} color="#94A3B8" />
+                      <Text style={styles.detailLabel}>LOCATION</Text>
+                      <Text style={styles.detailValue}>{item.location || '—'}</Text>
+                    </View>
+                    <View style={styles.detailItem}>
+                      <MaterialCommunityIcons name="category-outline" size={14} color="#94A3B8" />
+                      <Text style={styles.detailLabel}>CATEGORY</Text>
+                      <Text style={styles.detailValue}>{item.category || '—'}</Text>
+                    </View>
+                    <View style={styles.detailItem}>
+                      <MaterialCommunityIcons name="account-outline" size={14} color="#94A3B8" />
+                      <Text style={styles.detailLabel}>ASSIGNED TO</Text>
+                      <Text style={styles.detailValue}>{item.custodian || '—'}</Text>
+                    </View>
                   </View>
 
-                  <View style={styles.cardFooter}>
-                    <View style={[styles.overdueChip, { backgroundColor: `${dueColor}12` }]}>
-                      <Text style={[styles.overdueText, { color: dueColor }]}>
-                        {item.daysOverdue > 0
-                          ? `${item.daysOverdue} day${item.daysOverdue > 1 ? 's' : ''} overdue`
-                          : 'Due today'}
-                      </Text>
+                  {/* Maintenance Info */}
+                  <View style={styles.maintenanceSection}>
+                    <View style={styles.maintenanceHeader}>
+                      <View style={styles.upkeepLabel}>
+                        <Text style={[styles.upkeepText, { color: GOLD_LIGHT }]}>UPKEEP</Text>
+                      </View>
+                      <Text style={[styles.maintenanceTitle, { color: NAVY }]}>Maintenance Schedule</Text>
+                      <View style={[styles.badgePill, { backgroundColor: badgeColor }]}>
+                        <Text style={[styles.badgeTextSmall, { color: NAVY }]}>{badgeLabel}</Text>
+                      </View>
                     </View>
-                    <TouchableOpacity
-                      style={[styles.completeButton, completingId === item.id && styles.completeButtonDisabled]}
-                      onPress={() => handleComplete(item)}
-                      disabled={completingId === item.id}
-                      activeOpacity={0.8}
-                    >
-                      {completingId === item.id ? (
-                        <ActivityIndicator size="small" color="#0F172A" />
-                      ) : (
-                        <Text style={styles.completeButtonText}>Mark complete</Text>
-                      )}
-                    </TouchableOpacity>
+
+                    <View style={styles.detailGrid}>
+                      <View style={styles.detailItem}>
+                        <MaterialCommunityIcons name="clock-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>MAINTENANCE INTERVAL</Text>
+                        <Text style={styles.detailValue}>{item.maintenanceInterval ? `${item.maintenanceInterval} months` : '—'}</Text>
+                      </View>
+                      <View style={styles.detailItem}>
+                        <MaterialCommunityIcons name="calendar-alert-outline" size={14} color={dueColor} />
+                        <Text style={[styles.detailLabel, { color: dueColor }]}>NEXT MAINTENANCE DUE</Text>
+                        <Text style={[styles.detailValue, { color: dueColor }]}>{formatDateLong(item.nextMaintenanceDate)}</Text>
+                      </View>
+                      {item.lastMaintenanceDate ? (
+                        <View style={styles.detailItem}>
+                          <MaterialCommunityIcons name="history-outline" size={14} color="#94A3B8" />
+                          <Text style={styles.detailLabel}>LAST MAINTENANCE DATE</Text>
+                          <Text style={styles.detailValue}>{formatDateLong(item.lastMaintenanceDate)}</Text>
+                        </View>
+                      ) : null}
+                      <View style={styles.detailItem}>
+                        <MaterialCommunityIcons name="wrench-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>REPAIR HISTORY</Text>
+                        <Text style={styles.detailValue}>0 repair(s)</Text>
+                      </View>
+                    </View>
                   </View>
+
+                  {/* Mark Complete Button */}
+                  <TouchableOpacity
+                    style={styles.markCompleteButton}
+                    onPress={() => openCompleteModal(item)}
+                    activeOpacity={0.85}
+                  >
+                    <LinearGradient
+                      colors={isOverdue ? ['#DC2626', '#B91C1C'] : ['#10B981', '#059669']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.markCompleteGradient}
+                    >
+                      <MaterialCommunityIcons name="check-circle" size={22} color="#FFFFFF" />
+                      <Text style={styles.markCompleteText}>Mark Maintenance Complete</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
                 </View>
               );
             })}
           </>
         )}
       </ScrollView>
+
+      {/* Mark Maintenance Complete Modal */}
+      {modalData && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Mark Maintenance Complete</Text>
+              <TouchableOpacity onPress={closeCompleteModal} activeOpacity={0.7}>
+                <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              {/* Completion Date */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>COMPLETION DATE</Text>
+                <View style={styles.dateInputWrap}>
+                  <MaterialCommunityIcons name="calendar" size={18} color="#64748B" />
+                  <TextInput
+                    style={styles.dateInput}
+                    value={completionDate}
+                    onChangeText={setCompletionDate}
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+              </View>
+
+              {/* Maintenance Notes */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>MAINTENANCE NOTES (OPTIONAL)</Text>
+                <TextInput
+                  style={styles.textArea}
+                  placeholder="e.g., Replaced filters, lubricated joints, all systems operational"
+                  placeholderTextColor="#94A3B8"
+                  value={maintenanceNotes}
+                  onChangeText={setMaintenanceNotes}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Asset Summary */}
+              <View style={[styles.assetSummaryBox, { borderLeftColor: GOLD_LIGHT }]}>
+                <Text style={styles.assetSummaryLabel}>Asset being marked:</Text>
+                <Text style={styles.assetSummaryName}>{modalData.name}</Text>
+                <Text style={styles.assetSummaryCode}>{modalData.assetId}</Text>
+              </View>
+            </View>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                onPress={closeCompleteModal}
+                disabled={submitting}
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnGreen]}
+                onPress={handleMarkComplete}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <MaterialCommunityIcons name="check-circle" size={20} color="#FFFFFF" />
+                )}
+                <Text style={styles.modalBtnGreenText}>Mark Complete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -256,7 +392,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0C134F',
     paddingVertical: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -310,10 +446,27 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 22,
     borderRadius: 12,
-    backgroundColor: '#0F172A',
+    backgroundColor: NAVY,
   },
   retryText: {
     color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  backButtonSimple: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  backButtonText: {
+    color: NAVY,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -335,33 +488,60 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 19,
   },
-  card: {
+  assetCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOpacity: 0.04,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
-  cardTop: {
+  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
+    marginBottom: 2,
   },
-  cardIcon: {
-    width: 42,
-    height: 42,
+  cardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  badgeContainer: {
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    backgroundColor: '#FFFBEB',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1.5,
   },
-  cardInfo: {
+  cardHeaderInfo: {
     flex: 1,
-    gap: 2,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  badgePill: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+  },
+  badgeText: {
+    color: NAVY,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  badgeTextSmall: {
+    color: NAVY,
+    fontSize: 11,
+    fontWeight: '700',
   },
   assetName: {
     fontSize: 15,
@@ -372,74 +552,228 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     fontWeight: '600',
+    marginBottom: 10,
   },
-  statusChip: {
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 999,
+    borderWidth: 1,
+  },
+  statusDot: {
+    marginRight: 4,
   },
   statusText: {
     fontSize: 11,
     fontWeight: '700',
   },
   detailGrid: {
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 8,
   },
   detailItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    minWidth: '45%',
+    gap: 5,
+    minWidth: '46%',
     flexShrink: 1,
+    backgroundColor: '#F8FAFC',
+    padding: 7,
+    borderRadius: 8,
   },
   detailLabel: {
-    fontSize: 12,
+    fontSize: 9,
     fontWeight: '600',
     color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
   detailValue: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#334155',
   },
-  cardFooter: {
-    marginTop: 14,
+  maintenanceSection: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    marginBottom: 12,
+  },
+  maintenanceHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    marginBottom: 8,
   },
-  overdueChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+  upkeepLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
-  overdueText: {
-    fontSize: 12,
-    fontWeight: '800',
+  upkeepText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  completeButton: {
-    paddingVertical: 9,
-    paddingHorizontal: 16,
+  maintenanceTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  markCompleteButton: {
     borderRadius: 12,
-    backgroundColor: '#FBBF24',
+    overflow: 'hidden',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  markCompleteGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    gap: 8,
+  },
+  markCompleteText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+    padding: 16,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: NAVY,
+    flex: 1,
+  },
+  modalBody: {
+    marginBottom: 16,
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  formLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  dateInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    height: 48,
+  },
+  dateInput: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#0F172A',
+  },
+  textArea: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#0F172A',
+    minHeight: 90,
+  },
+  assetSummaryBox: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderLeftWidth: 4,
+    borderLeftColor: GOLD_LIGHT,
+  },
+  assetSummaryLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  assetSummaryName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: NAVY,
+    marginTop: 2,
+  },
+  assetSummaryCode: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    minWidth: 116,
+    gap: 8,
   },
-  completeButtonDisabled: {
-    opacity: 0.6,
+  modalBtnGhost: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  completeButtonText: {
-    color: '#0F172A',
-    fontSize: 13,
-    fontWeight: '800',
+  modalBtnGhostText: {
+    color: '#64748B',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  modalBtnGreen: {
+    backgroundColor: '#10B981',
+  },
+  modalBtnGreenText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

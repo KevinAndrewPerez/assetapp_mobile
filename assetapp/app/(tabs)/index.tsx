@@ -74,70 +74,81 @@ export default function App() {
       title: 'Pending Requests',
       subtitle: 'View pending approvals',
       icon: 'clock-outline',
-      backgroundColor: '#1E3A5F',
-      iconColor: '#FDB833',
-      variant: 'primary' as const,
       onPress: () => router.push('/requests'),
       gradientColors: ['#1E3A5F', '#2C5282'],
       titleColor: '#FDB833',
       subtitleColor: 'rgba(253, 184, 51, 0.7)',
+      iconColor: '#FDB833',
     },
     {
       title: 'Asset Registry',
       subtitle: 'Register new assets',
       icon: 'plus-box',
-      backgroundColor: '#FDB833',
-      iconColor: '#1E3A5F',
-      variant: 'default' as const,
       onPress: () => router.push('/asset-registry'),
-      gradientColors: ['#FDB833', '#F6AD55'],
+      gradientColors: ['#FDB833', '#F59E0B'],
       titleColor: '#1E3A5F',
       subtitleColor: 'rgba(30, 58, 95, 0.7)',
+      iconColor: '#1E3A5F',
     },
     {
       title: 'Maintenance',
       subtitle: 'Track due maintenance',
       icon: 'calendar-check',
-      backgroundColor: '#FFFFFF',
-      iconColor: '#0EA5E9',
-      variant: 'default' as const,
       onPress: () => router.push('/maintenance'),
+      gradientColors: ['#38BDF8', '#0EA5E9'],
+      titleColor: '#0C134F',
+      subtitleColor: 'rgba(12, 19, 79, 0.6)',
+      iconColor: '#0C134F',
     },
     {
       title: 'Record Disposal',
       subtitle: 'Log disposed assets',
       icon: 'trash-can-outline',
-      backgroundColor: '#FFFFFF',
-      iconColor: '#EF4444',
-      variant: 'danger' as const,
       onPress: () => router.push('/disposal'),
+      gradientColors: ['#F87171', '#DC2626'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.7)',
+      iconColor: '#FFFFFF',
     },
     {
       title: 'Record Pullout',
       subtitle: 'Log pulled out assets',
       icon: 'arrow-up-box',
-      backgroundColor: '#FFFFFF',
-      iconColor: '#1E3A5F',
-      variant: 'secondary' as const,
       onPress: () => router.push('/pullout'),
+      gradientColors: ['#9CA3AF', '#64748B'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.7)',
+      iconColor: '#FFFFFF',
     },
     {
       title: 'Make Repair',
       subtitle: 'Request asset repair',
       icon: 'wrench',
-      backgroundColor: '#FFFFFF',
-      iconColor: '#F59E0B',
-      variant: 'default' as const,
       onPress: () => router.push('/repair'),
+      gradientColors: ['#FB923C', '#F59E0B'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.7)',
+      iconColor: '#FFFFFF',
     },
     {
       title: 'Record Replacement',
       subtitle: 'Manage replacement records',
       icon: 'sync',
-      backgroundColor: '#FFFFFF',
-      iconColor: '#8B5CF6',
-      variant: 'default' as const,
       onPress: () => router.push('/replacement'),
+      gradientColors: ['#A78BFA', '#8B5CF6'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.7)',
+      iconColor: '#FFFFFF',
+    },
+    {
+      title: 'Lifecycle Eval',
+      subtitle: 'Asset lifespan & maintenance',
+      icon: 'clock-alarm',
+      onPress: () => router.push('/lifespan'),
+      gradientColors: ['#FBBF24', '#F59E0B'],
+      titleColor: '#0C134F',
+      subtitleColor: 'rgba(12, 19, 79, 0.6)',
+      iconColor: '#0C134F',
     },
   ];
 
@@ -222,13 +233,11 @@ export default function App() {
                 title={link.title}
                 subtitle={link.subtitle}
                 icon={link.icon}
-                backgroundColor={link.backgroundColor}
-                iconColor={link.iconColor}
-                variant={link.variant}
                 onPress={link.onPress}
                 gradientColors={link.gradientColors}
                 titleColor={link.titleColor}
                 subtitleColor={link.subtitleColor}
+                iconColor={link.iconColor}
               />
             ))}
           </View>
@@ -255,9 +264,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 18,
-    paddingTop: 48,
-    paddingBottom: 16,
+    paddingVertical: 14,
+    paddingTop: 44,
+    paddingBottom: 0,
     backgroundColor: '#0C134F',
   },
   headerTitle: {
@@ -306,7 +315,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    gap: 6,
   },
   spacer: {
     height: 20,

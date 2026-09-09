@@ -69,6 +69,7 @@ export default function RootLayout() {
         <Stack.Screen name="activity-log" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="maintenance" />
+        <Stack.Screen name="lifespan" />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

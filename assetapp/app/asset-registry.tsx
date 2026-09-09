@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   SafeAreaView,
@@ -98,7 +99,7 @@ export default function AssetRegistryScreen() {
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      setError('Permission to access gallery is required.');
+      Alert.alert('Permission Required', 'Permission to access gallery is required.');
       return;
     }
 
@@ -154,7 +155,7 @@ export default function AssetRegistryScreen() {
   const generateAssetId = () => {
     // Validate required fields before generating ID
     if (!assetName || !category || !condition || !assignTo || !location || !dateAcquired) {
-      setError('Please fill out all required fields marked with * before generating an ID.');
+      Alert.alert('Required Fields', 'Please fill out all required fields marked with * before generating an ID.');
       return;
     }
 
@@ -189,13 +190,13 @@ export default function AssetRegistryScreen() {
 
   const handleRegisterAsset = async () => {
     if (!assetName || !category || !condition || !location || !selectedUserId) {
-      setError('Please fill in all required fields and select a valid user/department');
+      Alert.alert('Missing Information', 'Please fill in all required fields and select a valid user/department');
       return;
     }
 
     const count = bulkMode ? Math.max(1, parseInt(quantity, 10) || 1) : 1;
     if (!bulkMode && assetId === 'Not generated') {
-      setError('You must generate an Asset Code (QR Code) before you can register the asset.');
+      Alert.alert('Asset Code Required', 'You must generate an Asset Code (QR Code) before you can register the asset.');
       return;
     }
 
@@ -267,12 +268,10 @@ export default function AssetRegistryScreen() {
         });
       }
 
-      setSuccess(`Successfully registered ${count} asset${count > 1 ? 's' : ''}.`);
-      setTimeout(() => {
-        router.push('/assets');
-      }, 1500);
+      Alert.alert('Success', `Successfully registered ${count} asset${count > 1 ? 's' : ''}.`);
+      router.push('/assets');
     } catch (err) {
-      setError((err as Error).message || 'Unable to register asset with Supabase.');
+      Alert.alert('Registration Failed', (err as Error).message || 'Unable to register asset with Supabase.');
     } finally {
       setSaving(false);
     }
@@ -286,26 +285,11 @@ export default function AssetRegistryScreen() {
         </TouchableOpacity>
         <View style={styles.headerTextWrap}>
           <Text style={styles.headerTitle}>Asset Registry</Text>
-          <Text style={styles.headerSubtitle}>Register new assets for the university</Text>
         </View>
         <View style={styles.headerRight} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {error && (
-          <View style={styles.errorBanner}>
-            <MaterialCommunityIcons name="alert-circle" size={20} color="#EF4444" />
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        {success && (
-          <View style={styles.successBanner}>
-            <MaterialCommunityIcons name="check-circle" size={20} color="#10B981" />
-            <Text style={styles.successText}>{success}</Text>
-          </View>
-        )}
-
         {/* Basic Information Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -738,7 +722,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   header: {
-    backgroundColor: NAVY_DARK,
+    backgroundColor: '#0C134F',
     paddingVertical: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -749,7 +733,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(253, 184, 51, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -760,11 +744,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     color: '#FFFFFF',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
-    marginTop: 2,
   },
   headerRight: {
     width: 42,
@@ -797,14 +776,14 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: `${GOLD}22`,
+    backgroundColor: 'rgba(253, 184, 51, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: NAVY,
+    color: '#0C134F',
   },
   formGroup: {
     marginBottom: 16,
@@ -1179,38 +1158,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
   },
-  errorBanner: {
-    backgroundColor: '#FEF2F2',
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#FEE2E2',
-    gap: 8,
-  },
-  errorText: {
-    color: '#EF4444',
-    fontSize: 13,
-    fontWeight: '600',
-    flex: 1,
-  },
-  successBanner: {
-    backgroundColor: '#F0FDF4',
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    gap: 8,
-  },
-  successText: {
-    color: '#10B981',
-    fontSize: 13,
-    fontWeight: '600',
-    flex: 1,
-  },
+
 });
