@@ -1,68 +1,69 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
-  SafeAreaView,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  View,
+  TextInput,
   TouchableOpacity,
-  RefreshControl,
-  ActivityIndicator,
-  Modal,
+  View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { supabase } from '@/lib/supabase';
-import { LinkedAsset, RequestItem } from '@/components/requests/request-card';
-import { updateRequestStatus } from '@/lib/userService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  fetchRepairRecords,
+  updateRepairStatus,
+  sendRepairToReplacement,
+  sendRepairToDisposal,
+  repairStatusMessage,
+  repairDateLabel,
+  RepairRecord,
+  RepairResult,
+  RepairStatus,
+  RepairPriority,
+  REPAIR_RESULTS,
+} from '@/lib/repairService';
+import { resolveActingUserLabel } from '@/lib/actorService';
+
+/**
+ * Repair Management — the Asset Management Office side of the repair flow.
+ *
+ * Each card is one repair record (one asset), so a bulk request is processed and
+ * tracked per asset. The admin moves it Pending → In Progress → Completed (or
+ * Cancelled), records the evaluation details, and — when the asset cannot be
+ * repaired — sends it to Replacement or Disposal. Every write goes to the same
+ * `repairs` / `assets` / `requests` rows the Laravel web app reads.
+ */
 
 const filterTabs = ['All Requests', 'Pending', 'In Progress', 'Completed', 'Cancelled'] as const;
 type FilterTab = typeof filterTabs[number];
-type RepairStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
 
-const formatPrice = (raw: any): string | undefined => {
-  if (raw === null || raw === undefined || raw === '') return undefined;
-  const n = Number(raw);
-  if (Number.isNaN(n)) return String(raw);
-  return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
+type AdminActionType = 'start' | 'details' | 'complete' | 'cancel' | 'replacement' | 'disposal';
 
-/**
- * Map a raw asset row to the shape used on the repair cards.
- */
-const toLinkedAsset = (a: any): LinkedAsset => ({
-  id: a?.id,
-  code: String(a?.Asset_code ?? ''),
-  name: String(a?.Asset_name ?? 'Unknown Asset'),
-  category: a?.Category ? String(a.Category) : undefined,
-  condition: a?.Condition ? String(a.Condition) : undefined,
-  serialNumber: a?.serial_Number ? String(a.serial_Number) : undefined,
-  location: a?.asset_location ? String(a.asset_location) : undefined,
-  purchasePrice: formatPrice(a?.purchase_Price),
-  warrantyMonths: a?.warranty_months != null ? String(a.warranty_months) : undefined,
-  lifecycleStatus: a?.Lifecycle_Status ? String(a.Lifecycle_Status) : undefined,
-});
-
-const normalizeRepairStatus = (rawStatus?: string | null): RepairStatus => {
-  const status = String(rawStatus ?? '').trim().toLowerCase();
-
-  if (!status) return 'Pending';
-  if (status.includes('cancel')) return 'Cancelled';
-  if (status.includes('complete') || status.includes('done')) return 'Completed';
-  if (status.includes('progress') || status.includes('working') || status.includes('approve') || status.includes('approved')) {
-    return 'In Progress';
-  }
-
-  return 'Pending';
+type AdminAction = {
+  type: AdminActionType;
+  record: RepairRecord;
+  result: RepairResult;
+  reason: string;
+  technician: string;
+  repairCost: string;
+  partsReplaced: string;
+  expectedCompletion: string;
+  inspectionFindings: string;
+  adminRemarks: string;
 };
 
 const getStatusStyle = (status: RepairStatus) => {
   switch (status) {
     case 'Pending':
-      return { backgroundColor: '#FDE68A', color: '#92400E' };
+      return { backgroundColor: '#FEF3C7', color: '#B45309' };
     case 'In Progress':
       return { backgroundColor: '#DBEAFE', color: '#1D4ED8' };
     case 'Completed':
@@ -70,8 +71,47 @@ const getStatusStyle = (status: RepairStatus) => {
     case 'Cancelled':
       return { backgroundColor: '#E5E7EB', color: '#374151' };
     default:
-      return { backgroundColor: '#FDE68A', color: '#92400E' };
+      return { backgroundColor: '#FEF3C7', color: '#B45309' };
   }
+};
+
+const priorityTone = (priority: RepairPriority) => {
+  if (priority === 'High') return { bg: '#FEE2E2', color: '#B91C1C' };
+  if (priority === 'Low') return { bg: '#DCFCE7', color: '#15803D' };
+  return { bg: '#FEF3C7', color: '#B45309' };
+};
+
+const lifecycleTone = (status?: string) => {
+  const key = String(status ?? '').trim().toLowerCase();
+  if (key === 'disposal' || key === 'disposed') return { bg: '#FEE2E2', color: '#B91C1C' };
+  if (key === 'for repair') return { bg: '#FEF3C7', color: '#B45309' };
+  if (key === 'for replacement') return { bg: '#EDE9FE', color: '#6D28D9' };
+  if (key === 'pullout') return { bg: '#DBEAFE', color: '#1D4ED8' };
+  return { bg: '#DCFCE7', color: '#15803D' };
+};
+
+const formatPrice = (value: number | null) =>
+  value === null || value === undefined
+    ? '—'
+    : `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const parseDateInput = (raw: string): string | undefined => {
+  const text = String(raw ?? '').trim();
+  if (!text) return undefined;
+  const match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match) {
+    const [, mm, dd, yyyy] = match;
+    return `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+  }
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? text : new Date(parsed).toISOString().slice(0, 10);
+};
+
+/** ISO / free text → mm/dd/yyyy for the modal inputs. */
+const toDateInput = (raw: string): string => {
+  if (!raw) return '';
+  const match = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[2]}/${match[3]}/${match[1]}` : String(raw);
 };
 
 interface StatCardProps {
@@ -90,7 +130,7 @@ function StatCard({ title, value, icon, gradientColors }: StatCardProps) {
       style={styles.statCard}
     >
       <View style={styles.statCardContent}>
-        <MaterialCommunityIcons name={icon as any} size={32} color="#FFFFFF" />
+        <MaterialCommunityIcons name={icon as any} size={28} color="#FFFFFF" />
         <Text style={styles.statValue}>{value}</Text>
         <Text style={styles.statTitle}>{title}</Text>
       </View>
@@ -98,228 +138,195 @@ function StatCard({ title, value, icon, gradientColors }: StatCardProps) {
   );
 }
 
-export default function RepairModule() {
+const REPAIR_TIMELINE: RepairStatus[] = ['Pending', 'In Progress', 'Completed'];
+
+function RepairTimeline({ record }: { record: RepairRecord }) {
+  const cancelled = record.status === 'Cancelled';
+  const currentIndex = cancelled ? 1 : REPAIR_TIMELINE.indexOf(record.status);
+  const steps = cancelled ? ['Pending', 'In Progress', 'Cancelled'] : REPAIR_TIMELINE;
+
+  return (
+    <View style={styles.timeline}>
+      {steps.map((step, index) => {
+        const done = cancelled ? index <= 2 : index <= currentIndex;
+        const active = index === currentIndex;
+        return (
+          <View key={step} style={styles.timelineStep}>
+            <View style={styles.timelineRow}>
+              <View
+                style={[
+                  styles.timelineDot,
+                  done && (cancelled && index === 2 ? styles.timelineDotCancelled : styles.timelineDotDone),
+                  active && styles.timelineDotActive,
+                ]}
+              />
+              {index < steps.length - 1 ? (
+                <View style={[styles.timelineLine, done && styles.timelineLineDone]} />
+              ) : null}
+            </View>
+            <Text style={[styles.timelineLabel, active && styles.timelineLabelActive]}>{step}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+export default function RepairManagement() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<FilterTab>('All Requests');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [items, setItems] = useState<RequestItem[]>([]);
+  const [records, setRecords] = useState<RepairRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [stats, setStats] = useState({
-    total: 0,
-    pending: 0,
-    inProgress: 0,
-    completed: 0,
-  });
+  const [actorLabel, setActorLabel] = useState('Admin');
+  const [actorId, setActorId] = useState<string | number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [action, setAction] = useState<AdminAction | null>(null);
 
-  const fetchRepairRequests = async () => {
+  const loadRecords = useCallback(async () => {
     try {
-      setLoading(true);
-
-      // Many requests leave `asset_id` NULL — the actual asset links live on
-      // the per-asset `repairs` log rows (repairs.Assets_id per Request_id).
-      // Resolve each request's asset(s) from BOTH sources so rows never render
-      // as "Unknown Asset".
-      const { data, error } = await supabase
-        .from('requests')
-        .select(`
-          id,
-          request_type,
-          status,
-          Note,
-          created_at,
-          updated_at,
-          users:user_id (
-            department_id,
-            employee_numbers (
-              Full_Name
-            ),
-            departments:department_id (
-              Name
-            )
-          ),
-          assets (Asset_code, Asset_name)
-        `)
-        .eq('request_type', 'Repair');
-
-      if (error) throw error;
-
-      const reqRows: any[] = data || [];
-      const reqIds = reqRows.map((r: any) => String(r.id)).filter(Boolean);
-
-      let repairRows: any[] = [];
-      if (reqIds.length > 0) {
-        const { data: repData, error: repErr } = await supabase
-          .from('repairs')
-          .select('Repair_id, Request_id, Assets_id, status')
-          .in('Request_id', reqIds);
-        if (repErr) {
-          console.error('Failed to fetch repairs for asset resolution:', repErr.message);
-        } else {
-          repairRows = repData || [];
-        }
-      }
-
-      const repairsByRequest = new Map<string, any[]>();
-      repairRows.forEach((row: any) => {
-        const key = String(row.Request_id ?? '');
-        if (!key) return;
-        const list = repairsByRequest.get(key) ?? [];
-        list.push(row);
-        repairsByRequest.set(key, list);
-      });
-
-      const wantedAssetIds: number[] = [];
-      const wantAsset = (raw: any) => {
-        const n = Number(raw);
-        if (Number.isFinite(n) && n > 0 && !wantedAssetIds.includes(n)) wantedAssetIds.push(n);
-      };
-      reqRows.forEach((req: any) => {
-        wantAsset(req.asset_id);
-        (repairsByRequest.get(String(req.id)) ?? []).forEach((r: any) => wantAsset(r.Assets_id));
-      });
-
-      let assetRows: any[] = [];
-      if (wantedAssetIds.length > 0) {
-        const { data: aData, error: aErr } = await supabase
-          .from('assets')
-          .select('id, Asset_code, Asset_name, Category, Condition, serial_Number, asset_location, purchase_Price, warranty_months, Lifecycle_Status')
-          .in('id', wantedAssetIds);
-        if (aErr) {
-          console.error('Failed to fetch assets for repair rows:', aErr.message);
-        } else {
-          assetRows = aData || [];
-        }
-      }
-      const assetsById = new Map(assetRows.map((a: any) => [String(a.id), a]));
-
-      const mappedItems: RequestItem[] = reqRows.map((req: any) => {
-        const user = req.users;
-        const fullName = user?.employee_numbers?.Full_Name || 'Unknown';
-        const departmentName = user?.departments?.Name || user?.department_id || 'N/A';
-        const normalizedStatus = normalizeRepairStatus(req.status);
-
-        // Direct request link first, then any per-asset repairs-log links.
-        const seen = new Set<string>();
-        const linked: LinkedAsset[] = [];
-        const pushAsset = (raw: any) => {
-          if (!raw || raw.id == null) return;
-          const id = String(raw.id);
-          if (seen.has(id)) return;
-          seen.add(id);
-          linked.push(toLinkedAsset(raw));
-        };
-        if (req.asset_id != null) pushAsset(assetsById.get(String(req.asset_id)));
-        (repairsByRequest.get(String(req.id)) ?? []).forEach((r: any) => {
-          pushAsset(assetsById.get(String(r.Assets_id)));
-        });
-
-        const mainAsset = linked[0];
-        return {
-          id: String(req.id),
-          title: mainAsset?.name ?? 'No asset linked',
-          requestId: `REP-${req.id}`,
-          assetName: mainAsset?.name ?? 'No asset linked',
-          assetId: mainAsset?.code || 'N/A',
-          linkedAssets: linked.length > 0 ? linked : undefined,
-          requestType: 'Repair',
-          department: String(departmentName),
-          submittedBy: fullName,
-          dateSubmitted: new Date(req.created_at).toLocaleDateString(),
-          reason: req.Note || '',
-          status: normalizedStatus,
-          statusLabel: normalizedStatus,
-          priority: 'Medium',
-          completedAt:
-            normalizedStatus === 'Completed' && req.updated_at
-              ? new Date(req.updated_at).toLocaleDateString()
-              : undefined,
-        };
-      });
-
-      setItems(mappedItems);
-
-      // Calculate stats
-      const total = mappedItems.length;
-      const pending = mappedItems.filter((i) => i.status === 'Pending').length;
-      const inProgress = mappedItems.filter((i) => i.status === 'In Progress').length;
-      const completed = mappedItems.filter((i) => i.status === 'Completed').length;
-
-      setStats({ total, pending, inProgress, completed });
+      const data = await fetchRepairRecords();
+      setRecords(data);
     } catch (error) {
-      console.error('Failed to fetch repair requests:', error);
-      Alert.alert('Error', 'Failed to load repair requests');
+      console.error('Failed to fetch repair records:', error);
+      Alert.alert('Error', 'Failed to load repair records.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchRepairRequests();
-  }, []);
+    const bootstrap = async () => {
+      const actor = await resolveActingUserLabel();
+      setActorId(actor.id);
+      setActorLabel(actor.label);
+      await loadRecords();
+    };
+    bootstrap();
+  }, [loadRecords]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchRepairRequests();
+    await loadRecords();
     setRefreshing(false);
   };
 
-  const filteredRequests = useMemo(() => {
-    switch (activeFilter) {
-      case 'Pending':
-        return items.filter((item) => item.status === 'Pending');
-      case 'In Progress':
-        return items.filter((item) => item.status === 'In Progress');
-      case 'Completed':
-        return items.filter((item) => item.status === 'Completed');
-      case 'Cancelled':
-        return items.filter((item) => item.status === 'Cancelled');
-      default:
-        return items;
+  const stats = useMemo(
+    () => ({
+      total: records.length,
+      pending: records.filter((r) => r.status === 'Pending').length,
+      inProgress: records.filter((r) => r.status === 'In Progress').length,
+      completed: records.filter((r) => r.status === 'Completed').length,
+    }),
+    [records],
+  );
+
+  const filteredRecords = useMemo(() => {
+    if (activeFilter === 'All Requests') return records;
+    return records.filter((r) => r.status === activeFilter);
+  }, [activeFilter, records]);
+
+  const openAction = (type: AdminActionType, record: RepairRecord) => {
+    setAction({
+      type,
+      record,
+      result: record.result ?? 'Repairable',
+      reason: '',
+      technician: record.technician,
+      repairCost: record.repairCost != null ? String(record.repairCost) : '',
+      partsReplaced: record.partsReplaced,
+      expectedCompletion: toDateInput(record.expectedCompletion),
+      inspectionFindings: record.inspectionFindings,
+      adminRemarks: record.adminRemarks,
+    });
+  };
+
+  const closeAction = () => setAction(null);
+
+  const confirmAction = async () => {
+    if (!action) return;
+    const { type, record } = action;
+
+    const needsReason = type === 'cancel' || type === 'replacement' || type === 'disposal';
+    if (needsReason && !action.reason.trim()) {
+      Alert.alert('Reason required', 'Please give a short reason so the requestor knows what happened.');
+      return;
     }
-  }, [activeFilter, items]);
 
-  const handleStatusUpdate = async (requestId: string, nextStatus: RepairStatus) => {
+    const fields = {
+      technician: action.technician.trim() || undefined,
+      repairCost: action.repairCost.trim() || undefined,
+      partsReplaced: action.partsReplaced.trim() || undefined,
+      expectedCompletion: parseDateInput(action.expectedCompletion),
+      inspectionFindings: action.inspectionFindings.trim() || undefined,
+      adminRemarks: action.adminRemarks.trim() || undefined,
+    };
+
     try {
-      const userJson = await AsyncStorage.getItem('user');
-      if (!userJson) {
-        Alert.alert('Error', 'User session not found.');
-        return;
+      setSaving(true);
+
+      if (type === 'replacement') {
+        await sendRepairToReplacement({
+          repairId: record.repairId,
+          actorId,
+          actorLabel,
+          reason: action.reason.trim(),
+          replacementReason: action.result,
+        });
+        Alert.alert('Sent to Replacement', `${record.assetName} is now flagged For Replacement.`);
+      } else if (type === 'disposal') {
+        await sendRepairToDisposal({
+          repairId: record.repairId,
+          actorId,
+          actorLabel,
+          reason: action.reason.trim(),
+          disposalReason: action.result,
+        });
+        Alert.alert('Sent to Disposal', `${record.assetName} is now marked for disposal.`);
+      } else {
+        const status: RepairStatus =
+          type === 'complete'
+            ? 'Completed'
+            : type === 'cancel'
+              ? 'Cancelled'
+              : type === 'start'
+                ? 'In Progress'
+                : record.status;
+
+        await updateRepairStatus({
+          repairId: record.repairId,
+          status,
+          actorId,
+          actorLabel,
+          fields: {
+            ...fields,
+            repairResult: type === 'complete' ? action.result : record.result ?? undefined,
+            cancellationReason: type === 'cancel' ? action.reason.trim() : undefined,
+          },
+        });
+
+        if (type === 'complete') {
+          Alert.alert(
+            'Repair completed',
+            action.result === 'Repairable'
+              ? `${record.assetName} was repaired and is now Active.`
+              : `${record.assetName} was marked "${action.result}" and is now For Replacement.`,
+          );
+        } else if (type === 'cancel') {
+          Alert.alert('Repair cancelled', `${record.assetName} was restored to Active.`);
+        } else {
+          Alert.alert('Saved', 'Repair details updated.');
+        }
       }
 
-      const user = JSON.parse(userJson);
-
-      if (nextStatus === 'Completed') {
-        Alert.alert(
-          'Confirm completion',
-          'This repair request will be marked as completed and cannot be edited afterwards. Continue?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Confirm',
-              onPress: async () => {
-                try {
-                  await updateRequestStatus(requestId, nextStatus, user.id);
-                  Alert.alert('Success', 'Repair request marked as completed.');
-                  fetchRepairRequests();
-                } catch (error) {
-                  console.error('Failed to complete repair request:', error);
-                  Alert.alert('Error', 'Failed to complete repair request.');
-                }
-              },
-            },
-          ]
-        );
-        return;
-      }
-
-      await updateRequestStatus(requestId, nextStatus as any, user.id);
-      Alert.alert('Success', `Repair request updated to ${nextStatus}.`);
-      fetchRepairRequests();
-    } catch (error) {
-      console.error('Failed to update repair status:', error);
-      Alert.alert('Error', 'Failed to update repair request.');
+      closeAction();
+      await loadRecords();
+    } catch (error: any) {
+      console.error('Repair action failed:', error);
+      Alert.alert('Action failed', error?.message || 'Could not update the repair record.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -342,6 +349,24 @@ export default function RepairModule() {
     );
   }
 
+  const modalTitle: Record<AdminActionType, string> = {
+    start: 'Start Repair',
+    details: 'Repair Details',
+    complete: 'Complete Repair',
+    cancel: 'Cancel Repair',
+    replacement: 'Send to Replacement',
+    disposal: 'Send to Disposal',
+  };
+
+  const modalHelper: Record<AdminActionType, string> = {
+    start: 'Record who will handle the repair and move the request to In Progress.',
+    details: 'Record the evaluation and servicing information. The web app shows these notes too.',
+    complete: 'Choose the repair result. Repairable returns the asset to Active; Beyond Repair / For Replacement moves it to the replacement process.',
+    cancel: 'The repair is closed and the asset is restored to Active. A reason is required.',
+    replacement: 'Creates a replacement record for this asset and flags it For Replacement. A reason is required.',
+    disposal: 'Creates a disposal record for this asset and marks it disposed. A reason is required.',
+  };
+
   return (
     <View style={styles.screenContainer}>
       <View style={styles.header}>
@@ -350,281 +375,322 @@ export default function RepairModule() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Repair Management</Text>
-          <Text style={styles.subtitle}>Manage and track all repairs requests here</Text>
+          <Text style={styles.subtitle}>Evaluate, track and close every repair request</Text>
         </View>
         <View style={styles.headerSpacer} />
       </View>
+
       <SafeAreaView style={styles.container}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {/* Stat Cards */}
           <View style={styles.statsContainer}>
-          <StatCard
-            title="Total Repairs"
-            value={stats.total}
-            icon="hammer"
-            gradientColors={['#EF4444', '#DC2626']}
-          />
-          <StatCard
-            title="Pending"
-            value={stats.pending}
-            icon="clock-outline"
-            gradientColors={['#F59E0B', '#D97706']}
-          />
-          <StatCard
-            title="In Progress"
-            value={stats.inProgress}
-            icon="sync"
-            gradientColors={['#3B82F6', '#1D4ED8']}
-          />
-          <StatCard
-            title="Completed"
-            value={stats.completed}
-            icon="check-circle"
-            gradientColors={['#10B981', '#059669']}
-          />
-        </View>
+            <StatCard title="Total Repairs" value={stats.total} icon="hammer" gradientColors={['#EF4444', '#DC2626']} />
+            <StatCard title="Pending" value={stats.pending} icon="clock-outline" gradientColors={['#F59E0B', '#D97706']} />
+            <StatCard title="In Progress" value={stats.inProgress} icon="sync" gradientColors={['#3B82F6', '#1D4ED8']} />
+            <StatCard title="Completed" value={stats.completed} icon="check-circle" gradientColors={['#10B981', '#059669']} />
+          </View>
 
-        {/* Filter Menu */}
-        <View style={styles.filterContainer}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterScroll}
-            contentContainerStyle={styles.filterContent}
-          >
-            {filterTabs.map((tab) => {
-              const isActive = tab === activeFilter;
-              return (
-                <TouchableOpacity
-                  key={tab}
-                  style={[styles.filterButton, isActive ? styles.filterButtonActive : null]}
-                  onPress={() => setActiveFilter(tab)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.filterLabel, isActive ? styles.filterLabelActive : null]}>
-                    {tab}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+          <View style={styles.filterContainer}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterScroll}
+              contentContainerStyle={styles.filterContent}
+            >
+              {filterTabs.map((tab) => {
+                const isActive = tab === activeFilter;
+                return (
+                  <TouchableOpacity
+                    key={tab}
+                    style={[styles.filterButton, isActive ? styles.filterButtonActive : null]}
+                    onPress={() => setActiveFilter(tab)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.filterLabel, isActive ? styles.filterLabelActive : null]}>{tab}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
 
-        {/* Repair Requests List */}
-        <View style={styles.listContainer}>
-          {filteredRequests.length > 0 ? (
-            filteredRequests.map((item) => {
-              const priorityStyle =
-                item.priority === 'High'
-                  ? styles.priorityHigh
-                  : item.priority === 'Low'
-                    ? styles.priorityLow
-                    : styles.priorityMedium;
+          <View style={styles.listContainer}>
+            {filteredRecords.length > 0 ? (
+              filteredRecords.map((record) => {
+                const statusStyle = getStatusStyle(record.status);
+                const priorityStyle = priorityTone(record.priority);
+                const lifeTone = lifecycleTone(record.lifecycleStatus);
+                const isExpanded = expandedId === record.repairId;
+                const canStart = record.status === 'Pending';
+                const canComplete = record.status === 'Pending' || record.status === 'In Progress';
+                const canCancel = record.status === 'Pending' || record.status === 'In Progress';
 
-              const statusStyle = getStatusStyle(item.status as RepairStatus);
-              const isExpanded = expandedId === item.id;
-              const canEditStatus = item.status !== 'Completed' && item.status !== 'Cancelled';
-
-              return (
-                <View key={item.id} style={styles.recordCard}>
-                  <View style={styles.recordHeader}>
-                    <View style={styles.assetSummary}>
-                      <View style={styles.assetIconWrap}>
-                        <MaterialCommunityIcons name="wrench" size={28} color="#F87171" />
-                      </View>
-                      <View style={styles.assetTextWrap}>
-                        <Text style={styles.assetName}>{item.title}</Text>
-                        <Text style={styles.assetCode}>{item.assetId}</Text>
-                        {item.linkedAssets && item.linkedAssets.length > 1 ? (
-                          <Text style={styles.assetExtra}>{`${item.linkedAssets.length} assets linked`}</Text>
-                        ) : null}
-                        <Text style={styles.requestorText}>Requested by: {item.submittedBy}</Text>
-                        <View style={[styles.statusPillCompact, { backgroundColor: statusStyle.backgroundColor }]}>
-                          <Text style={[styles.statusTextCompact, { color: statusStyle.color }]}>{item.status}</Text>
+                return (
+                  <View key={record.repairId} style={styles.recordCard}>
+                    <View style={styles.recordHeader}>
+                      <View style={styles.assetSummary}>
+                        <View style={styles.assetIconWrap}>
+                          <MaterialCommunityIcons name="wrench" size={26} color="#F87171" />
                         </View>
+                        <View style={styles.assetTextWrap}>
+                          <Text style={styles.assetName} numberOfLines={2}>
+                            {record.assetName}
+                          </Text>
+                          <Text style={styles.assetCode}>{record.assetCode}</Text>
+                          <Text style={styles.requestorText}>
+                            {record.requestRef} • {record.requesterName}
+                          </Text>
+                          <View style={styles.pillRow}>
+                            <View style={[styles.statusPillCompact, { backgroundColor: statusStyle.backgroundColor }]}>
+                              <Text style={[styles.statusTextCompact, { color: statusStyle.color }]}>
+                                {record.status}
+                              </Text>
+                            </View>
+                            <View style={[styles.statusPillCompact, { backgroundColor: priorityStyle.bg }]}>
+                              <Text style={[styles.statusTextCompact, { color: priorityStyle.color }]}>
+                                {record.priority}
+                              </Text>
+                            </View>
+                            {record.lifecycleStatus ? (
+                              <View style={[styles.statusPillCompact, { backgroundColor: lifeTone.bg }]}>
+                                <Text style={[styles.statusTextCompact, { color: lifeTone.color }]}>
+                                  {record.lifecycleStatus}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={styles.iconActions}>
+                        <TouchableOpacity
+                          style={styles.actionIcon}
+                          activeOpacity={0.8}
+                          onPress={() => setExpandedId(isExpanded ? null : record.repairId)}
+                        >
+                          <MaterialCommunityIcons
+                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                            size={18}
+                            color="#0F172A"
+                          />
+                        </TouchableOpacity>
                       </View>
                     </View>
 
-                    <View style={styles.iconActions}>
-                      <TouchableOpacity
-                        style={styles.actionIcon}
-                        activeOpacity={0.8}
-                        onPress={() => setExpandedId(isExpanded ? null : item.id)}
-                      >
-                        <MaterialCommunityIcons
-                          name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                          size={18}
-                          color="#0F172A"
-                        />
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.actionIcon} activeOpacity={0.8}>
-                        <MaterialCommunityIcons name="trash-can-outline" size={18} color="#EF4444" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
+                    {isExpanded && (
+                      <View style={styles.expandedDetails}>
+                        <RepairTimeline record={record} />
 
-                  {isExpanded && (
-                    <View style={styles.expandedDetails}>
-                      <View style={styles.detailGridMain}>
-                        <View style={styles.detailBlockLarge}>
-                          <Text style={styles.detailLabel}>Issue</Text>
-                          <Text style={styles.detailValue}>{item.reason || 'No issue description provided'}</Text>
-                        </View>
-
-                        <View style={styles.detailBlockSmall}>
-                          <Text style={styles.detailLabel}>Priority</Text>
-                          <View style={[styles.priorityPill, priorityStyle]}>
-                            <Text style={styles.priorityText}>{item.priority || 'Medium'}</Text>
+                        <View style={styles.detailSection}>
+                          <Text style={styles.detailLabel}>Reported Problem</Text>
+                          <View style={styles.notesBox}>
+                            <Text style={styles.notesText}>{record.issue || 'No problem description provided.'}</Text>
                           </View>
                         </View>
 
-                        <View style={styles.detailBlockSmall}>
-                          <Text style={styles.detailLabel}>Date</Text>
-                          <Text style={styles.detailValue}>{item.dateSubmitted}</Text>
+                        <View style={styles.detailGridMain}>
+                          <View style={styles.detailBlockSmall}>
+                            <Text style={styles.detailLabel}>Reported</Text>
+                            <Text style={styles.detailValue}>{repairDateLabel(record.reportedDate)}</Text>
+                          </View>
+                          <View style={styles.detailBlockSmall}>
+                            <Text style={styles.detailLabel}>Department</Text>
+                            <Text style={styles.detailValue}>{record.department}</Text>
+                          </View>
+                          <View style={styles.detailBlockSmall}>
+                            <Text style={styles.detailLabel}>Request No.</Text>
+                            <Text style={styles.detailValue}>{record.requestRef}</Text>
+                          </View>
                         </View>
-                      </View>
 
-                      <View style={styles.detailSection}>
-                        <Text style={styles.detailLabel}>Notes</Text>
-                        <View style={styles.notesBox}>
-                          <Text style={styles.notesText}>{item.reason || 'No additional notes provided.'}</Text>
+                        <View style={styles.statusMessage}>
+                          <MaterialCommunityIcons
+                            name={record.status === 'Cancelled' ? 'close-circle-outline' : 'information-outline'}
+                            size={16}
+                            color={record.status === 'Cancelled' ? '#B91C1C' : '#1D4ED8'}
+                          />
+                          <Text
+                            style={[
+                              styles.statusMessageText,
+                              record.status === 'Cancelled' && { color: '#B91C1C' },
+                            ]}
+                          >
+                            {repairStatusMessage(record.status, record.result)}
+                          </Text>
                         </View>
-                      </View>
 
-                      <View style={styles.detailSection}>
-                        <Text style={styles.detailLabel}>Asset details</Text>
-                        <View style={styles.assetInfoStack}>
-                          {item.linkedAssets && item.linkedAssets.length > 0 ? (
-                            item.linkedAssets.map((asset, idx) => (
-                              <View key={asset.id ?? asset.code ?? idx} style={styles.assetInfoItem}>
-                                <Text style={styles.detailAssetName}>{asset.name}</Text>
-                                <Text style={styles.detailAssetCode}>{asset.code || '—'}</Text>
-                                {asset.lifecycleStatus ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Lifecycle Status</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.lifecycleStatus}</Text>
-                                  </View>
-                                ) : null}
-                                {asset.category ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Category</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.category}</Text>
-                                  </View>
-                                ) : null}
-                                {asset.condition ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Condition</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.condition}</Text>
-                                  </View>
-                                ) : null}
-                                {asset.serialNumber ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Serial Number</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.serialNumber}</Text>
-                                  </View>
-                                ) : null}
-                                {asset.location ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Location</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.location}</Text>
-                                  </View>
-                                ) : null}
-                                {asset.purchasePrice ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Purchase Price</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.purchasePrice}</Text>
-                                  </View>
-                                ) : null}
-                                {asset.warrantyMonths ? (
-                                  <View style={styles.assetMiniRow}>
-                                    <Text style={styles.assetInfoLabel}>Warranty (Months)</Text>
-                                    <Text style={styles.assetInfoValue}>{asset.warrantyMonths}</Text>
-                                  </View>
-                                ) : null}
-                              </View>
-                            ))
-                          ) : (
+                        <View style={styles.detailSection}>
+                          <Text style={styles.detailLabel}>Asset Information</Text>
+                          <View style={styles.assetInfoStack}>
                             <View style={styles.assetInfoItem}>
-                              <Text style={styles.assetInfoValue}>
-                                No asset has been linked to this request yet.
-                              </Text>
+                              <Text style={styles.detailAssetName}>{record.assetName}</Text>
+                              <Text style={styles.detailAssetCode}>{record.assetCode}</Text>
+                              {record.lifecycleStatus ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Lifecycle Status</Text>
+                                  <Text style={styles.assetInfoValue}>{record.lifecycleStatus}</Text>
+                                </View>
+                              ) : null}
+                              {record.category ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Category</Text>
+                                  <Text style={styles.assetInfoValue}>{record.category}</Text>
+                                </View>
+                              ) : null}
+                              {record.condition ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Condition</Text>
+                                  <Text style={styles.assetInfoValue}>{record.condition}</Text>
+                                </View>
+                              ) : null}
+                              {record.serialNumber ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Serial Number</Text>
+                                  <Text style={styles.assetInfoValue}>{record.serialNumber}</Text>
+                                </View>
+                              ) : null}
+                              {record.location ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Location</Text>
+                                  <Text style={styles.assetInfoValue}>{record.location}</Text>
+                                </View>
+                              ) : null}
+                              {record.purchasePrice ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Purchase Price</Text>
+                                  <Text style={styles.assetInfoValue}>{record.purchasePrice}</Text>
+                                </View>
+                              ) : null}
+                              {record.warrantyMonths ? (
+                                <View style={styles.assetMiniRow}>
+                                  <Text style={styles.assetInfoLabel}>Warranty (Months)</Text>
+                                  <Text style={styles.assetInfoValue}>{record.warrantyMonths}</Text>
+                                </View>
+                              ) : null}
                             </View>
-                          )}
+                          </View>
+                        </View>
+
+                        <View style={styles.detailSection}>
+                          <Text style={styles.detailLabel}>Servicing &amp; Evaluation</Text>
+                          <View style={styles.assetInfoStack}>
+                            <View style={styles.assetInfoItem}>
+                              <View style={styles.assetMiniRowFirst}>
+                                <Text style={styles.assetInfoLabel}>Technician / Provider</Text>
+                                <Text style={styles.assetInfoValue}>{record.technician || '—'}</Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Repair Cost</Text>
+                                <Text style={styles.assetInfoValue}>{formatPrice(record.repairCost)}</Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Repair Result</Text>
+                                <Text style={styles.assetInfoValue}>{record.result || '—'}</Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Expected Completion</Text>
+                                <Text style={styles.assetInfoValue}>
+                                  {record.expectedCompletion ? repairDateLabel(record.expectedCompletion) : '—'}
+                                </Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Parts Replaced</Text>
+                                <Text style={styles.assetInfoValue}>{record.partsReplaced || '—'}</Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Inspection Findings</Text>
+                                <Text style={styles.assetInfoValue}>{record.inspectionFindings || '—'}</Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Admin Remarks</Text>
+                                <Text style={styles.assetInfoValue}>{record.adminRemarks || '—'}</Text>
+                              </View>
+                              <View style={styles.assetMiniRow}>
+                                <Text style={styles.assetInfoLabel}>Recorded By</Text>
+                                <Text style={styles.assetInfoValue}>{record.approvedBy || '—'}</Text>
+                              </View>
+                            </View>
+                          </View>
+                        </View>
+
+                        <View style={styles.actionRow}>
+                          {canStart ? (
+                            <TouchableOpacity
+                              style={[styles.statusActionButton, styles.primaryActionButton]}
+                              onPress={() => openAction('start', record)}
+                              activeOpacity={0.85}
+                            >
+                              <Text style={styles.actionButtonText}>Start Repair</Text>
+                            </TouchableOpacity>
+                          ) : null}
+
+                          {canComplete ? (
+                            <TouchableOpacity
+                              style={[styles.statusActionButton, styles.secondaryActionButton]}
+                              onPress={() => openAction('complete', record)}
+                              activeOpacity={0.85}
+                            >
+                              <Text style={styles.actionButtonText}>Completed</Text>
+                            </TouchableOpacity>
+                          ) : null}
+
+                          {canCancel ? (
+                            <TouchableOpacity
+                              style={[styles.statusActionButton, styles.cancelActionButton]}
+                              onPress={() => openAction('cancel', record)}
+                              activeOpacity={0.85}
+                            >
+                              <Text style={styles.actionButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                          ) : null}
+
+                          <TouchableOpacity
+                            style={[styles.statusActionButton, styles.neutralActionButton]}
+                            onPress={() => openAction('details', record)}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={styles.actionButtonText}>Update Details</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.sendStack}>
+                          <TouchableOpacity
+                            style={styles.sendButton}
+                            activeOpacity={0.9}
+                            onPress={() => openAction('replacement', record)}
+                          >
+                            <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFFFFF" />
+                            <Text style={styles.sendButtonText} numberOfLines={1} adjustsFontSizeToFit>
+                              Send to Replacement
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.sendButtonDisposal}
+                            activeOpacity={0.9}
+                            onPress={() => openAction('disposal', record)}
+                          >
+                            <MaterialCommunityIcons name="trash-can-outline" size={18} color="#FFFFFF" />
+                            <Text style={styles.sendButtonText} numberOfLines={1} adjustsFontSizeToFit>
+                              Send to Disposal
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
-
-                      <View style={styles.actionRow}>
-                        <TouchableOpacity
-                          style={[styles.statusActionButton, styles.primaryActionButton, !canEditStatus && styles.disabledActionButton]}
-                          onPress={() => canEditStatus && handleStatusUpdate(item.id, 'In Progress')}
-                          disabled={!canEditStatus}
-                        >
-                          <Text style={styles.actionButtonText}>In Progress</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.statusActionButton, styles.secondaryActionButton, !canEditStatus && styles.disabledActionButton]}
-                          onPress={() => canEditStatus && handleStatusUpdate(item.id, 'Completed')}
-                          disabled={!canEditStatus}
-                        >
-                          <Text style={styles.actionButtonText}>Completed</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.statusActionButton, styles.cancelActionButton, styles.disabledActionButton]}
-                          onPress={() => {}}
-                          disabled={true}
-                        >
-                          <Text style={styles.actionButtonText}>Cancel</Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.sendStack}>
-                        <TouchableOpacity style={styles.sendButton} activeOpacity={0.9}>
-                          <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFFFFF" />
-                          <Text style={styles.sendButtonText} numberOfLines={1} adjustsFontSizeToFit>Send to Replacement</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.sendButtonDisposal} activeOpacity={0.9}>
-                          <MaterialCommunityIcons name="trash-can-outline" size={18} color="#FFFFFF" />
-                          <Text style={styles.sendButtonTextDisposal} numberOfLines={1} adjustsFontSizeToFit>Send to Disposal</Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      {item.status === 'Completed' && item.completedAt ? (
-                        <Text style={styles.completedDateText}>Completed on {item.completedAt}</Text>
-                      ) : null}
-                    </View>
-                  )}
-                </View>
-              );
-            })
-          ) : (
-            <View style={styles.emptyState}>
-              <MaterialCommunityIcons name="inbox-outline" size={48} color="#CBD5E1" />
-              <Text style={styles.emptyStateText}>No repair requests found</Text>
-            </View>
-          )}
-        </View>
-
+                    )}
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyState}>
+                <MaterialCommunityIcons name="inbox-outline" size={48} color="#CBD5E1" />
+                <Text style={styles.emptyStateText}>No repair records found</Text>
+              </View>
+            )}
+          </View>
         </ScrollView>
       </SafeAreaView>
-
-      <Modal visible={selectedImage !== null} transparent animationType="fade" onRequestClose={() => setSelectedImage(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setSelectedImage(null)}>
-              <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
-            </TouchableOpacity>
-            {selectedImage ? (
-              <Text style={styles.modalText}>No Image Attached</Text>
-            ) : null}
-          </View>
-        </View>
-      </Modal>
 
       <TouchableOpacity
         style={styles.fabButton}
@@ -641,6 +707,182 @@ export default function RepairModule() {
           <Text style={styles.fabText}>New Repair</Text>
         </LinearGradient>
       </TouchableOpacity>
+
+      <Modal visible={action !== null} transparent animationType="fade" onRequestClose={closeAction}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrap}>
+            <View style={styles.modalCard}>
+              {action ? (
+                <>
+                  <View style={styles.modalHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.modalTitle}>{modalTitle[action.type]}</Text>
+                      <Text style={styles.modalSubtitle} numberOfLines={2}>
+                        {action.record.assetName} • {action.record.assetCode}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={styles.modalCloseButton} onPress={closeAction}>
+                      <MaterialCommunityIcons name="close" size={20} color="#0F172A" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.modalBody}>
+                    <Text style={styles.modalHelper}>{modalHelper[action.type]}</Text>
+
+                    {action.type === 'complete' || action.type === 'replacement' || action.type === 'disposal' ? (
+                      <View style={styles.fieldBlock}>
+                        <Text style={styles.modalLabel}>
+                          {action.type === 'complete' ? 'Repair Result' : 'Reason Category'}
+                        </Text>
+                        <View style={styles.resultRow}>
+                          {REPAIR_RESULTS.map((result) => {
+                            const active = action.result === result;
+                            return (
+                              <TouchableOpacity
+                                key={result}
+                                style={[styles.resultChip, active && styles.resultChipActive]}
+                                onPress={() => setAction({ ...action, result })}
+                                activeOpacity={0.85}
+                              >
+                                <Text style={[styles.resultChipText, active && styles.resultChipTextActive]}>
+                                  {result}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ) : null}
+
+                    {action.type === 'cancel' || action.type === 'replacement' || action.type === 'disposal' ? (
+                      <View style={styles.fieldBlock}>
+                        <Text style={styles.modalLabel}>
+                          Reason <Text style={styles.required}>*</Text>
+                        </Text>
+                        <TextInput
+                          style={[styles.modalInput, styles.modalTextArea]}
+                          placeholder={
+                            action.type === 'cancel'
+                              ? 'e.g. Repair is no longer necessary'
+                              : action.type === 'replacement'
+                                ? 'e.g. Beyond economic repair'
+                                : 'e.g. Damaged beyond use'
+                          }
+                          placeholderTextColor="#94A3B8"
+                          multiline
+                          value={action.reason}
+                          onChangeText={(text) => setAction({ ...action, reason: text })}
+                        />
+                      </View>
+                    ) : null}
+
+                    <View style={styles.fieldBlock}>
+                      <Text style={styles.modalLabel}>Technician / Service Provider</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="e.g. IT Services - J. Dela Cruz"
+                        placeholderTextColor="#94A3B8"
+                        value={action.technician}
+                        onChangeText={(text) => setAction({ ...action, technician: text })}
+                      />
+                    </View>
+
+                    <View style={styles.modalTwoCol}>
+                      <View style={styles.modalCol}>
+                        <Text style={styles.modalLabel}>Repair Cost</Text>
+                        <TextInput
+                          style={styles.modalInput}
+                          placeholder="0.00"
+                          placeholderTextColor="#94A3B8"
+                          keyboardType="decimal-pad"
+                          value={action.repairCost}
+                          onChangeText={(text) => setAction({ ...action, repairCost: text })}
+                        />
+                      </View>
+                      <View style={styles.modalCol}>
+                        <Text style={styles.modalLabel}>Expected Completion</Text>
+                        <TextInput
+                          style={styles.modalInput}
+                          placeholder="mm/dd/yyyy"
+                          placeholderTextColor="#94A3B8"
+                          keyboardType="numbers-and-punctuation"
+                          value={action.expectedCompletion}
+                          onChangeText={(text) => setAction({ ...action, expectedCompletion: text })}
+                        />
+                      </View>
+                    </View>
+
+                    <View style={styles.fieldBlock}>
+                      <Text style={styles.modalLabel}>Parts Replaced</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="e.g. 1x SSD 512GB, 1x battery"
+                        placeholderTextColor="#94A3B8"
+                        value={action.partsReplaced}
+                        onChangeText={(text) => setAction({ ...action, partsReplaced: text })}
+                      />
+                    </View>
+
+                    <View style={styles.fieldBlock}>
+                      <Text style={styles.modalLabel}>Inspection Findings</Text>
+                      <TextInput
+                        style={[styles.modalInput, styles.modalTextArea]}
+                        placeholder="What the technician found when evaluating the asset..."
+                        placeholderTextColor="#94A3B8"
+                        multiline
+                        value={action.inspectionFindings}
+                        onChangeText={(text) => setAction({ ...action, inspectionFindings: text })}
+                      />
+                    </View>
+
+                    <View style={styles.fieldBlock}>
+                      <Text style={styles.modalLabel}>Admin Remarks</Text>
+                      <TextInput
+                        style={[styles.modalInput, styles.modalTextArea]}
+                        placeholder="Notes shared with the requestor..."
+                        placeholderTextColor="#94A3B8"
+                        multiline
+                        value={action.adminRemarks}
+                        onChangeText={(text) => setAction({ ...action, adminRemarks: text })}
+                      />
+                    </View>
+                  </ScrollView>
+
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity style={styles.modalCancelBtn} onPress={closeAction} activeOpacity={0.85}>
+                      <Text style={styles.modalCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalConfirmBtn, saving && { opacity: 0.7 }]}
+                      onPress={confirmAction}
+                      disabled={saving}
+                      activeOpacity={0.9}
+                    >
+                      {saving ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.modalConfirmText}>
+                          {action.type === 'start'
+                            ? 'Start Repair'
+                            : action.type === 'complete'
+                              ? 'Save & Complete'
+                              : action.type === 'cancel'
+                                ? 'Cancel Repair'
+                                : action.type === 'replacement'
+                                  ? 'Send to Replacement'
+                                  : action.type === 'disposal'
+                                    ? 'Send to Disposal'
+                                    : 'Save Details'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : null}
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -659,7 +901,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 18,
     paddingTop: 44,
     paddingBottom: 14,
     backgroundColor: '#1E3A5F',
@@ -688,7 +929,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scrollContent: {
-    paddingBottom: 96,
+    paddingBottom: 110,
   },
   statsContainer: {
     flexDirection: 'row',
@@ -777,7 +1018,7 @@ const styles = StyleSheet.create({
   recordHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
   assetSummary: {
@@ -788,12 +1029,7 @@ const styles = StyleSheet.create({
   },
   assetTextWrap: {
     flex: 1,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    gap: 2,
   },
   assetIconWrap: {
     width: 40,
@@ -810,9 +1046,22 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     flexShrink: 1,
   },
-  statusPillCompact: {
-    alignSelf: 'flex-start',
+  assetCode: {
+    fontSize: 12,
+    color: '#64748B',
+    letterSpacing: 0.1,
+  },
+  requestorText: {
+    fontSize: 12,
+    color: '#475569',
+  },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
     marginTop: 6,
+  },
+  statusPillCompact: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
@@ -820,23 +1069,6 @@ const styles = StyleSheet.create({
   statusTextCompact: {
     fontSize: 11,
     fontWeight: '700',
-  },
-  assetCode: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-    letterSpacing: 0.1,
-  },
-  assetExtra: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#2563EB',
-    marginTop: 3,
-  },
-  requestorText: {
-    fontSize: 12,
-    color: '#475569',
-    marginTop: 2,
   },
   iconActions: {
     flexDirection: 'row',
@@ -853,83 +1085,64 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  infoRow: {
-    display: 'none',
-  },
-  infoBlock: {
-    flex: 1,
-    minWidth: 70,
-  },
-  infoLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    marginBottom: 5,
-    fontWeight: '600',
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-    lineHeight: 18,
-  },
-  infoSubValue: {
-    fontSize: 11,
-    color: '#475569',
-    marginTop: 2,
-  },
-  priorityPill: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginTop: 2,
-  },
-  priorityLow: {
-    backgroundColor: '#DCFCE7',
-  },
-  priorityMedium: {
-    backgroundColor: '#FEF3C7',
-  },
-  priorityHigh: {
-    backgroundColor: '#FEE2E2',
-  },
-  priorityText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  statusRow: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    paddingTop: 10,
-  },
-  statusPill: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#111827',
-  },
-  statusText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-  },
   expandedDetails: {
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
     gap: 14,
+  },
+  timeline: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  timelineStep: {
+    flex: 1,
+    alignItems: 'flex-start',
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+  },
+  timelineDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#E2E8F0',
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+  },
+  timelineDotDone: {
+    backgroundColor: '#16A34A',
+    borderColor: '#16A34A',
+  },
+  timelineDotActive: {
+    backgroundColor: '#1D4ED8',
+    borderColor: '#1D4ED8',
+  },
+  timelineDotCancelled: {
+    backgroundColor: '#B91C1C',
+    borderColor: '#B91C1C',
+  },
+  timelineLine: {
+    flex: 1,
+    height: 3,
+    backgroundColor: '#E2E8F0',
+    marginHorizontal: 2,
+  },
+  timelineLineDone: {
+    backgroundColor: '#16A34A',
+  },
+  timelineLabel: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  timelineLabelActive: {
+    color: '#0F172A',
   },
   detailSection: {
     gap: 6,
@@ -938,10 +1151,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     alignItems: 'flex-start',
-  },
-  detailBlockLarge: {
-    flex: 2,
-    minWidth: 0,
   },
   detailBlockSmall: {
     flex: 1,
@@ -960,12 +1169,8 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     lineHeight: 18,
   },
-  detailSubValue: {
-    fontSize: 12,
-    color: '#475569',
-  },
   notesBox: {
-    minHeight: 90,
+    minHeight: 60,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -976,6 +1181,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0F172A',
     lineHeight: 20,
+  },
+  statusMessage: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'flex-start',
+  },
+  statusMessageText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#1E40AF',
+    lineHeight: 17,
   },
   assetInfoStack: {
     gap: 10,
@@ -988,8 +1207,15 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     paddingHorizontal: 12,
     paddingVertical: 12,
-    minHeight: 58,
-    justifyContent: 'center',
+  },
+  assetMiniRowFirst: {
+    marginBottom: 8,
+  },
+  assetMiniRow: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF2F7',
+    paddingTop: 8,
   },
   assetInfoLabel: {
     fontSize: 11,
@@ -997,12 +1223,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 4,
+    marginBottom: 3,
   },
   assetInfoValue: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
+    lineHeight: 19,
   },
   detailAssetName: {
     fontSize: 15,
@@ -1016,49 +1243,16 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     letterSpacing: 0.2,
   },
-  assetMiniRow: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#EEF2F7',
-    paddingTop: 8,
-  },
-  imagePlaceholderCard: {
-    width: '100%',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  imagePlaceholder: {
-    width: '100%',
-    minHeight: 84,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#D7E0EA',
-    backgroundColor: '#EDF2F7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12,
-    marginTop: 6,
-  },
-  imagePlaceholderText: {
-    marginTop: 8,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-    textAlign: 'center',
-  },
   actionRow: {
     flexDirection: 'row',
     gap: 8,
     flexWrap: 'wrap',
   },
   statusActionButton: {
-    flex: 1,
-    minWidth: 90,
-    paddingVertical: 10,
+    flexGrow: 1,
+    minWidth: 100,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1072,8 +1266,8 @@ const styles = StyleSheet.create({
   cancelActionButton: {
     backgroundColor: '#4B5563',
   },
-  disabledActionButton: {
-    opacity: 0.7,
+  neutralActionButton: {
+    backgroundColor: '#1E3A5F',
   },
   actionButtonText: {
     color: '#FFFFFF',
@@ -1119,19 +1313,6 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     textAlign: 'center',
   },
-  sendButtonTextDisposal: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-    flexShrink: 1,
-    textAlign: 'center',
-  },
-  completedDateText: {
-    fontSize: 12,
-    color: '#166534',
-    fontWeight: '700',
-    marginTop: 4,
-  },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -1142,43 +1323,6 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 12,
     fontWeight: '500',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 360,
-    minHeight: 220,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCloseButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#334155',
-    textAlign: 'center',
-  },
-  spacer: {
-    height: 12,
   },
   fabButton: {
     position: 'absolute',
@@ -1204,5 +1348,150 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 40,
+  },
+  modalCardWrap: {
+    width: '100%',
+    maxHeight: '100%',
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    paddingTop: 16,
+    paddingBottom: 16,
+    maxHeight: '100%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBody: {
+    paddingHorizontal: 18,
+    paddingBottom: 8,
+  },
+  modalHelper: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  fieldBlock: {
+    marginBottom: 14,
+  },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  required: {
+    color: '#DC2626',
+  },
+  modalInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D8DEE8',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    minHeight: 46,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  modalTextArea: {
+    minHeight: 84,
+    paddingTop: 10,
+    textAlignVertical: 'top',
+  },
+  modalTwoCol: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalCol: {
+    flex: 1,
+  },
+  resultRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  resultChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#D8DEE8',
+    backgroundColor: '#FFFFFF',
+  },
+  resultChipActive: {
+    borderColor: '#1E3A5F',
+    backgroundColor: '#EFF6FF',
+  },
+  resultChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  resultChipTextActive: {
+    color: '#1E3A5F',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  modalConfirmBtn: {
+    flex: 1.4,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#E53935',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalConfirmText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

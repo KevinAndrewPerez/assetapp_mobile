@@ -46,7 +46,7 @@ export function QuickLink({
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.container}
-          pointerEvents="box"
+          pointerEvents="box-none"
         >
           {content}
         </LinearGradient>

@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  SafeAreaView,
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,10 +8,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import { fetchActivityTimeline, LifecycleEvent } from '../lib/assetService';
+import {
+  AUDIT_PAGE_SIZE,
+  fetchActivitySources,
+  fetchAuditLogsCount,
+  fetchAuditLogsPage,
+  LifecycleEvent,
+} from '../lib/assetService';
 import QRViewModal from '../components/QRViewModal';
 import NotificationBell from '@/components/notification-bell';
 
@@ -41,8 +48,12 @@ export default function ActivityLogScreen() {
   const [activeTag, setActiveTag] = useState('All');
   const [search, setSearch] = useState('');
   const [activities, setActivities] = useState<LifecycleEvent[]>([]);
+  const [auditCount, setAuditCount] = useState(0);
+  const [sourcesCount, setSourcesCount] = useState(0);
+  const [auditPagesLoaded, setAuditPagesLoaded] = useState(0);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // QR Modal State
@@ -56,23 +67,55 @@ export default function ActivityLogScreen() {
     setQrModalVisible(true);
   };
 
-  useEffect(() => {
-    const loadActivityTimeline = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const timeline = await fetchActivityTimeline(100);
-        setActivities(timeline);
-        setVisibleCount(PAGE_SIZE);
-      } catch (err) {
-        setError((err as Error).message || 'Unable to load activity timeline from Supabase');
-      } finally {
-        setLoading(false);
-      }
-    };
+  const mergeEvents = (prev: LifecycleEvent[], incoming: LifecycleEvent[]) => {
+    // Dedupe on the raw row's table+id so re-fetches and overlapping pages
+    // never produce duplicate cards.
+    const keyOf = (e: LifecycleEvent) => `${e.eventType}-${String(e.raw?.id ?? e.id)}`;
+    const seen = new Set(prev.map(keyOf));
+    return [...prev, ...incoming.filter((e) => !seen.has(keyOf(e)))];
+  };
 
-    loadActivityTimeline();
+  const loadActivityTimeline = useCallback(async () => {
+    try {
+      const [firstPage, sources, total] = await Promise.all([
+        fetchAuditLogsPage(0),
+        fetchActivitySources(),
+        fetchAuditLogsCount(),
+      ]);
+      setActivities(mergeEvents(sources, firstPage));
+      setAuditCount(total);
+      setSourcesCount(sources.length);
+      setAuditPagesLoaded(1);
+      setVisibleCount(PAGE_SIZE);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message || 'Unable to load activity timeline from Supabase');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    const bootstrap = async () => {
+      await loadActivityTimeline();
+    };
+    bootstrap();
+  }, [loadActivityTimeline]);
+
+  /** Pull the next audit_logs page straight from the database. */
+  const loadMoreAudits = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await fetchAuditLogsPage(auditPagesLoaded);
+      setActivities((prev) => mergeEvents(prev, next));
+      setAuditPagesLoaded((p) => p + 1);
+    } catch (err) {
+      setError((err as Error).message || 'Unable to load more activity');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const filteredActivities = useMemo(() => {
     let filtered: LifecycleEvent[];
@@ -95,6 +138,19 @@ export default function ActivityLogScreen() {
   }, [activeTag, activities, search]);
 
   const pagedActivities = filteredActivities.slice(0, visibleCount);
+
+  // Older audit pages live in the database until the user asks for them.
+  const remainingInDb = Math.max(0, auditCount - auditPagesLoaded * AUDIT_PAGE_SIZE);
+  const remainingLocal = Math.max(0, filteredActivities.length - visibleCount);
+
+  const handleLoadMore = async () => {
+    setVisibleCount((prev) => prev + PAGE_SIZE);
+    // When the locally loaded slice is running out, pull the next audit page
+    // from Supabase so "Load more" keeps working past the first 100 rows.
+    if (remainingInDb > 0 && remainingLocal <= PAGE_SIZE) {
+      await loadMoreAudits();
+    }
+  };
 
   const formatTimestamp = (ts: string) => {
     try {
@@ -163,6 +219,12 @@ export default function ActivityLogScreen() {
             );
           })}
         </ScrollView>
+
+        {!loading && !error && filteredActivities.length > 0 ? (
+          <Text style={styles.countText}>
+            Showing {pagedActivities.length} of {filteredActivities.length} loaded · {auditCount + sourcesCount} total records
+          </Text>
+        ) : null}
 
         {pagedActivities.map((activity, index) => (
           <View key={`${activity.id}-${index}`} style={styles.activityCard}>
@@ -238,17 +300,24 @@ export default function ActivityLogScreen() {
           </View>
         ) : null}
 
-        {filteredActivities.length > visibleCount && (
+        {(remainingLocal > 0 || remainingInDb > 0) && !loading ? (
           <TouchableOpacity
             style={styles.loadMoreButton}
             activeOpacity={0.8}
-            onPress={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+            onPress={handleLoadMore}
+            disabled={loadingMore}
           >
-            <Text style={styles.loadMoreText}>
-              Load more ({filteredActivities.length - visibleCount} remaining)
-            </Text>
+            {loadingMore ? (
+              <ActivityIndicator size="small" color="#0F172A" />
+            ) : (
+              <Text style={styles.loadMoreText}>
+                {remainingLocal > 0
+                  ? `Load more (${remainingLocal} more)`
+                  : `Load older records from database (${remainingInDb})`}
+              </Text>
+            )}
           </TouchableOpacity>
-        )}
+        ) : null}
       </ScrollView>
 
       <QRViewModal
@@ -336,6 +405,13 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: '#1E293B',
+  },
+  countText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+    marginBottom: 8,
+    textAlign: 'center',
   },
   loadMoreButton: {
     backgroundColor: '#1E3A5F',

@@ -10,8 +10,8 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import * as FileSystem from 'expo-file-system';
-import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import * as Sharing from 'expo-sharing';
 
 interface QRViewModalProps {
@@ -26,6 +26,11 @@ const { width } = Dimensions.get('window');
 export default function QRViewModal({ visible, onClose, value, title }: QRViewModalProps) {
   const qrRef = useRef<any>(null);
 
+  const getFileUri = () => {
+    const safeName = value.replace(/[^a-zA-Z0-9]/g, '_');
+    return `${FileSystem.cacheDirectory}QR_${safeName}.png`;
+  };
+
   const handleSaveToGallery = async () => {
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();
@@ -34,40 +39,37 @@ export default function QRViewModal({ visible, onClose, value, title }: QRViewMo
         return;
       }
 
-      if (qrRef.current && typeof qrRef.current.toDataURL === 'function') {
-        qrRef.current.toDataURL(async (dataURL: string) => {
+      if (!qrRef.current || typeof qrRef.current.toDataURL !== 'function') {
+        Alert.alert('Error', 'QR Code is not ready yet.');
+        return;
+      }
+
+      qrRef.current.toDataURL(async (dataURL: string) => {
+        try {
           if (!dataURL || typeof dataURL !== 'string') {
             Alert.alert('Error', 'Failed to generate QR code image.');
             return;
           }
 
-          const base64Data = dataURL.includes('base64,') 
-            ? dataURL.split('base64,')[1] 
+          const base64Data = dataURL.includes('base64,')
+            ? dataURL.split('base64,')[1]
             : dataURL;
 
-          const directory = FileSystem.Paths.cache?.uri || FileSystem.Paths.document?.uri;
-          
-          if (!directory) {
-            Alert.alert('Error', 'Storage directory not available. Please ensure app permissions are granted.');
-            return;
-          }
+          const fileUri = getFileUri();
 
-          try {
-            const filename = directory + 'QR_' + value.replace(/[^a-zA-Z0-9]/g, '_') + '.png';
-            await FileSystem.writeAsStringAsync(filename, base64Data, {
-              encoding: 'base64',
-            });
+          await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
 
-            const asset = await MediaLibrary.createAssetAsync(filename);
-            await MediaLibrary.createAlbumAsync('NUTrace QR Codes', asset, false);
-            
-            Alert.alert('Success', 'QR Code saved to gallery!');
-          } catch (err) {
-            console.error('FileSystem/MediaLibrary error:', err);
-            Alert.alert('Error', 'Failed to save to gallery.');
-          }
-        });
-      }
+          const asset = await MediaLibrary.createAssetAsync(fileUri);
+          await MediaLibrary.createAlbumAsync('NUTrace QR Codes', asset, false);
+
+          Alert.alert('Success', 'QR Code saved to gallery!');
+        } catch (err) {
+          console.error('FileSystem/MediaLibrary error:', err);
+          Alert.alert('Error', 'Failed to save to gallery.');
+        }
+      });
     } catch (error) {
       console.error('Error saving QR code:', error);
       Alert.alert('Error', 'Failed to save QR code to gallery.');
@@ -76,41 +78,38 @@ export default function QRViewModal({ visible, onClose, value, title }: QRViewMo
 
   const handleShare = async () => {
     try {
-      if (qrRef.current && typeof qrRef.current.toDataURL === 'function') {
-        qrRef.current.toDataURL(async (dataURL: string) => {
+      if (!qrRef.current || typeof qrRef.current.toDataURL !== 'function') {
+        Alert.alert('Error', 'QR Code is not ready yet.');
+        return;
+      }
+
+      qrRef.current.toDataURL(async (dataURL: string) => {
+        try {
           if (!dataURL || typeof dataURL !== 'string') {
             Alert.alert('Error', 'Failed to generate QR code image.');
             return;
           }
 
-          const base64Data = dataURL.includes('base64,') 
-            ? dataURL.split('base64,')[1] 
+          const base64Data = dataURL.includes('base64,')
+            ? dataURL.split('base64,')[1]
             : dataURL;
 
-          const directory = FileSystem.Paths.cache?.uri || FileSystem.Paths.document?.uri;
-          
-          if (!directory) {
-            Alert.alert('Error', 'Cache directory not available. Please ensure app permissions are granted.');
-            return;
-          }
+          const fileUri = getFileUri();
 
-          try {
-            const filename = directory + 'QR_' + value.replace(/[^a-zA-Z0-9]/g, '_') + '.png';
-            await FileSystem.writeAsStringAsync(filename, base64Data, {
-              encoding: 'base64',
-            });
+          await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
 
-            if (await Sharing.isAvailableAsync()) {
-              await Sharing.shareAsync(filename);
-            } else {
-              Alert.alert('Error', 'Sharing is not available on this device.');
-            }
-          } catch (err) {
-            console.error('FileSystem/Sharing error:', err);
-            Alert.alert('Error', 'Failed to share QR code.');
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(fileUri);
+          } else {
+            Alert.alert('Error', 'Sharing is not available on this device.');
           }
-        });
-      }
+        } catch (err) {
+          console.error('FileSystem/Sharing error:', err);
+          Alert.alert('Error', 'Failed to share QR code.');
+        }
+      });
     } catch (error) {
       console.error('Error sharing QR code:', error);
       Alert.alert('Error', 'Failed to share QR code.');
@@ -146,16 +145,16 @@ export default function QRViewModal({ visible, onClose, value, title }: QRViewMo
           <Text style={styles.qrValueText}>{value}</Text>
 
           <View style={styles.actionButtons}>
-            <TouchableOpacity 
-              style={[styles.actionButton, styles.saveButton]} 
+            <TouchableOpacity
+              style={[styles.actionButton, styles.saveButton]}
               onPress={handleSaveToGallery}
             >
               <MaterialCommunityIcons name="download" size={20} color="#FFFFFF" />
               <Text style={styles.actionButtonText}>Save to Gallery</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.actionButton, styles.shareButton]} 
+            <TouchableOpacity
+              style={[styles.actionButton, styles.shareButton]}
               onPress={handleShare}
             >
               <MaterialCommunityIcons name="share-variant" size={20} color="#0F172A" />

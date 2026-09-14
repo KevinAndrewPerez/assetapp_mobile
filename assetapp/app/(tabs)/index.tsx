@@ -4,9 +4,9 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
@@ -143,7 +143,7 @@ export default function App() {
     {
       title: 'Lifecycle Eval',
       subtitle: 'Asset lifespan & maintenance',
-      icon: 'clock-alarm',
+      icon: 'clock-alert',
       onPress: () => router.push('/lifespan'),
       gradientColors: ['#FBBF24', '#F59E0B'],
       titleColor: '#0C134F',

@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,24 +12,52 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchAssets, AssetSummary } from '@/lib/assetService';
+import { resolveActingUserLabel } from '@/lib/actorService';
+import {
+  EvaluationAction,
+  runAssetEvaluation,
+  runAssetEvaluationCheck,
+} from '@/lib/maintenanceService';
 import { getStoredUser } from '@/lib/userService';
 
 const NAVY = '#0C134F';
-const NAVY_MID = '#1E3A5F';
-const GOLD = '#FBBF24';
 const GOLD_LIGHT = '#F59E0B';
+
+/** The lifespan evaluation actions available on this screen. */
+type LifespanAction = 'return' | 'repair' | 'replacement' | 'disposal' | 'extend';
+
+/** Each screen action maps onto the shared evaluation action of the service. */
+const SERVICE_ACTION: Record<LifespanAction, EvaluationAction> = {
+  return: 'return_active',
+  repair: 'send_repair',
+  replacement: 'recommend_replacement',
+  disposal: 'proceed_disposal',
+  extend: 'extend_lifespan_pullout',
+};
+
+/**
+ * Only these lifecycle statuses take part in the lifespan evaluation:
+ *   • Active       → moved to For Checking (evaluation is required)
+ *   • For Checking → already queued, still needs the office's decision
+ *   • Pullout      → status never changes; extend the lifespan or dispose
+ * A For Repair / For Replacement / Disposal / Acquired asset waits until it is
+ * back to Active or Pullout, even when its lifespan has already expired.
+ * ("pulled out" is the normalized form of "Pullout" from fetchAssets.)
+ */
+const EVALUABLE_STATUSES = ['active', 'for checking', 'pullout', 'pulled out'];
+
+const isPulloutStatusKey = (key: string) => key === 'pullout' || key === 'pulled out';
 
 export default function LifespanScreen() {
   const router = useRouter();
-  const [assets, setAssets] = useState<(AssetSummary & { expirationDate?: string; lifespanMonths?: number | null })[]>([]);
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedAsset, setSelectedAsset] = useState<AssetSummary & { expirationDate?: string; lifespanMonths?: number | null } | null>(null);
-  const [actionModal, setActionModal] = useState<'return' | 'repair' | 'replacement' | 'disposal' | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<AssetSummary | null>(null);
+  const [actionModal, setActionModal] = useState<LifespanAction | null>(null);
   const [extending, setExtending] = useState(false);
   const [extendMonths, setExtendMonths] = useState('');
   const [evalNotes, setEvalNotes] = useState('');
@@ -44,18 +71,21 @@ export default function LifespanScreen() {
         setError('User session not found');
         return;
       }
-      const allAssets = await fetchAssets();
-      const enriched: typeof assets = allAssets.map(a => {
-        // Parse expiration date from various possible column names
-        const expRaw = (a as any).expiration_date ?? (a as any).expirationDate ?? (a as any).expiration_date ?? null;
-        const lifeRaw = (a as any).lifespan_months ?? (a as any).lifespanMonths ?? null;
-        return {
-          ...a,
-          expirationDate: expRaw ? String(expRaw) : undefined,
-          lifespanMonths: lifeRaw != null ? Number(lifeRaw) : undefined,
-        };
-      });
-      setAssets(enriched);
+
+      // Lifespan monitor (web parity): an expired **Active** asset moves to
+      // "For Checking" so it cannot be handed out before evaluation. Pullout
+      // assets are never touched here — they keep their status until the office
+      // extends the lifespan or disposes of them.
+      try {
+        await runAssetEvaluationCheck({ actorId: user.id ?? null });
+      } catch (transitionErr) {
+        console.warn('Lifespan auto-transition failed:', transitionErr);
+      }
+
+      // fetchAssets now carries expirationDate / lifespanMonths / purchasePrice
+      // directly on every row (they used to be dropped, which left this queue
+      // permanently empty).
+      setAssets(await fetchAssets());
       setError(null);
     } catch (err) {
       setError((err as Error).message || 'Unable to load assets');
@@ -65,7 +95,10 @@ export default function LifespanScreen() {
   }, []);
 
   useEffect(() => {
-    load();
+    const bootstrap = async () => {
+      await load();
+    };
+    bootstrap();
   }, [load]);
 
   const onRefresh = async () => {
@@ -74,13 +107,21 @@ export default function LifespanScreen() {
     setRefreshing(false);
   };
 
-  const expiredAssets = assets.filter(a => {
-    if (!a.expirationDate) return false;
-    return new Date(a.expirationDate) < new Date();
-  });
+  const todayIso = new Date().toISOString().slice(0, 10);
 
-  const activeAssets = assets.filter(a => a.status === 'Active');
-  const forCheckingAssets = assets.filter(a => a.status === 'For Checking');
+  const statusKey = (asset: { status?: string | null }) =>
+    String(asset.status ?? '').trim().toLowerCase();
+
+  /** Expired to the same day-granularity the dashboard counters use. */
+  const isExpired = (asset: { expirationDate?: string | null }) =>
+    !!asset.expirationDate && String(asset.expirationDate).slice(0, 10) <= todayIso;
+
+  /** The evaluation queue: expired assets in an evaluable lifecycle status. */
+  const evaluationAssets = assets.filter(
+    (asset) => isExpired(asset) && EVALUABLE_STATUSES.includes(statusKey(asset)),
+  );
+  const forCheckingInQueue = evaluationAssets.filter((asset) => statusKey(asset) === 'for checking');
+  const pulloutInQueue = evaluationAssets.filter((asset) => isPulloutStatusKey(statusKey(asset)));
 
   const formatDate = (d?: string | null) => {
     if (!d) return 'N/A';
@@ -95,12 +136,12 @@ export default function LifespanScreen() {
     }
   };
 
-  const daysExpired = (expDate?: string) => {
+  const daysExpired = (expDate?: string | null) => {
     if (!expDate) return 0;
     return Math.floor((new Date().getTime() - new Date(expDate + 'T00:00:00').getTime()) / 86400000);
   };
 
-  const openActionModal = (asset: typeof selectedAsset, action: 'return' | 'repair' | 'replacement' | 'disposal') => {
+  const openActionModal = (asset: typeof selectedAsset, action: LifespanAction) => {
     setSelectedAsset(asset);
     setActionModal(action);
     setExtending(false);
@@ -109,344 +150,201 @@ export default function LifespanScreen() {
     setDisposalChecked(false);
   };
 
-  const handleReturnToActive = async () => {
-    if (!selectedAsset) return;
-    setProcessing(true);
-    try {
-      const user = await getStoredUser();
-      const now = new Date().toISOString();
-      const extensionMonths = extending ? Number(extendMonths) || 0 : 0;
-      let newExpiration = selectedAsset.expirationDate;
+  /**
+   * Every decision on this screen runs through the shared evaluation service, so
+   * the mobile follows exactly the same rules as the web admin's evaluate
+   * endpoint: a pulled-out asset keeps Pullout and can only have its lifespan
+   * extended or be disposed of, while everything else takes a full evaluation
+   * decision (return to active, repair, replacement or disposal).
+   */
+  const runDecision = async (decision: LifespanAction) => {
+    if (!selectedAsset || processing) return;
 
-      if (extending && extensionMonths > 0) {
-        const d = new Date(newExpiration || new Date());
-        d.setMonth(d.getMonth() + extensionMonths);
-        newExpiration = d.toISOString().slice(0, 10);
-      }
-
-      const { error: updateError } = await fetchAssets().then(() => {
-        // Use supabase directly for the update
-        return import('@/lib/supabase').then(({ supabase }) => {
-          return supabase
-            .from('assets')
-            .update({
-              Lifecycle_Status: 'Active',
-              expiration_date: newExpiration,
-              updated_at: now,
-            })
-            .eq('id', selectedAsset.id);
-        });
-      });
-
-      if (updateError) throw updateError;
-
-      Alert.alert('Success', `Asset returned to Active status.${extending ? ` Extended by ${extensionMonths} months.` : ''}`);
-      setActionModal(null);
-      setSelectedAsset(null);
-      await load();
-    } catch (err) {
-      Alert.alert('Error', (err as Error).message || 'Failed to return asset to active');
-    } finally {
-      setProcessing(false);
+    const months = decision === 'return' || decision === 'extend' ? Number(extendMonths) || 0 : 0;
+    if (decision === 'extend' && months < 1) {
+      Alert.alert('Months required', 'Enter at least 1 month to extend the lifespan by.');
+      return;
     }
-  };
-
-  const handleSendForRepair = async () => {
-    if (!selectedAsset) return;
-    setProcessing(true);
-    try {
-      const user = await getStoredUser();
-      const now = new Date().toISOString();
-      const { error: updateError } = await import('@/lib/supabase').then(({ supabase }) =>
-        supabase
-          .from('assets')
-          .update({
-            Lifecycle_Status: 'For Repair',
-            updated_at: now,
-          })
-          .eq('id', selectedAsset.id)
-      );
-      if (updateError) throw updateError;
-
-      // Log the repair event
-      const { error: auditError } = await import('@/lib/supabase').then(({ supabase }) =>
-        supabase.from('repairs').insert([{
-          Assets_id: selectedAsset.id,
-          Repair_Description: evalNotes || 'Sent for repair evaluation',
-          Repair_Date: now,
-          status: 'Pending',
-          created_at: now,
-          updated_at: now,
-        }])
-      );
-      if (auditError) console.warn('Audit log failed:', auditError);
-
-      Alert.alert('Success', 'Asset sent for repair. Maintenance evaluation will be scheduled.');
-      setActionModal(null);
-      setSelectedAsset(null);
-      await load();
-    } catch (err) {
-      Alert.alert('Error', (err as Error).message || 'Failed to send asset for repair');
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleRecommendReplacement = async () => {
-    if (!selectedAsset) return;
-    setProcessing(true);
-    try {
-      const user = await getStoredUser();
-      const now = new Date().toISOString();
-      const { error: updateError } = await import('@/lib/supabase').then(({ supabase }) =>
-        supabase
-          .from('assets')
-          .update({
-            Lifecycle_Status: 'For Replacement',
-            updated_at: now,
-          })
-          .eq('id', selectedAsset.id)
-      );
-      if (updateError) throw updateError;
-
-      const { error: auditError } = await import('@/lib/supabase').then(({ supabase }) =>
-        supabase.from('repairs').insert([{
-          Assets_id: selectedAsset.id,
-          Repair_Description: evalNotes || 'Replacement recommended',
-          Repair_Date: now,
-          status: 'Pending',
-          created_at: now,
-          updated_at: now,
-        }])
-      );
-      if (auditError) console.warn('Audit log failed:', auditError);
-
-      Alert.alert('Success', 'Replacement recommendation submitted. A replacement request will be initiated.');
-      setActionModal(null);
-      setSelectedAsset(null);
-      await load();
-    } catch (err) {
-      Alert.alert('Error', (err as Error).message || 'Failed to recommend replacement');
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleProceedWithDisposal = async () => {
-    if (!selectedAsset) return;
-    if (!disposalChecked) {
+    if (decision === 'disposal' && !disposalChecked) {
       Alert.alert('Confirmation Required', 'Please confirm that this asset should be disposed.');
       return;
     }
+
     setProcessing(true);
     try {
-      const user = await getStoredUser();
-      const now = new Date().toISOString();
-      const d = new Date();
-      const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const actor = await resolveActingUserLabel();
+      const result = await runAssetEvaluation({
+        assetId: selectedAsset.id,
+        action: SERVICE_ACTION[decision],
+        notes: evalNotes,
+        // `return` may extend the lifespan, `extend` must.
+        extensionMonths: decision === 'return' ? (extending ? months : 0) : months,
+        actorId: actor.id,
+        actorLabel: actor.label,
+      });
 
-      const { error: updateError } = await import('@/lib/supabase').then(({ supabase }) =>
-        supabase
-          .from('assets')
-          .update({
-            Lifecycle_Status: 'Disposal',
-            updated_at: now,
-          })
-          .eq('id', selectedAsset.id)
-      );
-      if (updateError) throw updateError;
+      const messages: Record<LifespanAction, string> = {
+        return: `Asset returned to Active status.${
+          extending && months > 0 ? ` Lifespan extended by ${months} months.` : ''
+        }`,
+        repair: 'Asset sent for repair. A pending repair record was created.',
+        replacement:
+          'Replacement recommendation submitted. A replacement record was created for this asset.',
+        disposal: 'Asset marked for disposal. The disposal process has been initiated.',
+        extend: `Lifespan extended to ${formatDate(
+          result.expirationDate ?? null,
+        )}.\nThe asset remains in Pullout status.`,
+      };
 
-      const { error: disposalError } = await import('@/lib/supabase').then(({ supabase }) =>
-        supabase.from('disposals').insert([{
-          Asset_id: selectedAsset.id,
-          notes: evalNotes || 'Disposed via lifespan evaluation',
-          Description: 'Disposal',
-          disposal_date: dateOnly,
-          disposal_reason: evalNotes || 'End of operational lifespan',
-          Approve_by: String(user?.email || user?.full_name || 'Admin'),
-          created_at: now,
-          updated_at: now,
-        }])
-      );
-      if (disposalError) throw disposalError;
-
-      Alert.alert('Success', 'Asset marked for disposal. The disposal process has been initiated.');
+      Alert.alert('Success', messages[decision]);
       setActionModal(null);
       setSelectedAsset(null);
       await load();
     } catch (err) {
-      Alert.alert('Error', (err as Error).message || 'Failed to proceed with disposal');
+      Alert.alert('Error', (err as Error).message || 'Failed to update the asset');
     } finally {
       setProcessing(false);
     }
   };
 
   const renderAssetCard = (asset: typeof assets[0], index: number) => {
-    const isExpired = asset.expirationDate ? new Date(asset.expirationDate) < new Date() : false;
     const days = daysExpired(asset.expirationDate);
-    const isForChecking = asset.status === 'For Checking';
+    const expired = isExpired(asset);
+    const key = statusKey(asset);
+    const isForChecking = key === 'for checking';
+    const isPullout = isPulloutStatusKey(key);
+    const statusLabel = isForChecking
+      ? 'For Checking'
+      : isPullout
+        ? 'Pulled Out'
+        : asset.status || (expired ? 'Expired' : 'Active');
+    const statusTone = isForChecking
+      ? { bg: '#FFFBEB', fg: '#B45309' }
+      : isPullout
+        ? { bg: '#EFF6FF', fg: '#0369A1' }
+        : expired
+          ? { bg: '#FEF2F2', fg: '#B91C1C' }
+          : { bg: '#F0FDF4', fg: '#047857' };
+    const detailCell = (label: string, value: string) => (
+      <View style={styles.detailCell} key={label}>
+        <Text style={styles.detailLabel}>{label}</Text>
+        <Text style={styles.detailValue} numberOfLines={2}>{value || 'N/A'}</Text>
+      </View>
+    );
 
     return (
       <View key={asset.id || index} style={styles.assetCard}>
-        <View style={styles.assetHeader}>
-          <View style={styles.assetTitleRow}>
+        <View style={styles.assetTitleRow}>
+          <View style={styles.assetTitleBlock}>
             <Text style={styles.assetName} numberOfLines={1}>{asset.title}</Text>
-            <View style={[
-              styles.statusBadge,
-              { backgroundColor: isForChecking ? '#FFFBEB' : isExpired ? '#FEF2F2' : '#F0FDF4' }
-            ]}>
-              <Text style={[
-                styles.statusBadgeText,
-                { color: isForChecking ? '#F59E0B' : isExpired ? '#EF4444' : '#10B981' }
-              ]}>
-                {isForChecking ? 'For Checking' : asset.status || 'Active'}
-              </Text>
-            </View>
+            <Text style={styles.assetCode} numberOfLines={1}>{asset.assetId}</Text>
           </View>
-          <Text style={styles.assetCode}>{asset.assetId}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: statusTone.bg }]}>
+            <Text style={[styles.statusBadgeText, { color: statusTone.fg }]}>{statusLabel}</Text>
+          </View>
         </View>
 
         <View style={styles.detailGrid}>
-          <View style={styles.detailItem}>
-            <MaterialCommunityIcons name="calendar-check-outline" size={14} color="#94A3B8" />
-            <Text style={styles.detailLabel}>ACQUISITION DATE</Text>
-            <Text style={styles.detailValue}>{formatDate(asset.acquisitionDate)}</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <MaterialCommunityIcons name="cash-multiple-outline" size={14} color="#94A3B8" />
-            <Text style={styles.detailLabel}>PURCHASE PRICE</Text>
-            <Text style={styles.detailValue}>
-              {((asset as any).purchase_Price || (asset as any).purchasePrice)
-                ? `₱${Number((asset as any).purchase_Price || (asset as any).purchasePrice).toLocaleString('en-PH')}`
-                : 'N/A'}
+          {detailCell('Acquired', formatDate(asset.acquisitionDate))}
+          {detailCell(
+            'Purchase Price',
+            asset.purchasePrice != null ? `₱${Number(asset.purchasePrice).toLocaleString('en-PH')}` : '',
+          )}
+          {detailCell('Serial No.', asset.serialNumber || '')}
+          {detailCell('Location', asset.location || '')}
+          {detailCell('Category', asset.category || '')}
+          {detailCell('Assigned To', asset.custodian || '')}
+        </View>
+
+        <View style={[styles.lifecycleBox, expired ? styles.lifecycleBoxExpired : null]}>
+          <View style={styles.lifecycleRow}>
+            <Text style={styles.lifecycleLabel}>Lifespan</Text>
+            <Text style={styles.lifecycleValue}>
+              {asset.lifespanMonths ? `${asset.lifespanMonths} months` : 'N/A'}
             </Text>
           </View>
-          <View style={styles.detailItem}>
-            <MaterialCommunityIcons name="barcode-outline" size={14} color="#94A3B8" />
-            <Text style={styles.detailLabel}>SERIAL NUMBER</Text>
-            <Text style={styles.detailValue}>{asset.serialNumber || 'N/A'}</Text>
+          <View style={styles.lifecycleRow}>
+            <Text style={styles.lifecycleLabel}>Expires</Text>
+            <Text style={[styles.lifecycleValue, expired ? styles.lifecycleValueExpired : null]}>
+              {formatDate(asset.expirationDate)}
+            </Text>
           </View>
-          <View style={styles.detailItem}>
-            <MaterialCommunityIcons name="map-marker-outline" size={14} color="#94A3B8" />
-            <Text style={styles.detailLabel}>LOCATION</Text>
-            <Text style={styles.detailValue}>{asset.location || 'N/A'}</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <MaterialCommunityIcons name="category-outline" size={14} color="#94A3B8" />
-            <Text style={styles.detailLabel}>CATEGORY</Text>
-            <Text style={styles.detailValue}>{asset.category || 'N/A'}</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <MaterialCommunityIcons name="account-outline" size={14} color="#94A3B8" />
-            <Text style={styles.detailLabel}>ASSIGNED TO</Text>
-            <Text style={styles.detailValue}>{asset.custodian || 'N/A'}</Text>
-          </View>
+          {expired ? (
+            <Text style={styles.lifecycleOverdue}>
+              Expired {days} day{days !== 1 ? 's' : ''} ago — evaluation required
+            </Text>
+          ) : null}
         </View>
 
-        <View style={[styles.lifecycleBox, { borderLeftColor: isExpired ? '#EF4444' : '#FBBF24' }]}>
-          <View style={styles.lifecycleHeader}>
-            <MaterialCommunityIcons name="clock-outline" size={16} color={isExpired ? '#EF4444' : '#F59E0B'} />
-            <Text style={[styles.lifecycleLabel, { color: isExpired ? '#EF4444' : '#F59E0B' }]}>LIFECYCLE</Text>
-          </View>
-          <View style={styles.lifecycleGrid}>
-            <View style={styles.lifecycleItem}>
-              <Text style={styles.lifecycleDetailLabel}>LIFESPAN DURATION</Text>
-              <Text style={styles.lifecycleDetailValue}>{asset.lifespanMonths ? `${asset.lifespanMonths} months` : 'N/A'}</Text>
-            </View>
-            <View style={styles.lifecycleItem}>
-              <Text style={styles.lifecycleDetailLabel}>EXPIRATION DATE</Text>
-              <Text style={[
-                styles.lifecycleDetailValue,
-                { color: isExpired ? '#EF4444' : '#1E293B' }
-              ]}>
-                {formatDate(asset.expirationDate)}
-                {isExpired ? `\n(${days} day${days !== 1 ? 's' : ''} expired)` : ''}
+        {isPullout ? (
+          <>
+            <View style={styles.pulloutNotice}>
+              <MaterialCommunityIcons name="information-outline" size={15} color="#0369A1" />
+              <Text style={styles.pulloutNoticeText}>
+                Stays in Pullout — extend its lifespan or dispose of it. It cannot return to Active from here.
               </Text>
             </View>
+            <View style={styles.actionGrid}>
+              <TouchableOpacity
+                style={[styles.actionChip, styles.extendChip]}
+                onPress={() => openActionModal(asset, 'extend')}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name="calendar-plus" size={17} color="#0369A1" />
+                <Text style={styles.extendChipText}>Extend Lifespan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionChip, styles.disposalChip]}
+                onPress={() => openActionModal(asset, 'disposal')}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name="trash-can-outline" size={17} color="#B91C1C" />
+                <Text style={styles.disposalChipText}>Dispose</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <View style={styles.actionGrid}>
+            <TouchableOpacity
+              style={[styles.actionChip, styles.returnChip]}
+              onPress={() => openActionModal(asset, 'return')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="check-circle-outline" size={17} color="#047857" />
+              <Text style={styles.returnChipText}>Return to Active</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionChip, styles.repairChip]}
+              onPress={() => openActionModal(asset, 'repair')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="wrench-outline" size={17} color="#B45309" />
+              <Text style={styles.repairChipText}>Send for Repair</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionChip, styles.replacementChip]}
+              onPress={() => openActionModal(asset, 'replacement')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="sync" size={17} color="#1D4ED8" />
+              <Text style={styles.replacementChipText}>Replacement</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionChip, styles.disposalChip]}
+              onPress={() => openActionModal(asset, 'disposal')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons name="trash-can-outline" size={17} color="#B91C1C" />
+              <Text style={styles.disposalChipText}>Disposal</Text>
+            </TouchableOpacity>
           </View>
-        </View>
-
-        <View style={styles.actionButtonsRow}>
-          {isForChecking ? (
-            <>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.returnButton]}
-                onPress={() => openActionModal(asset, 'return')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="check-circle" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Return to Active</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.repairButton]}
-                onPress={() => openActionModal(asset, 'repair')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="wrench" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Send for Repair</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.replacementButton]}
-                onPress={() => openActionModal(asset, 'replacement')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="sync" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Recommend Replacement</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.disposalButton]}
-                onPress={() => openActionModal(asset, 'disposal')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="trash-can" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Proceed with Disposal</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.returnButton]}
-                onPress={() => openActionModal(asset, 'return')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="check-circle" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Return to Active</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.repairButton]}
-                onPress={() => openActionModal(asset, 'repair')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="wrench" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Send for Repair</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.replacementButton]}
-                onPress={() => openActionModal(asset, 'replacement')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="sync" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Recommend Replacement</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.disposalButton]}
-                onPress={() => openActionModal(asset, 'disposal')}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="trash-can" size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>Proceed with Disposal</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+        )}
       </View>
     );
   };
 
   const renderActionModal = () => {
     if (!actionModal || !selectedAsset) return null;
-
-    const isExpired = selectedAsset.expirationDate ? new Date(selectedAsset.expirationDate) < new Date() : false;
 
     return (
       <View style={styles.modalOverlay}>
@@ -457,6 +355,7 @@ export default function LifespanScreen() {
               {actionModal === 'repair' && 'Send Asset for Repair'}
               {actionModal === 'replacement' && 'Recommend Replacement'}
               {actionModal === 'disposal' && 'Proceed with Disposal'}
+              {actionModal === 'extend' && 'Extend Asset Lifespan'}
             </Text>
             <TouchableOpacity onPress={() => setActionModal(null)} activeOpacity={0.7}>
               <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
@@ -473,7 +372,7 @@ export default function LifespanScreen() {
                 </View>
                 <View style={styles.checkboxRow}>
                   <View style={[styles.checkbox, { borderColor: extending ? '#10B981' : '#CBD5E1' }]}>
-                    {extending && <MaterialCommunityIcons name="check-box" size={16} color="#10B981" />}
+                    {extending && <MaterialCommunityIcons name="checkbox-marked" size={16} color="#10B981" />}
                   </View>
                   <View style={styles.checkboxLabel}>
                     <Text style={styles.checkboxLabelText}>Extend asset lifespan</Text>
@@ -548,12 +447,12 @@ export default function LifespanScreen() {
                   <MaterialCommunityIcons name="alert-circle" size={20} color="#EF4444" />
                   <View style={styles.warningContent}>
                     <Text style={styles.warningTitle}>Warning: Asset will transition to disposal process.</Text>
-                    <Text style={styles.warningText}>This action marks the end of the asset's operational lifespan.</Text>
+                    <Text style={styles.warningText}>This action marks the end of the asset&apos;s operational lifespan.</Text>
                   </View>
                 </View>
                 <View style={styles.checkboxRow}>
                   <View style={[styles.checkbox, { borderColor: disposalChecked ? '#EF4444' : '#CBD5E1' }]}>
-                    {disposalChecked && <MaterialCommunityIcons name="check-box" size={16} color="#EF4444" />}
+                    {disposalChecked && <MaterialCommunityIcons name="checkbox-marked" size={16} color="#EF4444" />}
                   </View>
                   <Text style={styles.checkboxLabelText}>I confirm this asset should be disposed</Text>
                 </View>
@@ -562,6 +461,49 @@ export default function LifespanScreen() {
                   <TextInput
                     style={styles.textArea}
                     placeholder="Reason for disposal..."
+                    placeholderTextColor="#94A3B8"
+                    value={evalNotes}
+                    onChangeText={setEvalNotes}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+                </View>
+              </>
+            )}
+
+            {actionModal === 'extend' && (
+              <>
+                <View style={styles.infoBoxBlue}>
+                  <Text style={styles.infoBoxText}>
+                    The asset was pulled out, so it stays in <Text style={styles.boldBlue}>Pullout</Text> status. Only the
+                    expiration date moves forward, and it can never return to Active from here.
+                  </Text>
+                </View>
+                {selectedAsset.expirationDate ? (
+                  <Text style={styles.currentExpiry}>
+                    Current expiration date: {formatDate(selectedAsset.expirationDate)}
+                  </Text>
+                ) : null}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>ADDITIONAL LIFESPAN MONTHS *</Text>
+                  <View style={styles.extendInputRow}>
+                    <TextInput
+                      style={styles.extendInput}
+                      placeholder="Enter months"
+                      placeholderTextColor="#94A3B8"
+                      value={extendMonths}
+                      onChangeText={setExtendMonths}
+                      keyboardType="numeric"
+                    />
+                    <Text style={styles.extendUnit}>months</Text>
+                  </View>
+                </View>
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>NOTES (OPTIONAL)</Text>
+                  <TextInput
+                    style={styles.textArea}
+                    placeholder="Why is the lifespan being extended?"
                     placeholderTextColor="#94A3B8"
                     value={evalNotes}
                     onChangeText={setEvalNotes}
@@ -585,7 +527,7 @@ export default function LifespanScreen() {
             {actionModal === 'return' && (
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnGreen]}
-                onPress={handleReturnToActive}
+                onPress={() => runDecision('return')}
                 disabled={processing}
               >
                 {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
@@ -597,7 +539,7 @@ export default function LifespanScreen() {
             {actionModal === 'repair' && (
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnGold]}
-                onPress={handleSendForRepair}
+                onPress={() => runDecision('repair')}
                 disabled={processing}
               >
                 {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
@@ -609,7 +551,7 @@ export default function LifespanScreen() {
             {actionModal === 'replacement' && (
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnBlue]}
-                onPress={handleRecommendReplacement}
+                onPress={() => runDecision('replacement')}
                 disabled={processing}
               >
                 {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
@@ -621,13 +563,25 @@ export default function LifespanScreen() {
             {actionModal === 'disposal' && (
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnRed]}
-                onPress={handleProceedWithDisposal}
+                onPress={() => runDecision('disposal')}
                 disabled={processing}
               >
                 {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
                   <MaterialCommunityIcons name="trash-can" size={20} color="#FFFFFF" />
                 )}
                 <Text style={styles.modalBtnRedText}>Proceed with Disposal</Text>
+              </TouchableOpacity>
+            )}
+            {actionModal === 'extend' && (
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnBlue]}
+                onPress={() => runDecision('extend')}
+                disabled={processing}
+              >
+                {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+                  <MaterialCommunityIcons name="calendar-plus" size={20} color="#FFFFFF" />
+                )}
+                <Text style={styles.modalBtnBlueText}>Extend Lifespan</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -664,55 +618,54 @@ export default function LifespanScreen() {
               <Text style={styles.retryText}>Try again</Text>
             </TouchableOpacity>
           </View>
-        ) : assets.length === 0 ? (
+        ) : evaluationAssets.length === 0 ? (
           <View style={styles.centerState}>
-            <MaterialCommunityIcons name="calendar-alert-outline" size={44} color="#94A3B8" />
-            <Text style={styles.emptyTitle}>No assets found</Text>
-            <Text style={styles.emptyText}>Assets with lifecycle data will appear here.</Text>
+            <MaterialCommunityIcons name="calendar-check-outline" size={44} color="#10B981" />
+            <Text style={styles.emptyTitle}>Nothing to evaluate</Text>
+            <Text style={styles.emptyText}>
+              Assets show up here once an Active or Pullout asset passes its expected lifespan. Assets in another
+              status wait until they are back to Active or Pullout.
+            </Text>
           </View>
         ) : (
           <>
             {/* Summary Cards */}
             <View style={styles.summaryRow}>
-              <View style={[styles.summaryCard, { backgroundColor: '#F0FDF4' }]}>
-                <MaterialCommunityIcons name="check-circle" size={24} color="#10B981" />
-                <Text style={styles.summaryValue}>{activeAssets.length}</Text>
-                <Text style={styles.summaryLabel}>Active</Text>
+              <View style={styles.summaryCard}>
+                <View style={[styles.summaryIcon, { backgroundColor: '#FEF2F2' }]}>
+                  <MaterialCommunityIcons name="clock-alert-outline" size={19} color="#EF4444" />
+                </View>
+                <Text style={styles.summaryValue}>{evaluationAssets.length}</Text>
+                <Text style={styles.summaryLabel}>To Evaluate</Text>
               </View>
-              <View style={[styles.summaryCard, { backgroundColor: '#FFFBEB' }]}>
-                <MaterialCommunityIcons name="alert" size={24} color="#F59E0B" />
-                <Text style={styles.summaryValue}>{forCheckingAssets.length}</Text>
+              <View style={styles.summaryCard}>
+                <View style={[styles.summaryIcon, { backgroundColor: '#FFFBEB' }]}>
+                  <MaterialCommunityIcons name="alert" size={19} color="#F59E0B" />
+                </View>
+                <Text style={styles.summaryValue}>{forCheckingInQueue.length}</Text>
                 <Text style={styles.summaryLabel}>For Checking</Text>
               </View>
-              <View style={[styles.summaryCard, { backgroundColor: '#FEF2F2' }]}>
-                <MaterialCommunityIcons name="alert-circle" size={24} color="#EF4444" />
-                <Text style={styles.summaryValue}>{expiredAssets.length}</Text>
-                <Text style={styles.summaryLabel}>Expired</Text>
+              <View style={styles.summaryCard}>
+                <View style={[styles.summaryIcon, { backgroundColor: '#EFF6FF' }]}>
+                  <MaterialCommunityIcons name="arrow-up-box" size={19} color="#0EA5E9" />
+                </View>
+                <Text style={styles.summaryValue}>{pulloutInQueue.length}</Text>
+                <Text style={styles.summaryLabel}>Pullout</Text>
               </View>
             </View>
 
-            {/* Expired Assets Section */}
-            {expiredAssets.length > 0 && (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <MaterialCommunityIcons name="alert-circle" size={18} color="#EF4444" />
-                  <Text style={styles.sectionTitle}>Expired Assets — Evaluation Required</Text>
-                </View>
-                {expiredAssets.map(asset => renderAssetCard(asset, 0))}
+            {/* Lifespan evaluation queue */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <MaterialCommunityIcons name="alert-circle" size={18} color="#EF4444" />
+                <Text style={styles.sectionTitle}>Lifespan Requiring Evaluation</Text>
               </View>
-            )}
-
-            {/* Active / For Checking Assets */}
-            {(activeAssets.length > 0 || forCheckingAssets.length > 0) && (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <MaterialCommunityIcons name="cog-outline" size={18} color={GOLD} />
-                  <Text style={styles.sectionTitle}>Asset Evaluation</Text>
-                </View>
-                {activeAssets.map(asset => renderAssetCard(asset, 0))}
-                {forCheckingAssets.map(asset => renderAssetCard(asset, 0))}
-              </View>
-            )}
+              <Text style={styles.sectionHint}>
+                Expired Active assets move to For Checking automatically. Pulled-out assets stay in Pullout — extend
+                the lifespan or dispose of them.
+              </Text>
+              {evaluationAssets.map(asset => renderAssetCard(asset, 0))}
+            </View>
           </>
         )}
       </ScrollView>
@@ -796,25 +749,34 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 16,
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
+    paddingVertical: 14,
     alignItems: 'center',
-    minHeight: 80,
+  },
+  summaryIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 7,
   },
   summaryValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: NAVY,
-    marginTop: 6,
   },
   summaryLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#94A3B8',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginTop: 2,
+    textAlign: 'center',
   },
   section: {
     marginBottom: 16,
@@ -830,43 +792,52 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: NAVY,
   },
+  sectionHint: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 17,
+    marginTop: -4,
+    marginBottom: 12,
+  },
   assetCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  assetHeader: {
-    marginBottom: 10,
+    shadowColor: '#0C134F',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   assetTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 12,
+  },
+  assetTitleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   assetName: {
-    flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#0F172A',
   },
   assetCode: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#94A3B8',
     fontWeight: '600',
+    letterSpacing: 0.3,
+    marginTop: 2,
   },
   statusBadge: {
-    paddingVertical: 3,
+    paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.06)',
   },
   statusBadgeText: {
     fontSize: 11,
@@ -875,107 +846,145 @@ const styles = StyleSheet.create({
   detailGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
     marginBottom: 12,
   },
-  detailItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    minWidth: '46%',
-    flexShrink: 1,
-    backgroundColor: '#F8FAFC',
-    padding: 7,
-    borderRadius: 8,
+  detailCell: {
+    flexGrow: 1,
+    flexBasis: '46%',
   },
   detailLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
     color: '#94A3B8',
     textTransform: 'uppercase',
-    letterSpacing: 0.2,
+    letterSpacing: 0.5,
+    marginBottom: 2,
   },
   detailValue: {
-    flex: 1,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1E293B',
+    lineHeight: 18,
   },
   lifecycleBox: {
-    backgroundColor: '#FFFBEB',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: GOLD,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    gap: 4,
   },
-  lifecycleHeader: {
+  lifecycleBoxExpired: {
+    backgroundColor: '#FEF2F2',
+  },
+  lifecycleRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 5,
-    marginBottom: 6,
+    gap: 12,
   },
   lifecycleLabel: {
     fontSize: 10,
     fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  lifecycleGrid: {
-    gap: 8,
-  },
-  lifecycleItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  lifecycleDetailLabel: {
-    fontSize: 10,
     color: '#94A3B8',
-    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  lifecycleDetailValue: {
-    fontSize: 11,
+  lifecycleValue: {
+    fontSize: 12,
     fontWeight: '700',
-    color: '#1E293B',
-    maxWidth: 120,
+    color: '#334155',
     textAlign: 'right',
+    flexShrink: 1,
   },
-  actionButtonsGrid: {
+  lifecycleValueExpired: {
+    color: '#DC2626',
+  },
+  lifecycleOverdue: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#DC2626',
+    marginTop: 2,
+  },
+  actionGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 4,
   },
-  actionButton: {
-    flex: 1,
-    minWidth: '45%',
-    maxWidth: 180,
+  actionChip: {
+    flexGrow: 1,
+    flexBasis: '46%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    gap: 4,
+    gap: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
   },
-  returnButton: {
-    backgroundColor: '#10B981',
+  returnChip: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
   },
-  repairButton: {
-    backgroundColor: GOLD_LIGHT,
-  },
-  replacementButton: {
-    backgroundColor: '#3B82F6',
-  },
-  disposalButton: {
-    backgroundColor: '#EF4444',
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+  returnChipText: {
+    color: '#047857',
+    fontSize: 12.5,
     fontWeight: '700',
-    textAlign: 'center',
+    flexShrink: 1,
+  },
+  repairChip: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  repairChipText: {
+    color: '#B45309',
+    fontSize: 12.5,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  replacementChip: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  replacementChipText: {
+    color: '#1D4ED8',
+    fontSize: 12.5,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  disposalChip: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  disposalChipText: {
+    color: '#B91C1C',
+    fontSize: 12.5,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  extendChip: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  extendChipText: {
+    color: '#0369A1',
+    fontSize: 12.5,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  pulloutNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginBottom: 10,
+  },
+  pulloutNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#0369A1',
+    lineHeight: 16,
   },
   modalOverlay: {
     flex: 1,
@@ -1121,6 +1130,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#64748B',
+  },
+  currentExpiry: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 12,
   },
   formGroup: {
     marginBottom: 14,

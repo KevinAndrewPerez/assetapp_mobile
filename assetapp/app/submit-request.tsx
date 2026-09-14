@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,40 +13,142 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { getStoredUser, submitUserRequest, uploadRequestPhoto, StoredUser } from '@/lib/userService';
+import {
+  getStoredUser,
+  uploadRequestPhoto,
+  fetchUserAssets,
+  StoredUser,
+  UserAsset,
+} from '@/lib/userService';
 import { supabase } from '@/lib/supabase';
+import { resolveMediaUrl } from '@/lib/mediaUrl';
+import {
+  REPAIR_PRIORITIES,
+  RepairPriority,
+  submitRepairRequest,
+  validateAssetsForRepair,
+  repairStatusMessage,
+} from '@/lib/repairService';
 
-type ScannedAsset = {
+/**
+ * Report a damaged / malfunctioning asset (spec §1–§2).
+ *
+ * The user picks their asset (QR scan, or search their accountable assets),
+ * describes the problem and submits. The request is created as Pending and the
+ * Asset Management Office takes over from there; the user only tracks progress.
+ */
+
+type PickedAsset = {
   id: string | number;
   code: string;
   name: string;
+  category?: string;
+  serialNumber?: string;
+  lifecycleStatus?: string;
   imageUrl?: string;
 };
 
-export default function SubmitRequest() {
+const DISPOSED_STATUSES = ['disposal', 'disposed'];
+
+const isDisposed = (status?: string) =>
+  DISPOSED_STATUSES.includes(String(status ?? '').trim().toLowerCase());
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+const formatDateInput = (date: Date) =>
+  `${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${date.getFullYear()}`;
+
+const parseDateInput = (raw: string): string | null => {
+  const match = String(raw ?? '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const [, mm, dd, yyyy] = match;
+  const month = Number(mm);
+  const day = Number(dd);
+  const year = Number(yyyy);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const iso = `${year}-${pad(month)}-${pad(day)}`;
+  const parsed = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(parsed.getTime()) || parsed.getMonth() !== month - 1) return null;
+  return iso;
+};
+
+const statusTone = (status?: string) => {
+  const key = String(status ?? '').trim().toLowerCase();
+  if (key === 'disposal' || key === 'disposed') return { bg: '#FEE2E2', color: '#B91C1C' };
+  if (key === 'for repair' || key === 'repair') return { bg: '#FEF3C7', color: '#B45309' };
+  if (key === 'for replacement' || key === 'replacement') return { bg: '#EDE9FE', color: '#6D28D9' };
+  if (key === 'pullout') return { bg: '#DBEAFE', color: '#1D4ED8' };
+  return { bg: '#DCFCE7', color: '#15803D' };
+};
+
+export default function SubmitRepairRequest() {
   const router = useRouter();
-  const [selectedAssets, setSelectedAssets] = useState<ScannedAsset[]>([]);
-  const [reason, setReason] = useState('');
-  const [requestorName, setRequestorName] = useState('');
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [selectedAssets, setSelectedAssets] = useState<PickedAsset[]>([]);
+  const [problem, setProblem] = useState('');
+  const [description, setDescription] = useState('');
+  const [reportedDate, setReportedDate] = useState(formatDateInput(new Date()));
+  const [priority, setPriority] = useState<RepairPriority>('Medium');
+  const [remarks, setRemarks] = useState('');
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
-  const [selectedPhotoUri, setSelectedPhotoUri] = useState<string | null>(null);
+
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [myAssets, setMyAssets] = useState<UserAsset[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
+  const [assetSearch, setAssetSearch] = useState('');
 
   useEffect(() => {
     const loadUser = async () => {
-      const user = await getStoredUser();
-      if (user?.full_name) {
-        setRequestorName(user.full_name);
-      }
+      const stored = await getStoredUser();
+      if (stored) setUser(stored);
     };
     loadUser();
   }, []);
+
+  const loadMyAssets = async (current: StoredUser | null) => {
+    if (!current?.id) return;
+    try {
+      setAssetsLoading(true);
+      const assets = await fetchUserAssets(current, 'own');
+      setMyAssets(assets);
+    } catch (err) {
+      console.warn('Failed to load accountable assets:', err);
+    } finally {
+      setAssetsLoading(false);
+    }
+  };
+
+  const openPicker = async () => {
+    setAssetSearch('');
+    setPickerVisible(true);
+    if (myAssets.length === 0) await loadMyAssets(user);
+  };
+
+  const addAsset = (asset: PickedAsset) => {
+    const status = String(asset.lifecycleStatus ?? '');
+    if (isDisposed(status)) {
+      Alert.alert('Asset not available', `${asset.name} (${asset.code}) is already disposed.`);
+      return;
+    }
+    setSelectedAssets((prev) => {
+      if (prev.some((a) => String(a.id) === String(asset.id))) return prev;
+      return [...prev, asset];
+    });
+  };
+
+  const removeAsset = (id: string | number) => {
+    setSelectedAssets((prev) => prev.filter((a) => String(a.id) !== String(id)));
+  };
 
   const openScanner = async () => {
     if (!permission?.granted) {
@@ -73,7 +175,9 @@ export default function SubmitRequest() {
     try {
       const { data: assetRow, error: assetErr } = await supabase
         .from('assets')
-        .select('id, Asset_code, Asset_name, user_id, asset_files (Asset_file_ID, file_name, file_path, url)')
+        .select(
+          'id, Asset_code, Asset_name, Category, serial_Number, Lifecycle_Status, user_id, asset_files (Asset_file_ID, file_name, file_path, url)',
+        )
         .eq('Asset_code', code)
         .maybeSingle();
 
@@ -86,47 +190,28 @@ export default function SubmitRequest() {
         return;
       }
 
-      // Only allow requesting assets that are assigned to the logged-in user.
-      const user = await getStoredUser();
-      const ownerId = String(assetRow.user_id ?? '');
+      const ownerId = String((assetRow as any).user_id ?? '');
       const myId = String(user?.id ?? '');
       if (!myId || ownerId !== myId) {
         Alert.alert(
           'Asset not yours',
-          `"${assetRow.Asset_name || assetRow.Asset_code}" is not assigned to you. You can only request repair for assets that belong to you.`,
+          `"${(assetRow as any).Asset_name || (assetRow as any).Asset_code}" is not assigned to you. You can only request repair for assets that belong to you.`,
         );
         return;
       }
 
-      const file = Array.isArray(assetRow.asset_files) ? assetRow.asset_files[0] : assetRow.asset_files;
-      const rawFile = String(file?.url ?? file?.file_path ?? '');
-      let imageUrl = '';
-      if (rawFile) {
-        if (rawFile.startsWith('http://') || rawFile.startsWith('https://')) {
-          imageUrl = rawFile;
-        } else {
-          const clean = rawFile
-            .replace(/^\/+/, '')
-            .replace(/^storage\/v1\/object\/public\//, '')
-            .replace(/^storage\/assets\//, '')
-            .replace(/^assets\//, '');
-          const { data } = supabase.storage.from('assets').getPublicUrl(clean);
-          imageUrl = data?.publicUrl || '';
-        }
-      }
+      const imageUrl = resolveMediaUrl((assetRow as any).asset_files, 'assets');
 
-      setSelectedAssets((prev) => {
-        const exists = prev.some((a) => String(a.id) === String(assetRow.id));
-        if (exists) return prev;
-        return [
-          ...prev,
-          {
-            id: assetRow.id,
-            code: String(assetRow.Asset_code ?? code),
-            name: String(assetRow.Asset_name ?? 'Asset'),
-            imageUrl,
-          },
-        ];
+      addAsset({
+        id: (assetRow as any).id,
+        code: String((assetRow as any).Asset_code ?? code),
+        name: String((assetRow as any).Asset_name ?? 'Asset'),
+        category: (assetRow as any).Category ? String((assetRow as any).Category) : undefined,
+        serialNumber: (assetRow as any).serial_Number ? String((assetRow as any).serial_Number) : undefined,
+        lifecycleStatus: (assetRow as any).Lifecycle_Status
+          ? String((assetRow as any).Lifecycle_Status)
+          : undefined,
+        imageUrl,
       });
     } catch (err) {
       console.error('Scan validation failed:', err);
@@ -136,138 +221,365 @@ export default function SubmitRequest() {
     }
   };
 
-  const removeAsset = (id: string | number) => {
-    setSelectedAssets((prev) => prev.filter((a) => String(a.id) !== String(id)));
+  const takePhoto = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Camera Permission', 'Camera permission is required to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        allowsEditing: true,
+      });
+      if (result.canceled) return;
+      const uri = result.assets?.[0]?.uri;
+      if (uri) setPhotoUri(uri);
+    } catch (err) {
+      console.warn('Camera failed:', err);
+      Alert.alert('Camera unavailable', 'Could not open the camera on this device.');
+    }
   };
 
-  const pickPhoto = async () => {
+  const pickFromLibrary = async () => {
     const res = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!res.granted) {
       Alert.alert('Permission required', 'Please allow photo library access to attach a photo.');
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.8,
       allowsEditing: true,
     });
-
     if (result.canceled) return;
     const uri = result.assets?.[0]?.uri;
-    if (uri) setSelectedPhotoUri(uri);
+    if (uri) setPhotoUri(uri);
+  };
+
+  const pickPhoto = () => {
+    Alert.alert('Attach photo', 'Take a photo of the problem or choose one from your gallery.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Take Photo', onPress: takePhoto },
+      { text: 'Choose from Library', onPress: pickFromLibrary },
+    ]);
   };
 
   const handleSubmit = async () => {
     if (selectedAssets.length === 0) {
-      Alert.alert('Validation error', 'Please scan at least one asset QR code before creating the repair request.');
+      Alert.alert('Validation error', 'Please add at least one asset that needs repair.');
+      return;
+    }
+    if (!problem.trim()) {
+      Alert.alert('Validation error', 'Please state the problem or issue with the asset.');
       return;
     }
 
-    if (!reason.trim()) {
-      Alert.alert('Validation error', 'Please describe the issue before creating the repair request.');
+    const isoDate = parseDateInput(reportedDate);
+    if (!isoDate) {
+      Alert.alert('Validation error', 'Enter the date the problem was reported as mm/dd/yyyy.');
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Sign in required', 'Please sign in again to create the request.');
       return;
     }
 
     try {
       setSubmitting(true);
-      const user: StoredUser | null = await getStoredUser();
-      if (!user) {
-        Alert.alert('Sign in required', 'Please sign in again to create the request.');
-        return;
+
+      // Lifecycle guard: never file a repair for a disposed asset or a duplicate.
+      const check = await validateAssetsForRepair(selectedAssets.map((a) => a.id));
+      if (check.blocked.length > 0) {
+        Alert.alert(
+          'Some assets cannot be submitted',
+          check.blocked.map((b) => `• ${b.name} (${b.code}): ${b.reason}`).join('\n'),
+        );
+        if (check.ok.length === 0) return;
       }
 
-      const noteText = reason.trim();
-
-      // Upload the attached photo (if any) into the `request_files` bucket so
-      // the request carries the picture — never block submission on upload.
       let file: Awaited<ReturnType<typeof uploadRequestPhoto>> | undefined;
-      if (selectedPhotoUri) {
+      if (photoUri) {
         try {
-          file = await uploadRequestPhoto(selectedPhotoUri);
+          file = await uploadRequestPhoto(photoUri);
         } catch (uploadErr) {
-          console.warn('Request photo upload failed (submitting without it):', uploadErr);
+          console.warn('Repair photo upload failed (submitting without it):', uploadErr);
         }
       }
 
-      await submitUserRequest(
-        user,
-        'Repair',
-        selectedAssets.map((a) => a.id),
-        noteText,
-        file ?? null,
+      const result = await submitRepairRequest({
+        user: { id: user.id, full_name: user.full_name, email: user.email },
+        assetIds: check.ok.map((a) => a.id),
+        problem: problem.trim(),
+        description: description.trim(),
+        priority,
+        reportedDate: isoDate,
+        remarks: remarks.trim(),
+        photo: file ?? null,
+        restrictOwnerId: user.id,
+      });
+
+      const blockedText =
+        result.blocked.length > 0
+          ? `\n\nNot submitted:\n${result.blocked.map((b) => `• ${b.name} (${b.code}): ${b.reason}`).join('\n')}`
+          : '';
+
+      Alert.alert(
+        'Repair request submitted',
+        `Request No. ${result.requestRef}\n${result.submitted} asset(s) reported.\n\n${repairStatusMessage('Pending')}${blockedText}`,
       );
-      Alert.alert('Request submitted', 'Your repair request has been created successfully.');
       router.back();
-    } catch (error) {
-      console.error('Submit request failed:', error);
-      Alert.alert('Submission failed', 'Unable to create the repair request. Please try again.');
+    } catch (error: any) {
+      console.error('Submit repair request failed:', error);
+      Alert.alert('Submission failed', error?.message || 'Unable to create the repair request.');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const filteredAssets = useMemo(() => {
+    const term = assetSearch.trim().toLowerCase();
+    if (!term) return myAssets;
+    return myAssets.filter((asset) =>
+      [asset.name, asset.barcode, asset.category, asset.serialNumber]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term)),
+    );
+  }, [assetSearch, myAssets]);
+
+  const alreadySelected = (id: string) => selectedAssets.some((a) => String(a.id) === String(id));
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
-        <Text style={styles.pageTitle}>New Repair Request</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.8}>
+          <MaterialCommunityIcons name="chevron-left" size={24} color="#1F2937" />
+        </TouchableOpacity>
+        <Text style={styles.pageTitle}>Report Repair</Text>
+        <View style={{ width: 32 }} />
       </View>
 
-      <Text style={styles.pageSubtitle}>Log an issue for one or more assets assigned to you</Text>
+      <Text style={styles.pageSubtitle}>
+        Report a damaged or malfunctioning asset — the Asset Management Office reviews every request.
+      </Text>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          {/* Step 1 — the asset */}
+          <View style={styles.stepHeader}>
+            <View style={styles.stepBadge}>
+              <Text style={styles.stepBadgeText}>1</Text>
+            </View>
+            <Text style={styles.stepTitle}>Select the asset</Text>
+          </View>
+
           <View style={styles.fieldBlock}>
-            <Text style={styles.label}>Assets <Text style={styles.required}>*</Text></Text>
-            <TouchableOpacity style={styles.scanField} activeOpacity={0.85} onPress={openScanner}>
-              <View style={styles.scanFieldLeft}>
-                <MaterialCommunityIcons name="qrcode-scan" size={22} color="#475569" />
-                <Text style={[styles.scanFieldText, selectedAssets.length === 0 ? styles.placeholderText : null]}>
-                  {selectedAssets.length === 0
-                    ? 'Scan asset QR...'
-                    : `${selectedAssets.length} asset${selectedAssets.length > 1 ? 's' : ''} selected`}
-                </Text>
-              </View>
-              <MaterialCommunityIcons name="plus-circle-outline" size={22} color="#475569" />
-            </TouchableOpacity>
-            <Text style={styles.fieldHint}>Scan the QR of each asset you own. Assets that are not assigned to you will be rejected.</Text>
+            <Text style={styles.label}>
+              Asset <Text style={styles.required}>*</Text>
+            </Text>
+
+            <View style={styles.assetActionsRow}>
+              <TouchableOpacity style={styles.assetAction} activeOpacity={0.85} onPress={openScanner}>
+                <MaterialCommunityIcons name="qrcode-scan" size={20} color="#1E3A5F" />
+                <Text style={styles.assetActionText}>Scan QR</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.assetAction} activeOpacity={0.85} onPress={openPicker}>
+                <MaterialCommunityIcons name="magnify" size={20} color="#1E3A5F" />
+                <Text style={styles.assetActionText}>My assets</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.fieldHint}>
+              Scan the asset QR code or pick from the assets assigned to you.
+            </Text>
 
             {selectedAssets.length > 0 && (
               <View style={styles.assetList}>
-                {selectedAssets.map((asset) => (
-                  <View key={String(asset.id)} style={styles.assetChip}>
-                    {asset.imageUrl ? (
-                      <Image source={{ uri: asset.imageUrl }} style={styles.assetChipThumb} resizeMode="cover" />
-                    ) : (
-                      <View style={[styles.assetChipThumb, styles.assetChipThumbPlaceholder]}>
-                        <MaterialCommunityIcons name="cube-outline" size={18} color="#1E3A5F" />
+                {selectedAssets.map((asset) => {
+                  const tone = statusTone(asset.lifecycleStatus);
+                  return (
+                    <View key={String(asset.id)} style={styles.assetChip}>
+                      {asset.imageUrl ? (
+                        <Image source={{ uri: asset.imageUrl }} style={styles.assetChipThumb} resizeMode="cover" />
+                      ) : (
+                        <View style={[styles.assetChipThumb, styles.assetChipThumbPlaceholder]}>
+                          <MaterialCommunityIcons name="cube-outline" size={18} color="#1E3A5F" />
+                        </View>
+                      )}
+                      <View style={styles.assetChipTextWrap}>
+                        <Text style={styles.assetChipName} numberOfLines={1}>
+                          {asset.name}
+                        </Text>
+                        <Text style={styles.assetChipCode} numberOfLines={1}>
+                          {asset.code}
+                        </Text>
+                        {asset.lifecycleStatus ? (
+                          <View style={[styles.statusPill, { backgroundColor: tone.bg }]}>
+                            <Text style={[styles.statusPillText, { color: tone.color }]}>
+                              {asset.lifecycleStatus}
+                            </Text>
+                          </View>
+                        ) : null}
                       </View>
-                    )}
-                    <View style={styles.assetChipTextWrap}>
-                      <Text style={styles.assetChipName} numberOfLines={1}>{asset.name}</Text>
-                      <Text style={styles.assetChipCode} numberOfLines={1}>{asset.code}</Text>
+                      <TouchableOpacity
+                        onPress={() => removeAsset(asset.id)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <MaterialCommunityIcons name="close-circle" size={20} color="#EF4444" />
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity onPress={() => removeAsset(asset.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                      <MaterialCommunityIcons name="close-circle" size={20} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             )}
           </View>
 
+          {/* Step 2 — the problem */}
+          <View style={styles.stepHeader}>
+            <View style={styles.stepBadge}>
+              <Text style={styles.stepBadgeText}>2</Text>
+            </View>
+            <Text style={styles.stepTitle}>Describe the problem</Text>
+          </View>
+
           <View style={styles.fieldBlock}>
-            <Text style={styles.label}>Issue Description <Text style={styles.required}>*</Text></Text>
+            <Text style={styles.label}>
+              Problem / Issue <Text style={styles.required}>*</Text>
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Laptop does not turn on"
+              placeholderTextColor="#94A3B8"
+              value={problem}
+              onChangeText={setProblem}
+            />
+          </View>
+
+          <View style={styles.fieldBlock}>
+            <Text style={styles.label}>Description of Damage</Text>
             <View style={styles.textAreaWrapper}>
               <TextInput
                 style={styles.textArea}
-                placeholder="Describe the issue in detail..."
+                placeholder="Describe what happened and how the asset is behaving..."
                 placeholderTextColor="#94A3B8"
                 multiline
-                numberOfLines={6}
+                numberOfLines={5}
                 textAlignVertical="top"
-                value={reason}
-                onChangeText={setReason}
+                value={description}
+                onChangeText={setDescription}
+              />
+            </View>
+          </View>
+
+          <View style={styles.fieldBlock}>
+            <Text style={styles.label}>Date the Problem Was Reported</Text>
+            <View style={styles.inputWithIcon}>
+              <MaterialCommunityIcons name="calendar" size={20} color="#1E3A5F" />
+              <TextInput
+                style={styles.inputFlex}
+                placeholder="mm/dd/yyyy"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numbers-and-punctuation"
+                value={reportedDate}
+                onChangeText={setReportedDate}
+              />
+            </View>
+          </View>
+
+          <View style={styles.fieldBlock}>
+            <Text style={styles.label}>Priority / Urgency</Text>
+            <View style={styles.priorityRow}>
+              {REPAIR_PRIORITIES.map((level) => {
+                const active = priority === level;
+                const tone =
+                  level === 'High'
+                    ? { bg: '#FEE2E2', border: '#EF4444', text: '#B91C1C' }
+                    : level === 'Low'
+                      ? { bg: '#DCFCE7', border: '#22C55E', text: '#15803D' }
+                      : { bg: '#FEF3C7', border: '#F59E0B', text: '#B45309' };
+                return (
+                  <TouchableOpacity
+                    key={level}
+                    style={[
+                      styles.priorityChip,
+                      {
+                        backgroundColor: active ? tone.bg : '#FFFFFF',
+                        borderColor: active ? tone.border : '#D1D5DB',
+                      },
+                    ]}
+                    onPress={() => setPriority(level)}
+                    activeOpacity={0.85}
+                  >
+                    <MaterialCommunityIcons
+                      name={level === 'High' ? 'alert-circle-outline' : 'flag-outline'}
+                      size={16}
+                      color={active ? tone.text : '#64748B'}
+                    />
+                    <Text style={[styles.priorityChipText, { color: active ? tone.text : '#475569' }]}>
+                      {level}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Step 3 — photo & remarks */}
+          <View style={styles.stepHeader}>
+            <View style={styles.stepBadge}>
+              <Text style={styles.stepBadgeText}>3</Text>
+            </View>
+            <Text style={styles.stepTitle}>Photo and remarks</Text>
+          </View>
+
+          <View style={styles.fieldBlock}>
+            <Text style={styles.label}>
+              Photo of the Problem <Text style={styles.optional}>(Optional)</Text>
+            </Text>
+
+            {photoUri ? (
+              <View style={styles.photoPreviewWrap}>
+                <Image source={{ uri: photoUri }} style={styles.photoPreview} resizeMode="cover" />
+                <View style={styles.photoPreviewActions}>
+                  <TouchableOpacity style={styles.photoActionBtn} onPress={pickPhoto} activeOpacity={0.85}>
+                    <MaterialCommunityIcons name="image-outline" size={16} color="#1E3A5F" />
+                    <Text style={styles.photoActionText}>Replace</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.photoActionBtn, styles.photoRemoveBtn]}
+                    onPress={() => setPhotoUri(null)}
+                    activeOpacity={0.85}
+                  >
+                    <MaterialCommunityIcons name="close" size={16} color="#B91C1C" />
+                    <Text style={[styles.photoActionText, { color: '#B91C1C' }]}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.photoUploadArea} activeOpacity={0.8} onPress={pickPhoto}>
+                <MaterialCommunityIcons name="image-plus" size={28} color="#94A3B8" />
+                <Text style={styles.photoUploadText}>Add a photo</Text>
+                <Text style={styles.photoUploadSubtext}>Take a photo or choose one from your gallery</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.fieldBlock}>
+            <Text style={styles.label}>
+              Additional Remarks <Text style={styles.optional}>(Optional)</Text>
+            </Text>
+            <View style={styles.textAreaWrapper}>
+              <TextInput
+                style={styles.textArea}
+                placeholder="Anything else the technician should know..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                value={remarks}
+                onChangeText={setRemarks}
               />
             </View>
           </View>
@@ -275,16 +587,15 @@ export default function SubmitRequest() {
           <View style={styles.requestorRow}>
             <MaterialCommunityIcons name="account-circle-outline" size={20} color="#64748B" />
             <Text style={styles.requestorLabel}>Requesting as: </Text>
-            <Text style={styles.requestorValue}>{requestorName || 'You'}</Text>
+            <Text style={styles.requestorValue}>{user?.full_name || 'You'}</Text>
           </View>
 
-          <View style={styles.fieldBlock}>
-            <Text style={styles.label}>Attach Photo <Text style={styles.optional}>(Optional)</Text></Text>
-            <TouchableOpacity style={styles.photoUploadArea} activeOpacity={0.8} onPress={pickPhoto}>
-              <MaterialCommunityIcons name="image-plus" size={28} color="#94A3B8" />
-              <Text style={styles.photoUploadText}>{selectedPhotoUri ? 'Photo attached' : 'Click to upload photo'}</Text>
-              <Text style={styles.photoUploadSubtext}>{selectedPhotoUri ? 'Attached to this request' : 'PNG, JPG up to 10MB'}</Text>
-            </TouchableOpacity>
+          <View style={styles.noticeCard}>
+            <MaterialCommunityIcons name="information-outline" size={18} color="#1D4ED8" />
+            <Text style={styles.noticeText}>
+              After submission the Asset Management Office evaluates the asset. It is flagged "For Repair" and
+              moves back to Active only once the repair is completed and verified.
+            </Text>
           </View>
 
           <View style={styles.actionRow}>
@@ -292,13 +603,105 @@ export default function SubmitRequest() {
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.createButton} activeOpacity={0.9} onPress={handleSubmit} disabled={submitting}>
-              <Text style={styles.createButtonText}>{submitting ? 'Creating...' : 'Create Request'}</Text>
+            <TouchableOpacity
+              style={styles.createButton}
+              activeOpacity={0.9}
+              onPress={handleSubmit}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.createButtonText}>Submit Request</Text>
+              )}
             </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* Asset picker */}
+      <Modal visible={pickerVisible} animationType="slide" onRequestClose={() => setPickerVisible(false)}>
+        <SafeAreaView style={styles.pickerContainer}>
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle}>My Assets</Text>
+            <TouchableOpacity style={styles.pickerClose} onPress={() => setPickerVisible(false)} activeOpacity={0.8}>
+              <MaterialCommunityIcons name="close" size={20} color="#1F2937" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.searchField}>
+            <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by name, code or serial..."
+              placeholderTextColor="#94A3B8"
+              value={assetSearch}
+              onChangeText={setAssetSearch}
+            />
+          </View>
+
+          {assetsLoading ? (
+            <View style={styles.pickerLoading}>
+              <ActivityIndicator size="large" color="#1E3A5F" />
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.pickerList}>
+              {filteredAssets.length === 0 ? (
+                <View style={styles.pickerEmpty}>
+                  <MaterialCommunityIcons name="cube-outline" size={42} color="#CBD5E1" />
+                  <Text style={styles.pickerEmptyText}>No assets found</Text>
+                </View>
+              ) : (
+                filteredAssets.map((asset) => {
+                  const disposed = isDisposed(asset.status);
+                  const selected = alreadySelected(asset.id);
+                  const tone = statusTone(asset.status);
+                  return (
+                    <TouchableOpacity
+                      key={String(asset.id)}
+                      style={[styles.pickerRow, selected && styles.pickerRowSelected]}
+                      activeOpacity={0.85}
+                      disabled={disposed}
+                      onPress={() =>
+                        addAsset({
+                          id: asset.id,
+                          code: asset.barcode,
+                          name: asset.name,
+                          category: asset.category,
+                          serialNumber: asset.serialNumber,
+                          lifecycleStatus: asset.status,
+                        })
+                      }
+                    >
+                      <View style={styles.pickerRowText}>
+                        <Text style={styles.pickerRowName} numberOfLines={1}>
+                          {asset.name}
+                        </Text>
+                        <Text style={styles.pickerRowCode} numberOfLines={1}>
+                          {asset.barcode}
+                          {asset.serialNumber ? ` • ${asset.serialNumber}` : ''}
+                        </Text>
+                        <View style={[styles.statusPill, { backgroundColor: tone.bg }]}>
+                          <Text style={[styles.statusPillText, { color: tone.color }]}>
+                            {asset.status || 'Active'}
+                          </Text>
+                        </View>
+                      </View>
+                      <MaterialCommunityIcons
+                        name={selected ? 'check-circle' : disposed ? 'close-circle' : 'plus-circle-outline'}
+                        size={22}
+                        color={selected ? '#16A34A' : disposed ? '#EF4444' : '#1E3A5F'}
+                      />
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
+
+      {/* QR scanner */}
       <Modal visible={scannerVisible} animationType="slide">
         <SafeAreaView style={styles.scannerContainer}>
           <View style={styles.scannerHeader}>
@@ -334,34 +737,66 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 24,
-    paddingBottom: 10,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+  },
+  backButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pageTitle: {
-    fontSize: 32,
+    fontSize: 20,
     fontWeight: '800',
     color: '#1F2937',
-    letterSpacing: -0.7,
+    letterSpacing: -0.4,
   },
   pageSubtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#64748B',
     marginHorizontal: 18,
+    marginTop: 6,
     marginBottom: 14,
+    lineHeight: 18,
   },
   keyboardView: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 18,
-    paddingBottom: 36,
+    paddingBottom: 40,
+  },
+  stepHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  stepBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#1E3A5F',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  stepTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E3A5F',
   },
   fieldBlock: {
     marginBottom: 18,
   },
   label: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#1F2937',
     marginBottom: 8,
@@ -373,10 +808,20 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '500',
   },
-  scanField: {
+  input: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 52,
+    fontSize: 15,
+    color: '#1F2937',
+  },
+  inputWithIcon: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D1D5DB',
@@ -384,28 +829,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     height: 52,
   },
-  scanFieldLeft: {
+  inputFlex: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1F2937',
+  },
+  assetActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  assetAction: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    flex: 1,
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#1E3A5F',
+    borderRadius: 12,
+    height: 48,
   },
-  scanFieldText: {
-    fontSize: 16,
-    color: '#1F2937',
-    flex: 1,
-  },
-  placeholderText: {
-    color: '#94A3B8',
+  assetActionText: {
+    color: '#1E3A5F',
+    fontSize: 14,
+    fontWeight: '700',
   },
   fieldHint: {
     marginTop: 8,
     fontSize: 12,
     color: '#64748B',
+    lineHeight: 17,
   },
   assetList: {
-    marginTop: 10,
-    gap: 8,
+    marginTop: 12,
+    gap: 10,
   },
   assetChip: {
     flexDirection: 'row',
@@ -419,9 +877,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   assetChipThumb: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     backgroundColor: '#E2E8F0',
   },
   assetChipThumbPlaceholder: {
@@ -430,6 +888,7 @@ const styles = StyleSheet.create({
   },
   assetChipTextWrap: {
     flex: 1,
+    gap: 2,
   },
   assetChipName: {
     fontSize: 14,
@@ -439,22 +898,105 @@ const styles = StyleSheet.create({
   assetChipCode: {
     fontSize: 12,
     color: '#64748B',
-    marginTop: 2,
+  },
+  statusPill: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   textAreaWrapper: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    minHeight: 120,
+    minHeight: 110,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   textArea: {
-    minHeight: 110,
+    minHeight: 100,
     fontSize: 15,
     color: '#1F2937',
     textAlignVertical: 'top',
+  },
+  priorityRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  priorityChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 12,
+    height: 46,
+  },
+  priorityChipText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  photoUploadArea: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderStyle: 'dashed',
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    paddingVertical: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoUploadText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 10,
+  },
+  photoUploadSubtext: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  photoPreviewWrap: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  photoPreview: {
+    width: '100%',
+    height: 190,
+  },
+  photoPreviewActions: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: 10,
+  },
+  photoActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  photoRemoveBtn: {
+    backgroundColor: '#FEE2E2',
+  },
+  photoActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E3A5F',
   },
   requestorRow: {
     flexDirection: 'row',
@@ -465,7 +1007,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    marginBottom: 18,
+    marginBottom: 14,
     gap: 6,
   },
   requestorLabel: {
@@ -479,33 +1021,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
   },
-  photoUploadArea: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderStyle: 'dashed',
-    borderRadius: 16,
-    backgroundColor: '#F8FAFC',
-    paddingVertical: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
+  noticeCard: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 18,
   },
-  photoUploadText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 10,
-  },
-  photoUploadSubtext: {
+  noticeText: {
+    flex: 1,
     fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 4,
+    color: '#1E40AF',
+    lineHeight: 18,
   },
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    marginTop: 12,
+    marginTop: 4,
   },
   cancelButton: {
     flex: 1,
@@ -519,11 +1054,11 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     color: '#1F2937',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
   },
   createButton: {
-    flex: 1.2,
+    flex: 1.4,
     backgroundColor: '#E53935',
     borderRadius: 12,
     height: 52,
@@ -537,8 +1072,98 @@ const styles = StyleSheet.create({
   },
   createButtonText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
+  },
+  pickerContainer: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  pickerTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1F2937',
+  },
+  pickerClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    paddingHorizontal: 14,
+    height: 48,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1F2937',
+  },
+  pickerLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerList: {
+    paddingHorizontal: 16,
+    paddingBottom: 30,
+    gap: 10,
+  },
+  pickerEmpty: {
+    alignItems: 'center',
+    paddingVertical: 60,
+    gap: 10,
+  },
+  pickerEmptyText: {
+    fontSize: 15,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  pickerRowSelected: {
+    borderColor: '#16A34A',
+    backgroundColor: '#F0FDF4',
+  },
+  pickerRowText: {
+    flex: 1,
+    gap: 3,
+  },
+  pickerRowName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  pickerRowCode: {
+    fontSize: 12,
+    color: '#64748B',
   },
   scannerContainer: {
     flex: 1,
@@ -584,4 +1209,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-});
+});

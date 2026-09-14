@@ -4,7 +4,6 @@ import {
   Alert,
   FlatList,
   Image,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +25,10 @@ import * as ImagePicker from 'expo-image-picker';
 const NAVY = '#1E3A5F';
 const NAVY_DARK = '#0C134F';
 const GOLD = '#FBBF24';
+const GOLD_SOFT = '#FDF3DC';
+const BORDER = '#D8DEE8';
+const TEXT_MAIN = '#0F172A';
+const TEXT_MUTED = '#64748B';
 
 export default function AssetRegistryScreen() {
   const router = useRouter();
@@ -45,6 +49,7 @@ export default function AssetRegistryScreen() {
   const [warranty, setWarranty] = useState('');
   const [notes, setNotes] = useState('');
   const [lifespanMonths, setLifespanMonths] = useState('');
+  const [lastMaintenanceDate, setLastMaintenanceDate] = useState('');
   const [maintenanceInterval, setMaintenanceInterval] = useState('');
   const [bulkMode, setBulkMode] = useState(false);
   const [quantity, setQuantity] = useState('1');
@@ -96,7 +101,7 @@ export default function AssetRegistryScreen() {
     }
   };
 
-  const pickImage = async () => {
+  const pickFromLibrary = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission Required', 'Permission to access gallery is required.');
@@ -115,6 +120,33 @@ export default function AssetRegistryScreen() {
     }
   };
 
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Camera permission is required to take a photo.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      setSelectedImage(result.assets[0].uri);
+    }
+  };
+
+  const handlePhotoPress = () => {
+    Alert.alert('Asset Photo', 'Add a photo from your gallery or take one with the camera.', [
+      { text: 'Take Photo', onPress: takePhoto },
+      { text: 'Choose from Library', onPress: pickFromLibrary },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const categoryOptions = [
     'Furnitures and Fixtures',
     'General and Office Equipment',
@@ -127,7 +159,7 @@ export default function AssetRegistryScreen() {
   ];
 
   const conditionOptions = [
-    { label: 'New', icon: 'sparkles', color: '#10B981' },
+    { label: 'New', icon: 'star-four-points', color: '#10B981' },
     { label: 'Good', icon: 'check-circle-outline', color: '#3B82F6' },
     { label: 'Fair', icon: 'alert-outline', color: '#F59E0B' },
     { label: 'Poor', icon: 'alert-circle-outline', color: '#EF4444' },
@@ -188,6 +220,18 @@ export default function AssetRegistryScreen() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
+  const formatDateDisplay = (dateStr: string): string => {
+    const d = parseDate(dateStr);
+    if (!d) return '';
+    return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  };
+
+  // Auto-calculated values shown in the Lifespan & Maintenance section
+  const expirationDate = lifespanMonths ? addMonths(dateAcquired, Number(lifespanMonths)) : '';
+  const nextMaintenanceDate = maintenanceInterval
+    ? addMonths(lastMaintenanceDate || dateAcquired, Number(maintenanceInterval))
+    : '';
+
   const handleRegisterAsset = async () => {
     if (!assetName || !category || !condition || !location || !selectedUserId) {
       Alert.alert('Missing Information', 'Please fill in all required fields and select a valid user/department');
@@ -209,26 +253,24 @@ export default function AssetRegistryScreen() {
       if (!userJson) throw new Error('User session not found');
 
       // Upload the photo once; every bulk copy reuses the same picture file.
+      // A photo failure must NEVER block the registration: the asset still gets
+      // saved so it shows up in Supabase and on the web, and the user is told
+      // the photo was skipped.
       let imageUrl = undefined;
+      let photoWarning = '';
       if (selectedImage) {
         try {
           imageUrl = await uploadAssetPhoto(bulkMode ? 'BULK' : assetId, selectedImage);
         } catch (uploadErr: any) {
           console.warn('Image upload failed:', uploadErr);
-          const errorMsg = uploadErr.message || '';
+          const errorMsg = uploadErr.message || 'Unknown error';
           if (errorMsg.includes('bucket "assets" not found')) {
-            throw new Error('Supabase Storage bucket "assets" not found. Please create it in your Supabase dashboard before uploading photos.');
+            photoWarning = 'The asset was registered, but the photo was not saved: the Supabase Storage bucket "assets" does not exist. Create it in your Supabase dashboard, then re-upload the photo.';
+          } else {
+            photoWarning = `The asset was registered, but the photo upload failed: ${errorMsg}`;
           }
-          throw new Error('Failed to upload asset photo. Please try again.');
         }
       }
-
-      const expirationDate = lifespanMonths
-        ? addMonths(dateAcquired, Number(lifespanMonths))
-        : undefined;
-      const nextMaintenanceDate = maintenanceInterval
-        ? addMonths(dateAcquired, Number(maintenanceInterval))
-        : undefined;
 
       // Unique codes within the batch: each copy gets its own code/QR so they
       // stay identifiable even with identical details.
@@ -259,16 +301,21 @@ export default function AssetRegistryScreen() {
           purchasePrice: Number(purchasePrice) || undefined,
           warrantyMonths: Number(warranty) || undefined,
           lifespanMonths: Number(lifespanMonths) || undefined,
+          lastMaintenanceDate: lastMaintenanceDate || undefined,
           maintenanceInterval: Number(maintenanceInterval) || undefined,
-          expirationDate,
-          nextMaintenanceDate,
+          expirationDate: expirationDate || undefined,
+          nextMaintenanceDate: nextMaintenanceDate || undefined,
           notes,
           status: 'Acquired',
           imageUrl,
         });
       }
 
-      Alert.alert('Success', `Successfully registered ${count} asset${count > 1 ? 's' : ''}.`);
+      Alert.alert(
+        'Success',
+        `Successfully registered ${count} asset${count > 1 ? 's' : ''}.` +
+          (photoWarning ? `\n\n${photoWarning}` : '')
+      );
       router.push('/assets');
     } catch (err) {
       Alert.alert('Registration Failed', (err as Error).message || 'Unable to register asset with Supabase.');
@@ -300,18 +347,22 @@ export default function AssetRegistryScreen() {
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Asset Name *</Text>
+            <Text style={styles.label}>
+              Asset Name <Text style={styles.requiredStar}>*</Text>
+            </Text>
             <TextInput
               style={styles.input}
               placeholder="e.g. Dell Laptop i7-12th Gen"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={TEXT_MUTED}
               value={assetName}
               onChangeText={setAssetName}
             />
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Category *</Text>
+            <Text style={styles.label}>
+              Category <Text style={styles.requiredStar}>*</Text>
+            </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
               {categoryOptions.map((option) => (
                 <TouchableOpacity
@@ -332,7 +383,9 @@ export default function AssetRegistryScreen() {
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Condition *</Text>
+            <Text style={styles.label}>
+              Condition <Text style={styles.requiredStar}>*</Text>
+            </Text>
             <View style={styles.conditionRow}>
               {conditionOptions.map((option) => (
                 <TouchableOpacity
@@ -373,15 +426,17 @@ export default function AssetRegistryScreen() {
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Assign to (Name — Department) *</Text>
+            <Text style={styles.label}>
+              Assign to (Name — Department) <Text style={styles.requiredStar}>*</Text>
+            </Text>
             <View style={[styles.inputWrapper, !selectedUserId && assignTo.length > 0 && styles.inputWrapperError]}>
-              <MaterialCommunityIcons name="account-search-outline" size={20} color="#94A3B8" style={styles.inputIcon} />
+              <MaterialCommunityIcons name="account-search-outline" size={20} color={TEXT_MUTED} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="Type to search users (name or dept)"
+                placeholder="Search by name or dept"
                 value={assignTo}
                 onChangeText={handleUserSearch}
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor={TEXT_MUTED}
               />
               {isSearching && <ActivityIndicator size="small" color={GOLD} style={{ marginRight: 10 }} />}
             </View>
@@ -411,11 +466,13 @@ export default function AssetRegistryScreen() {
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Location *</Text>
+            <Text style={styles.label}>
+              Location <Text style={styles.requiredStar}>*</Text>
+            </Text>
             <TextInput
               style={styles.input}
               placeholder="e.g. Room 301, Engineering Building"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={TEXT_MUTED}
               value={location}
               onChangeText={setLocation}
             />
@@ -432,170 +489,45 @@ export default function AssetRegistryScreen() {
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Date Acquired *</Text>
-            <TouchableOpacity style={styles.dateInput}>
-              <MaterialCommunityIcons name="calendar" size={20} color="#6B7280" />
+            <Text style={styles.label}>
+              Date Acquired <Text style={styles.requiredStar}>*</Text>
+            </Text>
+            <View style={styles.dateInput}>
+              <MaterialCommunityIcons name="calendar" size={20} color={NAVY} />
               <TextInput
                 style={styles.dateInputField}
                 placeholder="mm/dd/yyyy"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={TEXT_MUTED}
                 value={dateAcquired}
                 onChangeText={setDateAcquired}
               />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.twoColumnRow}>
-            <View style={[styles.formGroup, { flex: 1 }]}>
-              <Text style={styles.label}>Purchase Price</Text>
-              <View style={styles.priceInputContainer}>
-                <Text style={styles.currencySymbol}>₱</Text>
-                <TextInput
-                  style={styles.priceInput}
-                  placeholder="0.00"
-                  placeholderTextColor="#9CA3AF"
-                  value={purchasePrice}
-                  onChangeText={setPurchasePrice}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-            </View>
-            <View style={[styles.formGroup, { flex: 1, marginLeft: 12 }]}>
-              <Text style={styles.label}>Warranty (months)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="12"
-                placeholderTextColor="#9CA3AF"
-                value={warranty}
-                onChangeText={setWarranty}
-                keyboardType="numeric"
-              />
             </View>
           </View>
 
-          <View style={styles.twoColumnRow}>
-            <View style={[styles.formGroup, { flex: 1 }]}>
-              <Text style={styles.label}>Lifespan (months)</Text>
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Purchase Price</Text>
+            <View style={styles.priceInputContainer}>
+              <Text style={styles.currencySymbol}>₱</Text>
               <TextInput
-                style={styles.input}
-                placeholder="60"
-                placeholderTextColor="#9CA3AF"
-                value={lifespanMonths}
-                onChangeText={setLifespanMonths}
-                keyboardType="numeric"
-              />
-            </View>
-            <View style={[styles.formGroup, { flex: 1, marginLeft: 12 }]}>
-              <Text style={styles.label}>Maintenance Interval (months)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="6"
-                placeholderTextColor="#9CA3AF"
-                value={maintenanceInterval}
-                onChangeText={setMaintenanceInterval}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-          {(lifespanMonths || maintenanceInterval) && (
-            <Text style={styles.computedHint}>
-              Expiration: {lifespanMonths ? addMonths(dateAcquired, Number(lifespanMonths)) || '—' : '—'} · Next maintenance:{' '}
-              {maintenanceInterval ? addMonths(dateAcquired, Number(maintenanceInterval)) || '—' : '—'}
-            </Text>
-          )}
-        </View>
-
-        {/* Additional Information Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionIcon}>
-              <MaterialCommunityIcons name="text-box-outline" size={18} color={GOLD} />
-            </View>
-            <Text style={styles.sectionTitle}>Additional Information</Text>
-          </View>
-
-          <View style={styles.twoColumnRow}>
-            <View style={[styles.formGroup, { flex: 1 }]}>
-              <Text style={styles.label}>Serial Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter serial number"
-                placeholderTextColor="#9CA3AF"
-                value={serialNumber}
-                onChangeText={setSerialNumber}
-              />
-            </View>
-            <View style={[styles.formGroup, { flex: 1, marginLeft: 12 }]}>
-              <Text style={styles.label}>Model</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Inspiron 3520"
-                placeholderTextColor="#9CA3AF"
-                value={model}
-                onChangeText={setModel}
-              />
-            </View>
-          </View>
-
-          <View style={styles.twoColumnRow}>
-            <View style={[styles.formGroup, { flex: 1 }]}>
-              <Text style={styles.label}>Manufacturer</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Dell Inc."
-                placeholderTextColor="#9CA3AF"
-                value={manufacturer}
-                onChangeText={setManufacturer}
-              />
-            </View>
-            <View style={[styles.formGroup, { flex: 1, marginLeft: 12 }]}>
-              <Text style={styles.label}>Supplier</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. PC Express"
-                placeholderTextColor="#9CA3AF"
-                value={supplier}
-                onChangeText={setSupplier}
+                style={styles.priceInput}
+                placeholder="0.00"
+                placeholderTextColor={TEXT_MUTED}
+                value={purchasePrice}
+                onChangeText={setPurchasePrice}
+                keyboardType="decimal-pad"
               />
             </View>
           </View>
 
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Asset Photo</Text>
-            <TouchableOpacity
-              style={[styles.photoUploadBox, selectedImage && styles.photoUploadBoxActive]}
-              onPress={pickImage}
-              activeOpacity={0.8}
-            >
-              {selectedImage ? (
-                <View style={styles.selectedImageContainer}>
-                  <Image source={{ uri: selectedImage }} style={styles.selectedImage} />
-                  <View style={styles.changePhotoOverlay}>
-                    <MaterialCommunityIcons name="camera" size={24} color="#FFFFFF" />
-                    <Text style={styles.changePhotoText}>Change Photo</Text>
-                  </View>
-                </View>
-              ) : (
-                <>
-                  <MaterialCommunityIcons name="image-outline" size={40} color="#9CA3AF" />
-                  <Text style={styles.photoUploadTitle}>Upload a file or drag and drop</Text>
-                  <Text style={styles.photoUploadSubtitle}>PNG, JPG up to 10MB</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Notes</Text>
+            <Text style={styles.label}>Warranty (months)</Text>
             <TextInput
-              style={[styles.input, styles.notesInput]}
-              placeholder="Additional notes or remarks..."
-              placeholderTextColor="#9CA3AF"
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              numberOfLines={5}
-              textAlignVertical="top"
+              style={styles.input}
+              placeholder="12"
+              placeholderTextColor={TEXT_MUTED}
+              value={warranty}
+              onChangeText={setWarranty}
+              keyboardType="numeric"
             />
           </View>
         </View>
@@ -630,15 +562,185 @@ export default function AssetRegistryScreen() {
               <View style={styles.quantityInputWrap}>
                 <Text style={styles.label}>Copies</Text>
                 <TextInput
-                  style={styles.quantityInput}
+                  style={styles.input}
                   placeholder="e.g. 5"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={TEXT_MUTED}
                   value={quantity}
                   onChangeText={setQuantity}
                   keyboardType="numeric"
                 />
               </View>
             )}
+          </View>
+        </View>
+
+        {/* Lifespan & Maintenance Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <MaterialCommunityIcons name="calendar-heart" size={18} color={GOLD} />
+            </View>
+            <Text style={styles.sectionTitle}>Lifespan & Maintenance</Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Lifespan (months)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., 60"
+              placeholderTextColor={TEXT_MUTED}
+              value={lifespanMonths}
+              onChangeText={setLifespanMonths}
+              keyboardType="numeric"
+            />
+            <Text style={styles.helperText}>Asset will expire after this many months</Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Expiration Date (Auto-Calculated)</Text>
+            <View style={[styles.autoCalcInput, styles.autoCalcFull, !expirationDate && styles.autoCalcInputEmpty]}>
+              <MaterialCommunityIcons name="calendar-clock" size={18} color={NAVY} />
+              <Text style={[styles.autoCalcText, !expirationDate && styles.autoCalcPlaceholder]}>
+                {expirationDate ? formatDateDisplay(expirationDate) : 'mm/dd/yyyy'}
+              </Text>
+            </View>
+            <Text style={styles.helperText}>Auto-calculated: Acquisition Date + Lifespan</Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Last Maintenance Date (Optional)</Text>
+            <View style={styles.dateInput}>
+              <MaterialCommunityIcons name="calendar" size={20} color={NAVY} />
+              <TextInput
+                style={styles.dateInputField}
+                placeholder="mm/dd/yyyy"
+                placeholderTextColor={TEXT_MUTED}
+                value={lastMaintenanceDate}
+                onChangeText={setLastMaintenanceDate}
+              />
+            </View>
+            <Text style={styles.helperText}>
+              If left empty, next maintenance will be calculated from the registration date
+            </Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Maintenance Interval (months)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., 6"
+              placeholderTextColor={TEXT_MUTED}
+              value={maintenanceInterval}
+              onChangeText={setMaintenanceInterval}
+              keyboardType="numeric"
+            />
+            <Text style={styles.helperText}>How often should maintenance be done?</Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Next Maintenance Date (Auto-Calculated)</Text>
+            <View style={[styles.autoCalcInput, styles.autoCalcFull, !nextMaintenanceDate && styles.autoCalcInputEmpty]}>
+              <MaterialCommunityIcons name="calendar-refresh" size={18} color={NAVY} />
+              <Text style={[styles.autoCalcText, !nextMaintenanceDate && styles.autoCalcPlaceholder]}>
+                {nextMaintenanceDate ? formatDateDisplay(nextMaintenanceDate) : 'mm/dd/yyyy'}
+              </Text>
+            </View>
+            <Text style={styles.helperText}>
+              Auto-calculated: Last Maintenance (or Registration Date) + Interval
+            </Text>
+          </View>
+        </View>
+
+        {/* Additional Information Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <MaterialCommunityIcons name="text-box-outline" size={18} color={GOLD} />
+            </View>
+            <Text style={styles.sectionTitle}>Additional Information</Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Serial Number</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. SN-123456"
+              placeholderTextColor={TEXT_MUTED}
+              value={serialNumber}
+              onChangeText={setSerialNumber}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Model</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Inspiron"
+              placeholderTextColor={TEXT_MUTED}
+              value={model}
+              onChangeText={setModel}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Manufacturer</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Dell Inc."
+              placeholderTextColor={TEXT_MUTED}
+              value={manufacturer}
+              onChangeText={setManufacturer}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Supplier</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. PC Express"
+              placeholderTextColor={TEXT_MUTED}
+              value={supplier}
+              onChangeText={setSupplier}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Asset Photo</Text>
+            <TouchableOpacity
+              style={[styles.photoUploadBox, selectedImage && styles.photoUploadBoxActive]}
+              onPress={handlePhotoPress}
+              activeOpacity={0.8}
+            >
+              {selectedImage ? (
+                <View style={styles.selectedImageContainer}>
+                  <Image source={{ uri: selectedImage }} style={styles.selectedImage} />
+                  <View style={styles.changePhotoOverlay}>
+                    <MaterialCommunityIcons name="camera" size={24} color="#FFFFFF" />
+                    <Text style={styles.changePhotoText}>Change Photo</Text>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="image-outline" size={40} color="#9CA3AF" />
+                  <Text style={styles.photoUploadTitle}>Upload a file or drag and drop</Text>
+                  <Text style={styles.photoUploadSubtitle}>PNG, JPG up to 10MB</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Notes</Text>
+            <TextInput
+              style={[styles.input, styles.notesInput]}
+              placeholder="Additional notes or remarks..."
+              placeholderTextColor={TEXT_MUTED}
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+              numberOfLines={5}
+              textAlignVertical="top"
+            />
           </View>
         </View>
 
@@ -719,10 +821,10 @@ export default function AssetRegistryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F1F5F9',
   },
   header: {
-    backgroundColor: '#0C134F',
+    backgroundColor: NAVY_DARK,
     paddingVertical: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -755,10 +857,10 @@ const styles = StyleSheet.create({
   section: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
-    padding: 18,
-    marginBottom: 16,
+    padding: 20,
+    marginBottom: 18,
     shadowColor: '#000',
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.05,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
@@ -767,8 +869,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 16,
-    paddingBottom: 12,
+    marginBottom: 18,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
@@ -783,38 +885,46 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#0C134F',
+    color: NAVY_DARK,
   },
   formGroup: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   label: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 8,
+    color: TEXT_MAIN,
+    marginBottom: 10,
+  },
+  requiredStar: {
+    color: '#EAB308',
+    fontWeight: '800',
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: 1.5,
+    borderColor: BORDER,
     paddingHorizontal: 12,
   },
   inputWrapperError: {
     borderColor: '#EF4444',
-    borderWidth: 1.5,
   },
   inputIcon: {
     marginRight: 10,
   },
   input: {
     flex: 1,
-    paddingVertical: 13,
+    paddingVertical: 14,
     fontSize: 15,
-    color: '#1E293B',
+    color: TEXT_MAIN,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    paddingHorizontal: 14,
   },
   searchResultsContainer: {
     marginTop: 8,
@@ -842,60 +952,88 @@ const styles = StyleSheet.create({
   searchResultName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1E293B',
+    color: TEXT_MAIN,
   },
   searchResultDept: {
     fontSize: 12,
-    color: '#64748B',
+    color: TEXT_MUTED,
     marginTop: 2,
   },
-  twoColumnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
   dateInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 13,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    gap: 10,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    gap: 8,
   },
   dateInputField: {
     flex: 1,
     fontSize: 14,
-    color: '#0F172A',
+    color: TEXT_MAIN,
   },
   priceInputContainer: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 13,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderWidth: 1.5,
+    borderColor: BORDER,
     gap: 8,
   },
   currencySymbol: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
     color: NAVY,
   },
   priceInput: {
     flex: 1,
-    fontSize: 14,
-    color: '#0F172A',
+    fontSize: 15,
+    color: TEXT_MAIN,
+  },
+  autoCalcInput: {
+    backgroundColor: GOLD_SOFT,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(251, 191, 36, 0.55)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  autoCalcFull: {
+    marginBottom: 4,
+  },
+  autoCalcText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    color: NAVY,
+  },
+  autoCalcPlaceholder: {
+    fontWeight: '500',
+    color: '#A08B4E',
+  },
+  autoCalcInputEmpty: {
+    opacity: 1,
+  },
+  helperText: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    marginTop: 8,
+    lineHeight: 18,
   },
   photoUploadBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FAFBFC',
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#E5E7EB',
+    borderColor: '#D3DAE4',
     borderStyle: 'dashed',
     paddingVertical: 28,
     alignItems: 'center',
@@ -947,25 +1085,13 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
   },
   notesInput: {
-    borderColor: '#E2E8F0',
-    borderWidth: 1,
     height: 110,
     paddingTop: 12,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-  },
-  computedHint: {
-    fontSize: 12,
-    color: NAVY,
-    fontWeight: '600',
-    backgroundColor: `${GOLD}1A`,
-    borderRadius: 10,
-    padding: 10,
-    marginTop: 4,
+    textAlignVertical: 'top',
   },
   bulkHint: {
     fontSize: 13,
-    color: '#64748B',
+    color: TEXT_MUTED,
     lineHeight: 19,
     marginBottom: 12,
   },
@@ -973,18 +1099,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 16,
   },
   bulkToggle: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: BORDER,
     borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     flex: 1,
   },
   bulkToggleActive: {
@@ -994,23 +1120,13 @@ const styles = StyleSheet.create({
   bulkToggleText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#64748B',
+    color: TEXT_MUTED,
   },
   bulkToggleTextActive: {
     color: NAVY,
   },
   quantityInputWrap: {
     flex: 1,
-  },
-  quantityInput: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#1E293B',
   },
   idCardSection: {
     marginBottom: 18,
@@ -1114,36 +1230,36 @@ const styles = StyleSheet.create({
   },
   conditionRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
     marginTop: 4,
   },
   conditionCard: {
     flex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    gap: 6,
+    gap: 8,
   },
   conditionLabel: {
     fontSize: 11,
-    color: '#64748B',
+    color: TEXT_MUTED,
     fontWeight: '500',
     textAlign: 'center',
   },
   categoryRow: {
-    gap: 10,
-    paddingVertical: 4,
+    gap: 12,
+    paddingVertical: 6,
   },
   categoryCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    paddingVertical: 12,
+    borderWidth: 1.5,
+    borderColor: BORDER,
   },
   categoryCardActive: {
     backgroundColor: NAVY,
@@ -1151,12 +1267,11 @@ const styles = StyleSheet.create({
   },
   categoryLabel: {
     fontSize: 13,
-    color: '#64748B',
+    color: TEXT_MUTED,
     fontWeight: '500',
   },
   categoryLabelActive: {
     color: '#FFFFFF',
     fontWeight: '700',
   },
-
-});
+});

@@ -1,5 +1,17 @@
 import { supabase } from './supabase';
 
+/**
+ * Roles that make up the Asset Management Office — the accounts that review
+ * requests. Mirrors the mobile login router (Admin / AssetOfficer).
+ */
+export const OFFICE_ROLES = ['Admin', 'AssetOfficer'];
+
+/** True when a stored user belongs to the Asset Management Office. */
+export const isOfficeRole = (role?: string | null): boolean => {
+  const key = String(role ?? '').trim().toLowerCase().replace(/\s+/g, '');
+  return OFFICE_ROLES.some((candidate) => candidate.toLowerCase() === key);
+};
+
 export type AppNotification = {
   id: number | string;
   user_id: number | string;
@@ -39,6 +51,107 @@ export async function fetchNotifications(
     notifications: list.map((n) => ({ ...n, is_read: Boolean(n.is_read) })),
     unread: count ?? list.filter((n) => !n.is_read).length,
   };
+}
+
+/**
+ * Create a notification for a user. Mirrors the web app's `createNotification`
+ * helper so a mobile action (repair submitted / in progress / completed / …)
+ * shows up in the same bell list on every client. Best-effort: a notification
+ * failure must never block the action the user actually performed.
+ */
+export async function createNotification(params: {
+  userId: string | number | undefined | null;
+  title: string;
+  message: string;
+  type?: string;
+  referenceId?: string | number | null;
+  referenceType?: string | null;
+}): Promise<void> {
+  if (params.userId === undefined || params.userId === null || params.userId === '') return;
+
+  try {
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('notifications').insert([
+      {
+        user_id: params.userId,
+        title: params.title,
+        message: params.message,
+        type: params.type ?? 'REQUEST',
+        reference_id: params.referenceId ?? null,
+        reference_type: params.referenceType ?? null,
+        is_read: false,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    if (error) console.warn('Notification insert failed:', error.message);
+  } catch (err) {
+    console.warn('Notification insert failed:', err);
+  }
+}
+
+/**
+ * Send the same notification to every Asset Management Office account (Admin /
+ * AssetOfficer) — used whenever a user submits a request so the office sees it
+ * in the bell right away, without opening the Requests screen. Best-effort: a
+ * notification failure must never block the request the user actually filed.
+ */
+export async function notifyAdmins(options: {
+  title: string;
+  message: string;
+  type?: string;
+  referenceId?: string | number | null;
+  referenceType?: string | null;
+}): Promise<number> {
+  try {
+    const { data, error } = await supabase.from('users').select('id, role').in('role', OFFICE_ROLES);
+    if (error) {
+      console.warn('Office lookup for notifications failed:', error.message);
+      return 0;
+    }
+
+    let sent = 0;
+    for (const admin of ((data ?? []) as any[])) {
+      if (admin?.id === undefined || admin?.id === null) continue;
+      await createNotification({
+        userId: admin.id,
+        title: options.title,
+        message: options.message,
+        type: options.type ?? 'REQUEST',
+        referenceId: options.referenceId ?? null,
+        referenceType: options.referenceType ?? 'request',
+      });
+      sent += 1;
+    }
+    return sent;
+  } catch (err) {
+    console.warn('Admin notification failed:', err);
+    return 0;
+  }
+}
+
+/**
+ * True when a notification of this type already exists for the referenced
+ * record — used so recurring checks (maintenance due, lifespan expired) don't
+ * spam the same person every time a screen loads.
+ */
+export async function notificationExists(
+  type: string,
+  referenceId: string | number | null | undefined,
+): Promise<boolean> {
+  if (referenceId === null || referenceId === undefined || referenceId === '') return false;
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('id')
+      .eq('type', type)
+      .eq('reference_id', referenceId as any)
+      .limit(1);
+    if (error) return false;
+    return (data ?? []).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function fetchUnreadNotificationCount(

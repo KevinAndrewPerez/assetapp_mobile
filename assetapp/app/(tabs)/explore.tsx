@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, View, TextInput, RefreshControl, ActivityIndicator } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, TextInput, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 
 interface Asset {

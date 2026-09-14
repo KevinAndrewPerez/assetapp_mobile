@@ -1,64 +1,201 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  Platform,
   ActivityIndicator,
+  Alert,
   Image,
+  Modal,
+  TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { fetchAssets, AssetSummary } from '../lib/assetService';
-import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
+
+import { AssetDetail, completeMaintenance, fetchAssetDetail } from '../lib/assetService';
+import {
+  EvaluationAction,
+  runAssetEvaluation,
+  runAssetEvaluationCheck,
+  todayIso,
+} from '../lib/maintenanceService';
+import { resolveActingUserLabel } from '../lib/actorService';
+import { getStoredUser } from '../lib/userService';
 import QRViewModal from '../components/QRViewModal';
+
+const NAVY = '#0C134F';
+const NAVY_MID = '#1E3A5F';
+const BRICK = '#DC2626';
+const FOREST = '#059669';
+const BRONZE = '#B45309';
+const STEEL = '#2563EB';
+
+/** The screen's own actions: the evaluation decisions plus maintenance. */
+type PageAction = EvaluationAction | 'maintenance_complete';
+
+const ACTION_TITLES: Record<PageAction, string> = {
+  return_active: 'Return Asset to Active',
+  send_repair: 'Send Asset for Repair',
+  recommend_replacement: 'Recommend Replacement',
+  proceed_disposal: 'Proceed with Disposal',
+  extend_lifespan_pullout: 'Extend Asset Lifespan',
+  maintenance_complete: 'Mark Maintenance Complete',
+};
+
+const dayDiff = (iso?: string | null, from = todayIso()) => {
+  if (!iso) return null;
+  const target = Date.parse(`${String(iso).slice(0, 10)}T00:00:00`);
+  const start = Date.parse(`${from}T00:00:00`);
+  if (Number.isNaN(target) || Number.isNaN(start)) return null;
+  return Math.round((target - start) / 86400000);
+};
+
+const formatLong = (iso?: string | null) => {
+  if (!iso) return '—';
+  try {
+    return new Date(`${String(iso).slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+    });
+  } catch {
+    return String(iso);
+  }
+};
+
+const peso = (value: number | null) =>
+  value === null || value === undefined
+    ? '—'
+    : `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function AssetDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams() as { id: string };
-  const [asset, setAsset] = useState<AssetSummary | null>(null);
+  const [asset, setAsset] = useState<AssetDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const [action, setAction] = useState<PageAction | null>(null);
+  const [notes, setNotes] = useState('');
+  const [months, setMonths] = useState('12');
+  const [processing, setProcessing] = useState(false);
 
-  useEffect(() => {
-    const loadAsset = async () => {
+  const load = useCallback(
+    async (transition = false) => {
+      if (!id) return;
       try {
         setLoading(true);
-        const assets = await fetchAssets();
-        const found = assets.find(a => a.id === id);
-        setAsset(found || null);
+        const user = await getStoredUser();
+
+        // Same auto-transition the web's asset-detail route performs on open:
+        // an Active asset whose lifespan expired (or whose maintenance is
+        // overdue) is moved to For Checking before it is rendered.
+        if (transition) {
+          try {
+            await runAssetEvaluationCheck({ assetId: id, actorId: user?.id ?? null });
+          } catch (e) {
+            console.warn('Asset evaluation check failed:', e);
+          }
+        }
+
+        setAsset(await fetchAssetDetail(id));
       } catch (error) {
         console.error('Error loading asset details:', error);
+        setAsset(null);
       } finally {
         setLoading(false);
       }
+    },
+    [id],
+  );
+
+  useEffect(() => {
+    const bootstrap = async () => {
+      await load(true);
     };
+    bootstrap();
+  }, [load]);
 
-    if (id) loadAsset();
-  }, [id]);
+  const closeAction = () => {
+    setAction(null);
+    setNotes('');
+    setMonths('12');
+  };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'N/A';
+  const openAction = (next: PageAction) => {
+    setAction(next);
+    setNotes('');
+    setMonths('12');
+  };
+
+  const confirmAction = async () => {
+    if (!action || !asset) return;
+    setProcessing(true);
     try {
-      const date = new Date(dateStr);
-      return date.toLocaleDateString('en-US', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric'
+      const actor = await resolveActingUserLabel();
+      const trimmed = notes.trim();
+
+      if (action === 'maintenance_complete') {
+        const result = await completeMaintenance({
+          assetId: asset.id,
+          actorId: actor.id,
+          actorLabel: actor.label,
+          notes: trimmed,
+          performedDate: todayIso(),
+        });
+        closeAction();
+        await load();
+        Alert.alert(
+          'Maintenance completed',
+          `Asset preventive maintenance performed and completed.\nLifecycle status is now ${
+            result.status
+          }.${
+            result.nextMaintenanceDate
+              ? `\nNext maintenance: ${formatLong(result.nextMaintenanceDate)}`
+              : ''
+          }`,
+        );
+        return;
+      }
+
+      const result = await runAssetEvaluation({
+        assetId: asset.id,
+        action,
+        notes: trimmed,
+        extensionMonths: action === 'extend_lifespan_pullout' ? Number(months) || 0 : Number(months) || 0,
+        actorId: actor.id,
+        actorLabel: actor.label,
       });
-    } catch {
-      return dateStr;
+
+      closeAction();
+      await load();
+
+      const messages: Record<EvaluationAction, string> = {
+        return_active: 'Asset returned to Active status',
+        send_repair: 'Asset sent for repair evaluation',
+        recommend_replacement: 'Asset recommended for replacement',
+        proceed_disposal: 'Asset marked for disposal',
+        extend_lifespan_pullout: 'Lifespan extended. Asset remains in Pullout.',
+      };
+      Alert.alert(
+        'Evaluation saved',
+        `${messages[action]}${result.expirationDate ? `\nNew expiration: ${formatLong(result.expirationDate)}` : ''}`,
+      );
+    } catch (err) {
+      Alert.alert('Error', (err as Error).message || 'Failed to update the asset.');
+    } finally {
+      setProcessing(false);
     }
   };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#1E3A5F" />
+        <ActivityIndicator size="large" color={NAVY_MID} />
       </View>
     );
   }
@@ -83,6 +220,49 @@ export default function AssetDetailsScreen() {
     );
   }
 
+  const isExpired = !!asset.expirationDate && asset.expirationDate <= todayIso();
+  const isPullout = asset.rawStatus.trim().toLowerCase() === 'pullout';
+  const expiryDays = dayDiff(asset.expirationDate);
+  const nextMaintDays = dayDiff(asset.nextMaintenanceDate);
+  const maintenanceOverdue = nextMaintDays !== null && nextMaintDays < 0;
+  const maintenanceDueSoon = nextMaintDays !== null && nextMaintDays >= 0 && nextMaintDays <= 14;
+  const showLifespan = asset.lifespanMonths !== null || !!asset.expirationDate;
+  const showUpkeep = asset.maintenanceInterval !== null || !!asset.nextMaintenanceDate;
+  // Same rule as the web: a pulled-out asset whose lifespan expired is handled
+  // by the "extend lifespan / dispose" panel, not by the maintenance button.
+  const canCompleteMaintenance =
+    !!asset.nextMaintenanceDate && !(isExpired && isPullout);
+
+  const statusTone =
+    asset.rawStatus.trim().toLowerCase() === 'active'
+      ? { bg: '#F0FDF4', fg: FOREST }
+      : isPullout
+        ? { bg: '#EFF6FF', fg: STEEL }
+        : { bg: '#FFFBEB', fg: BRONZE };
+
+  const tile = (
+    key: EvaluationAction,
+    icon: string,
+    title: string,
+    subtitle: string,
+    tone: string,
+  ) => (
+    <TouchableOpacity
+      key={key}
+      style={[styles.actionTile, { borderLeftColor: tone }]}
+      activeOpacity={0.85}
+      onPress={() => openAction(key)}
+    >
+      <View style={styles.actionTileText}>
+        <Text style={styles.actionTileTitle}>{title}</Text>
+        <Text style={styles.actionTileSubtitle}>{subtitle}</Text>
+      </View>
+      <View style={[styles.actionTileIcon, { backgroundColor: tone }]}>
+        <MaterialCommunityIcons name={icon as any} size={18} color="#FFFFFF" />
+      </View>
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -90,101 +270,392 @@ export default function AssetDetailsScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Asset Details</Text>
-        <TouchableOpacity style={styles.editButton}>
-          <MaterialCommunityIcons name="pencil-outline" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Asset Basic Info Card */}
-        <View style={styles.mainCard}>
-          <View style={styles.statusBadgeRow}>
-            <View style={[styles.statusBadge, { backgroundColor: asset.status === 'Active' ? '#F0FDF4' : '#FFFBEB' }]}>
-              <View style={[styles.statusDot, { backgroundColor: asset.status === 'Active' ? '#10B981' : '#FBBF24' }]} />
-              <Text style={[styles.statusText, { color: asset.status === 'Active' ? '#10B981' : '#FBBF24' }]}>{asset.status}</Text>
-            </View>
-            <Text style={styles.assetIdText}>#{asset.assetId}</Text>
-          </View>
-
+        {/* Registry header band */}
+        <View style={styles.headerBand}>
+          <Text style={styles.eyebrowGold}>ASSET RECORD</Text>
           <Text style={styles.assetTitle}>{asset.title}</Text>
-          <Text style={styles.assetCategory}>{asset.category}</Text>
-          
-          <View style={styles.locationRow}>
-            <MaterialCommunityIcons name="map-marker-outline" size={16} color="#64748B" />
-            <Text style={styles.locationText}>{asset.department} • {asset.location || 'No specific location'}</Text>
+          <Text style={styles.assetCode}>{asset.assetId}</Text>
+
+          <View style={styles.headerPills}>
+            <View style={[styles.statusPill, { backgroundColor: statusTone.bg }]}>
+              <MaterialCommunityIcons name="shield-check" size={14} color={statusTone.fg} />
+              <Text style={[styles.statusPillText, { color: statusTone.fg }]}>
+                {asset.rawStatus || 'Unknown'}
+              </Text>
+            </View>
+            <Text style={styles.assignedTo}>
+              Assigned to <Text style={styles.assignedToValue}>{asset.custodian}</Text>
+            </Text>
+          </View>
+
+          <View style={styles.headerMediaRow}>
+            {asset.imageUrl && !photoFailed ? (
+              <Image
+                source={{ uri: asset.imageUrl }}
+                style={styles.assetPhoto}
+                resizeMode="cover"
+                onError={(event) => {
+                  console.warn(
+                    '[asset-details] Photo failed:',
+                    asset.imageUrl,
+                    event.nativeEvent?.error ?? event,
+                  );
+                  setPhotoFailed(true);
+                }}
+              />
+            ) : (
+              <View style={styles.noPhoto}>
+                <MaterialCommunityIcons name="image-off-outline" size={26} color="#94A3B8" />
+                <Text style={styles.noPhotoText}>No Photo</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.qrStub}
+              activeOpacity={0.85}
+              onPress={() => setQrModalVisible(true)}
+            >
+              <Text style={styles.qrStubLabel}>SCAN TO VERIFY</Text>
+              <QRCode value={asset.assetId} size={78} backgroundColor="white" />
+              <Text style={styles.qrStubHint}>Tap to expand</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Asset Photo (from asset_files) */}
-        {asset.imageUrl ? (
-          <View style={styles.photoCard}>
-            <Image source={{ uri: asset.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
+        <View style={styles.body}>
+          {/* Record fields */}
+          <View style={styles.fieldGrid}>
+            <Field label="Acquisition Date" value={formatLong(asset.acquisitionDate)} />
+            <Field label="Purchase Price" value={peso(asset.purchasePrice)} mono />
+            <Field label="Serial Number" value={asset.serialNumber || '—'} mono />
+            <Field label="Location" value={asset.location || '—'} />
+            <Field label="Condition" value={asset.condition || '—'} />
+            <Field label="Category" value={asset.category || '—'} />
+            <Field label="Department" value={asset.department || '—'} />
+            <Field label="Last Updated" value={formatLong(asset.updatedAt)} />
           </View>
-        ) : null}
 
-        {/* QR Code Section */}
-        <TouchableOpacity 
-          style={styles.qrSection} 
-          onPress={() => setQrModalVisible(true)}
-          activeOpacity={0.9}
-        >
-          <LinearGradient
-            colors={['#1E3A5F', '#2D5A8E']}
-            style={styles.qrGradient}
+          {/* Asset Lifespan */}
+          {showLifespan ? (
+            <View style={styles.section}>
+              <Text style={styles.eyebrow}>LIFECYCLE</Text>
+              <Text style={styles.sectionTitle}>Asset Lifespan</Text>
+              <View style={styles.twoCol}>
+                <View style={styles.col}>
+                  <Text style={styles.fieldLabel}>LIFESPAN DURATION</Text>
+                  <Text style={styles.fieldValue}>
+                    {asset.lifespanMonths ? `${asset.lifespanMonths} months` : '—'}
+                  </Text>
+                </View>
+                <View style={styles.col}>
+                  <Text style={styles.fieldLabel}>EXPIRATION DATE</Text>
+                  <Text
+                    style={[
+                      styles.fieldValue,
+                      { color: isExpired ? BRICK : expiryDays !== null && expiryDays < 90 ? BRONZE : NAVY },
+                    ]}
+                  >
+                    {formatLong(asset.expirationDate)}
+                    {isExpired && expiryDays !== null ? (
+                      <Text style={styles.fieldNote}> (Expired {Math.abs(expiryDays)} days ago)</Text>
+                    ) : expiryDays !== null && expiryDays < 90 ? (
+                      <Text style={styles.fieldNote}> ({expiryDays} days remaining)</Text>
+                    ) : null}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Maintenance Schedule */}
+          {showUpkeep ? (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <View style={styles.col}>
+                  <Text style={styles.eyebrow}>UPKEEP</Text>
+                  <Text style={styles.sectionTitle}>Maintenance Schedule</Text>
+                </View>
+                {maintenanceOverdue ? (
+                  <View style={[styles.duePill, { backgroundColor: '#F7E2DF', borderColor: BRICK }]}>
+                    <Text style={[styles.duePillText, { color: BRICK }]}>OVERDUE</Text>
+                  </View>
+                ) : maintenanceDueSoon ? (
+                  <View style={[styles.duePill, { backgroundColor: '#F5EAD4', borderColor: BRONZE }]}>
+                    <Text style={[styles.duePillText, { color: BRONZE }]}>DUE SOON</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.twoCol}>
+                <View style={styles.col}>
+                  <Text style={styles.fieldLabel}>MAINTENANCE INTERVAL</Text>
+                  <Text style={styles.fieldValue}>
+                    {asset.maintenanceInterval ? `${asset.maintenanceInterval} months` : '—'}
+                  </Text>
+                </View>
+                <View style={styles.col}>
+                  <Text style={styles.fieldLabel}>LAST MAINTENANCE DATE</Text>
+                  <Text style={styles.fieldValue}>{formatLong(asset.lastMaintenanceDate)}</Text>
+                </View>
+                <View style={styles.col}>
+                  <Text style={styles.fieldLabel}>NEXT MAINTENANCE DUE</Text>
+                  <Text
+                    style={[
+                      styles.fieldValue,
+                      {
+                        color: maintenanceOverdue
+                          ? BRICK
+                          : nextMaintDays !== null && nextMaintDays < 14
+                            ? BRONZE
+                            : NAVY,
+                      },
+                    ]}
+                  >
+                    {formatLong(asset.nextMaintenanceDate)}
+                    {nextMaintDays !== null ? (
+                      <Text style={styles.fieldNote}>
+                        {maintenanceOverdue
+                          ? ` (${Math.abs(nextMaintDays)} days overdue)`
+                          : nextMaintDays < 14
+                            ? ` (${nextMaintDays} days)`
+                            : ''}
+                      </Text>
+                    ) : null}
+                  </Text>
+                </View>
+                <View style={styles.col}>
+                  <Text style={styles.fieldLabel}>REPAIR HISTORY</Text>
+                  <Text style={styles.fieldValue}>{asset.repairCounts ?? 0} repair(s)</Text>
+                </View>
+              </View>
+
+              {canCompleteMaintenance ? (
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  activeOpacity={0.85}
+                  onPress={() => openAction('maintenance_complete')}
+                >
+                  <MaterialCommunityIcons name="checkbox-marked-circle-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.primaryButtonText}>Mark Maintenance Complete</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Evaluation panel — shown for an asset past its lifespan */}
+          {isExpired ? (
+            <View style={styles.evalPanel}>
+              <View style={styles.evalPanelHeader}>
+                <View style={styles.evalIconBadge}>
+                  <MaterialCommunityIcons name="alert-outline" size={20} color="#FFFFFF" />
+                </View>
+                <View style={styles.evalPanelText}>
+                  <Text style={styles.evalPanelTitle}>
+                    {isPullout ? 'Expired Pullout Asset' : 'Expired Asset Evaluation'}
+                  </Text>
+                  <Text style={styles.evalPanelBody}>
+                    {isPullout
+                      ? 'This pulled-out asset has reached the end of its operational lifespan. You can extend its lifespan or proceed with disposal. Status will remain Pullout.'
+                      : 'This asset has reached the end of its operational lifespan and requires evaluation.'}
+                  </Text>
+                  <Text style={styles.evalPanelHint}>Please select an appropriate action:</Text>
+                </View>
+              </View>
+
+              {isPullout ? (
+                <>
+                  {tile(
+                    'extend_lifespan_pullout',
+                    'calendar-check',
+                    'Extend Lifespan',
+                    'Keep as Pullout\nAdd months to expiration date',
+                    FOREST,
+                  )}
+                  {tile(
+                    'proceed_disposal',
+                    'delete-outline',
+                    'Proceed with Disposal',
+                    'Asset no longer serviceable\nEnd of life disposal process',
+                    BRICK,
+                  )}
+                </>
+              ) : (
+                <>
+                  {tile(
+                    'return_active',
+                    'check-all',
+                    'Return to Active',
+                    'Asset is still functional\nOptional lifespan extension',
+                    FOREST,
+                  )}
+                  {tile(
+                    'send_repair',
+                    'wrench-outline',
+                    'Send for Repair',
+                    'Asset needs maintenance\nSchedule repair evaluation',
+                    BRONZE,
+                  )}
+                  {tile(
+                    'recommend_replacement',
+                    'refresh',
+                    'Recommend Replacement',
+                    'Asset beyond economical repair\nInitiate replacement process',
+                    STEEL,
+                  )}
+                  {tile(
+                    'proceed_disposal',
+                    'delete-outline',
+                    'Proceed with Disposal',
+                    'Asset no longer serviceable\nEnd of life disposal process',
+                    BRICK,
+                  )}
+                </>
+              )}
+            </View>
+          ) : null}
+
+          <TouchableOpacity
+            style={styles.backToAssets}
+            activeOpacity={0.85}
+            onPress={() => router.push('/assets-list')}
           >
-            <View style={styles.qrContainer}>
-              <QRCode value={asset.assetId} size={160} backgroundColor="white" />
-            </View>
-            <Text style={styles.qrLabel}>Tap to Expand QR Code</Text>
-            <View style={styles.qrFooter}>
-              <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FBBF24" />
-              <Text style={styles.qrAssetId}>{asset.assetId}</Text>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        {/* Detailed Information */}
-        <View style={styles.detailsSection}>
-          <Text style={styles.sectionTitle}>Technical Details</Text>
-          <View style={styles.detailsGrid}>
-            <DetailBox icon="barcode" label="Serial Number" value={asset.serialNumber} />
-            <DetailBox icon="calendar-check" label="Acquisition Date" value={formatDate(asset.acquisitionDate)} />
-            <DetailBox icon="account-tie" label="Custodian" value={asset.custodian} />
-            <DetailBox icon="update" label="Last Updated" value={formatDate(asset.updatedAt)} />
-            <DetailBox icon="tag" label="Category" value={asset.category} />
-            <DetailBox icon="office-building" label="Department" value={asset.department} />
-          </View>
+            <Text style={styles.backToAssetsText}>← Back to assets</Text>
+          </TouchableOpacity>
         </View>
-
-        {/* Quick Actions */}
-        <View style={styles.actionsSection}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.actionButton}>
-              <View style={[styles.actionIcon, { backgroundColor: '#EFF6FF' }]}>
-                <MaterialCommunityIcons name="wrench-outline" size={24} color="#3B82F6" />
-              </View>
-              <Text style={styles.actionLabel}>Report Issue</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.actionButton}>
-              <View style={[styles.actionIcon, { backgroundColor: '#FEF2F2' }]}>
-                <MaterialCommunityIcons name="history" size={24} color="#EF4444" />
-              </View>
-              <Text style={styles.actionLabel}>View History</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionButton}>
-              <View style={[styles.actionIcon, { backgroundColor: '#F0FDF4' }]}>
-                <MaterialCommunityIcons name="share-variant-outline" size={24} color="#10B981" />
-              </View>
-              <Text style={styles.actionLabel}>Transfer</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.spacer} />
       </ScrollView>
+
+      {/* Action modal */}
+      <Modal visible={action !== null} transparent animationType="fade" onRequestClose={closeAction}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{action ? ACTION_TITLES[action] : ''}</Text>
+              <TouchableOpacity onPress={closeAction} activeOpacity={0.7}>
+                <MaterialCommunityIcons name="close" size={22} color={NAVY} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              {action === 'maintenance_complete' ? (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoBoxText}>
+                    Reschedules the next maintenance from the configured interval. The asset stays{' '}
+                    <Text style={styles.bold}>in review</Text> (For Checking) instead of returning to Active
+                    automatically.
+                  </Text>
+                </View>
+              ) : null}
+
+              {action === 'return_active' ? (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoBoxText}>
+                    Asset will be returned to <Text style={styles.bold}>Active</Text> status. Add months below to
+                    extend its lifespan at the same time.
+                  </Text>
+                </View>
+              ) : null}
+
+              {action === 'extend_lifespan_pullout' ? (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoBoxText}>
+                    The asset stays in <Text style={styles.bold}>Pullout</Text> status — only the expiration date
+                    moves forward, so it can never return to Active from here.
+                  </Text>
+                </View>
+              ) : null}
+
+              {action === 'proceed_disposal' ? (
+                <View style={[styles.infoBox, styles.infoBoxDanger]}>
+                  <Text style={styles.infoBoxDangerText}>
+                    This marks the end of the asset&apos;s operational lifespan. Its record stays in NU TRACE for
+                    history and auditing.
+                  </Text>
+                </View>
+              ) : null}
+
+              {action === 'return_active' || action === 'extend_lifespan_pullout' ? (
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>
+                    {action === 'return_active'
+                      ? 'ADDITIONAL LIFESPAN MONTHS'
+                      : 'ADDITIONAL LIFESPAN MONTHS *'}
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    value={months}
+                    onChangeText={setMonths}
+                    keyboardType="numeric"
+                    placeholder="12"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <Text style={styles.inputHint}>
+                    {action === 'return_active'
+                      ? 'Leave 0 to keep the current expiration date.'
+                      : 'Between 1 and 120 months, counted from the current expiration date.'}
+                  </Text>
+                </View>
+              ) : null}
+
+              {action !== 'maintenance_complete' ? (
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>
+                    {action === 'send_repair'
+                      ? 'ISSUES OR DETERIORATION IDENTIFIED'
+                      : action === 'recommend_replacement'
+                        ? 'REASON FOR REPLACEMENT'
+                        : action === 'proceed_disposal'
+                          ? 'REASON FOR DISPOSAL'
+                          : 'NOTES (OPTIONAL)'}
+                  </Text>
+                  <TextInput
+                    style={[styles.input, styles.textArea]}
+                    value={notes}
+                    onChangeText={setNotes}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                    placeholder={
+                      action === 'send_repair'
+                        ? 'What is wrong with the asset?'
+                        : action === 'recommend_replacement'
+                          ? 'Beyond economical repair, obsolete…'
+                          : action === 'proceed_disposal'
+                            ? 'No longer serviceable'
+                            : 'Evaluation notes'
+                    }
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                onPress={closeAction}
+                disabled={processing}
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnPrimary]}
+                onPress={confirmAction}
+                disabled={processing}
+              >
+                {processing ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalBtnPrimaryText}>Confirm</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <QRViewModal
         visible={qrModalVisible}
@@ -196,14 +667,11 @@ export default function AssetDetailsScreen() {
   );
 }
 
-function DetailBox({ icon, label, value }: { icon: string, label: string, value?: string }) {
+function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <View style={styles.detailBox}>
-      <View style={styles.detailHeader}>
-        <MaterialCommunityIcons name={icon as any} size={18} color="#94A3B8" />
-        <Text style={styles.detailLabel}>{label}</Text>
-      </View>
-      <Text style={styles.detailValue}>{value || 'N/A'}</Text>
+    <View style={styles.fieldBox}>
+      <Text style={styles.fieldLabel}>{label.toUpperCase()}</Text>
+      <Text style={[styles.fieldValue, mono ? styles.mono : null]}>{value}</Text>
     </View>
   );
 }
@@ -220,16 +688,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   header: {
-    backgroundColor: '#1E3A5F',
-    paddingHorizontal: 20,
+    backgroundColor: NAVY,
+    paddingHorizontal: 16,
     paddingVertical: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   backButton: {
-    padding: 8,
-    marginLeft: -8,
+    padding: 6,
+    marginLeft: -6,
   },
   headerTitle: {
     fontSize: 20,
@@ -238,201 +706,399 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  editButton: {
-    padding: 8,
-    marginRight: -8,
+  headerSpacer: {
+    width: 32,
   },
   scrollContent: {
-    padding: 20,
+    paddingBottom: 48,
   },
-  mainCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 15,
-    elevation: 3,
+  headerBand: {
+    backgroundColor: NAVY,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
   },
-  statusBadgeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  assetIdText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#94A3B8',
+  eyebrowGold: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: '#FBBF24',
+    marginBottom: 6,
   },
   assetTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#1E3A5F',
-    marginBottom: 8,
+    color: '#FFFFFF',
   },
-  assetCategory: {
-    fontSize: 16,
-    color: '#64748B',
-    fontWeight: '500',
-    marginBottom: 16,
+  assetCode: {
+    fontSize: 13,
+    color: 'rgba(253, 184, 51, 0.85)',
+    marginTop: 4,
   },
-  locationRow: {
+  headerPills: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
+    marginTop: 12,
+    flexWrap: 'wrap',
   },
-  locationText: {
-    fontSize: 14,
-    color: '#64748B',
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
   },
-  photoCard: {
-    borderRadius: 24,
-    overflow: 'hidden',
-    marginBottom: 20,
-    backgroundColor: '#F1F5F9',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  assignedTo: {
+    fontSize: 13,
+    color: '#C7D2E3',
+  },
+  assignedToValue: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  headerMediaRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 14,
+    marginTop: 16,
   },
   assetPhoto: {
-    width: '100%',
-    height: 200,
-  },
-  qrSection: {
-    borderRadius: 24,
-    overflow: 'hidden',
-    marginBottom: 24,
-    elevation: 5,
-    shadowColor: '#1E3A5F',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-  },
-  qrGradient: {
-    padding: 30,
-    alignItems: 'center',
-  },
-  qrContainer: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    marginBottom: 16,
-  },
-  qrLabel: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 12,
-  },
-  qrFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    width: 96,
+    height: 96,
     borderRadius: 12,
-    gap: 10,
   },
-  qrAssetId: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 1,
+  noPhoto: {
+    width: 96,
+    height: 96,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
   },
-  detailsSection: {
-    marginBottom: 24,
+  noPhotoText: {
+    fontSize: 11,
+    color: '#94A3B8',
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1E3A5F',
-    marginBottom: 16,
+  qrStub: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
   },
-  detailsGrid: {
+  qrStubLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: NAVY_MID,
+  },
+  qrStubHint: {
+    fontSize: 10,
+    color: '#64748B',
+  },
+  body: {
+    padding: 20,
+  },
+  fieldGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
   },
-  detailBox: {
-    width: '48%',
+  fieldBox: {
+    // Full width so long values (asset codes, categories) run to the right edge
+    // instead of leaving half the row empty.
+    width: '100%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#F1F5F9',
   },
-  detailHeader: {
+  section: {
+    marginTop: 20,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  sectionHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  detailLabel: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#1E3A5F',
-    fontWeight: '700',
-  },
-  actionsSection: {
-    marginBottom: 20,
-  },
-  actionButtons: {
-    flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    gap: 10,
+  },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    color: '#94A3B8',
+    marginBottom: 2,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: NAVY,
+    marginBottom: 12,
+  },
+  twoCol: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
-  actionButton: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
+  col: {
+    width: '48%',
+  },
+  fieldLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: '#94A3B8',
+    marginBottom: 4,
+  },
+  fieldValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: NAVY,
+    lineHeight: 20,
+  },
+  mono: {
+    fontVariant: ['tabular-nums'],
+  },
+  fieldNote: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  duePill: {
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  actionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
+  duePillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  primaryButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: FOREST,
   },
-  actionLabel: {
-    fontSize: 12,
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  evalPanel: {
+    marginTop: 20,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  evalPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: '#FBF3F0',
+    borderWidth: 1,
+    borderColor: '#E7C9C1',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+  },
+  evalIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: BRICK,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  evalPanelText: {
+    flex: 1,
+  },
+  evalPanelTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#8C2F27',
+  },
+  evalPanelBody: {
+    fontSize: 13,
+    color: '#7A4A44',
+    marginTop: 4,
+    lineHeight: 19,
+  },
+  evalPanelHint: {
+    fontSize: 13,
+    color: '#7A4A44',
+    marginTop: 8,
     fontWeight: '600',
-    color: '#1E3A5F',
   },
-  spacer: {
-    height: 40,
+  actionTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderLeftWidth: 4,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+  },
+  actionTileText: {
+    flex: 1,
+  },
+  actionTileTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: NAVY,
+  },
+  actionTileSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  actionTileIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backToAssets: {
+    marginTop: 22,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  backToAssetsText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: NAVY_MID,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: NAVY,
+    flex: 1,
+  },
+  modalBody: {
+    gap: 10,
+  },
+  infoBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 12,
+  },
+  infoBoxText: {
+    fontSize: 12.5,
+    color: '#1E40AF',
+    lineHeight: 18,
+  },
+  infoBoxDanger: {
+    backgroundColor: '#FEF2F2',
+  },
+  infoBoxDangerText: {
+    fontSize: 12.5,
+    color: '#B91C1C',
+    lineHeight: 18,
+  },
+  bold: {
+    fontWeight: '800',
+  },
+  formGroup: {
+    marginTop: 4,
+  },
+  formLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    color: '#94A3B8',
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: NAVY,
+  },
+  textArea: {
+    minHeight: 76,
+  },
+  inputHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 6,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBtnGhost: {
+    backgroundColor: '#F1F5F9',
+  },
+  modalBtnGhostText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  modalBtnPrimary: {
+    backgroundColor: NAVY_MID,
+  },
+  modalBtnPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   emptyState: {
     flex: 1,
@@ -448,7 +1114,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   goBackButton: {
-    backgroundColor: '#1E3A5F',
+    backgroundColor: NAVY_MID,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,

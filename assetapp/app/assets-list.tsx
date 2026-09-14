@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { fetchAssets, AssetSummary } from '../lib/assetService';
@@ -189,9 +189,7 @@ export default function AssetsListScreen() {
               {expanded && (
                 <View style={styles.assetDetails}>
                   {item.imageUrl ? (
-                    <View style={styles.photoCard}>
-                      <Image source={{ uri: item.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
-                    </View>
+                    <AssetPhoto uri={item.imageUrl} title={item.title} />
                   ) : (
                     <View style={styles.photoPlaceholder}>
                       <MaterialCommunityIcons name="image-off-outline" size={28} color="#94A3B8" />
@@ -246,6 +244,33 @@ export default function AssetsListScreen() {
         title={selectedQrTitle}
       />
     </SafeAreaView>
+  );
+}
+
+function AssetPhoto({ uri, title }: { uri: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <View style={styles.photoPlaceholder}>
+        <MaterialCommunityIcons name="image-off-outline" size={28} color="#94A3B8" />
+        <Text style={styles.photoPlaceholderText}>Image unavailable</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.photoCard}>
+      <Image
+        source={{ uri }}
+        style={styles.assetPhoto}
+        resizeMode="cover"
+        onError={(event) => {
+          console.warn(`[assets-list] Photo failed for "${title}":`, uri, event.nativeEvent?.error ?? event);
+          setFailed(true);
+        }}
+      />
+    </View>
   );
 }
 
@@ -497,7 +522,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   detailItemBox: {
-    width: '48%',
+    // Full width: a half-width box left the value text stranded on the left with a
+    // block of empty space beside it on phone screens.
+    width: '100%',
     backgroundColor: '#F8FAFC',
     borderRadius: 16,
     padding: 14,

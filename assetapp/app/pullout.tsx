@@ -4,7 +4,6 @@ import {
   Alert,
   Modal,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,25 +11,24 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import NotificationBell from '@/components/notification-bell';
 import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../lib/supabase";
-import { getStoredUser } from "../lib/userService";
+import { getStoredUser, searchUsers } from "../lib/userService";
+import {
+  PulloutRecord,
+  PulloutResolveAction,
+  fetchBlockedPulloutAssetIds,
+  fetchPulledOutAssetCount,
+  fetchPulloutRecords,
+  resolvePullout,
+  submitPulloutRequest,
+} from "../lib/pulloutService";
 import DateTimePicker from "@react-native-community/datetimepicker";
-
-type PulloutLogRow = {
-  id: string | number;
-  asset_id?: string | number | null;
-  title?: string | null;
-  description?: string | null;
-  performed_by?: string | number | null;
-  status?: string | null;
-  created_at?: string | null;
-  [key: string]: any;
-};
 
 type AssetRow = {
   id?: string | number | null;
@@ -41,15 +39,36 @@ type AssetRow = {
   Lifecycle_Status?: string | null;
 };
 
+type UserOption = {
+  id: string | number;
+  fullName: string;
+  email?: string | null;
+  departmentName?: string;
+};
+
 const pulloutStatusLabel = (raw?: string | null): string => {
   const v = String(raw ?? "").toLowerCase();
-  if (!v) return "Recorded";
+  if (!v) return "Pending";
   if (v.includes("complete")) return "Completed";
   if (v.includes("approv")) return "Approved";
-  if (v.includes("pend")) return "Pending";
+  if (v.includes("reject")) return "Rejected";
   if (v.includes("cancel")) return "Cancelled";
+  if (v.includes("pend")) return "Pending";
   return String(raw ?? "");
 };
+
+const RESOLVE_ACTIONS: { key: PulloutResolveAction; label: string; hint: string }[] = [
+  {
+    key: "assign",
+    label: "Assign to new user (release from storage)",
+    hint: "The asset is handed to the chosen owner, moves to their location and returns to Active.",
+  },
+  {
+    key: "repair",
+    label: "Send to repair",
+    hint: "The asset moves to For Repair. When the repair is finished it returns to Pullout, not Active — assign it to release it.",
+  },
+];
 
 export default function PulloutScreen() {
   const router = useRouter();
@@ -60,125 +79,236 @@ export default function PulloutScreen() {
   const [pickerMode, setPickerMode] = useState<"from" | "to" | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [logs, setLogs] = useState<PulloutLogRow[]>([]);
-  const [assetsByCode, setAssetsByCode] = useState<Record<string, AssetRow>>({});
-  const [usersById, setUsersById] = useState<Record<string, { full_name?: string | null }>>({});
+  const [records, setRecords] = useState<PulloutRecord[]>([]);
+  const [totalPulledOut, setTotalPulledOut] = useState(0);
+
+  // Assets staged for the next request — one asset = single pullout, several = bulk.
+  const [batch, setBatch] = useState<AssetRow[]>([]);
 
   const [scannerVisible, setScannerVisible] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
 
   const [reasonModalVisible, setReasonModalVisible] = useState(false);
-  const [pendingCode, setPendingCode] = useState("");
-  const [pendingAsset, setPendingAsset] = useState<AssetRow | null>(null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const loadLogs = async () => {
+  // Resolve Pullout — same transaction editor as the web's /admin/pullout modal:
+  // pick the assets, choose assign-or-repair, fill the matching fields, save.
+  const [resolveTarget, setResolveTarget] = useState<PulloutRecord | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+  const [assetFilter, setAssetFilter] = useState("");
+  const [resolveAction, setResolveAction] = useState<PulloutResolveAction | null>(null);
+  const [userQuery, setUserQuery] = useState("");
+  const [userOptions, setUserOptions] = useState<UserOption[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
+  const [userSearching, setUserSearching] = useState(false);
+  const [newLocation, setNewLocation] = useState("");
+  const [repairNotes, setRepairNotes] = useState("");
+  const [resolveNotes, setResolveNotes] = useState("");
+  const [resolving, setResolving] = useState(false);
+
+  const loadRecords = async () => {
     setLoading(true);
     try {
-      // Pullout records live in the `pullouts` table (id, request_id,
-      // asset_id, Approve_by, Description, notes, pullout_date, status,
-      // destination, expected_return_date). Join the linked asset so rows can
-      // be rendered with code/name/category.
-      const { data: logRows, error } = await supabase
-        .from("pullouts")
-        .select("*, assets(id, Asset_code, Asset_name, Category, Lifecycle_Status)")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      const mappedRows: PulloutLogRow[] = (logRows ?? []).map((row: any) => {
-        const asset = Array.isArray(row.assets) ? row.assets[0] : row.assets;
-        return {
-          ...row,
-          id: String(row.id ?? ""),
-          asset_id: String(asset?.Asset_code ?? row.asset_id ?? ""),
-          title: String(asset?.Asset_name ?? ""),
-          description: String(row.notes ?? row.Description ?? ""),
-          performed_by: String(row.Approve_by ?? ""),
-          status: String(row.status ?? ""),
-          assets: asset ?? null,
-          pullout_date: row.pullout_date ?? null,
-          destination: row.destination ?? null,
-          expected_return_date: row.expected_return_date ?? null,
-        };
-      });
-
-      setLogs(mappedRows);
-
-      const byCode: Record<string, AssetRow> = {};
-      (logRows ?? []).forEach((row: any) => {
-        const a = Array.isArray(row.assets) ? row.assets[0] : row.assets;
-        if (!a) return;
-        if (a.Asset_code) byCode[String(a.Asset_code).trim()] = a;
-        if (a.id !== null && a.id !== undefined) byCode[String(a.id)] = a;
-        if (row.asset_id !== null && row.asset_id !== undefined) byCode[String(row.asset_id)] = a;
-      });
-      setAssetsByCode(byCode);
-
-      const approverEmails = Array.from(
-        new Set(
-          mappedRows
-            .map((row) => String(row.performed_by ?? "").trim())
-            .filter(Boolean)
-        )
-      );
-
-      if (approverEmails.length > 0) {
-        const { data: userRows, error: userErr } = await supabase
-          .from("users")
-          .select("email, employee_numbers(Full_Name)")
-          .in("email", approverEmails);
-
-        if (!userErr) {
-          const byId: Record<string, { full_name?: string | null }> = {};
-          (userRows ?? []).forEach((u: any) => {
-            const emp = Array.isArray(u.employee_numbers) ? u.employee_numbers[0] : u.employee_numbers;
-            byId[String(u.email)] = { full_name: emp?.Full_Name || null };
-          });
-          setUsersById(byId);
-        }
-      } else {
-        setUsersById({});
-      }
+      const [rows, pulledCount] = await Promise.all([
+        fetchPulloutRecords(),
+        fetchPulledOutAssetCount(),
+      ]);
+      setRecords(rows);
+      setTotalPulledOut(pulledCount);
     } catch (e: any) {
-      console.error("Failed to load pullout logs:", e);
-      Alert.alert("Error", e?.message || "Failed to load pullout logs.");
-      setLogs([]);
+      console.error("Failed to load pullout records:", e);
+      Alert.alert("Error", e?.message || "Failed to load pullout records.");
+      setRecords([]);
     } finally {
       setLoading(false);
     }
   };
 
+  // Load once on mount via the effect-friendly pattern the lint rule prefers:
+  // the async work sets state only from its async continuation.
   useEffect(() => {
-    loadLogs();
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await loadRecords();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const removeFromBatch = (assetId: string | number | null | undefined) => {
+    setBatch((prev) => prev.filter((a) => String(a.id) !== String(assetId)));
+  };
+
+  /** Send the staged assets (one or many) to the Asset Management Office. */
+  const submitBatch = async () => {
+    if (batch.length === 0 || submitting) return;
+    setSubmitting(true);
+    try {
+      const user = await getStoredUser();
+      if (!user?.id) throw new Error("User session not found. Please sign in again.");
+
+      const result = await submitPulloutRequest({
+        user,
+        assetIds: batch.map((a) => a.id as string | number),
+        reason: reason.trim() || "Pullout request",
+      });
+
+      setReasonModalVisible(false);
+      setReason("");
+      setBatch([]);
+      Alert.alert(
+        "Request Submitted",
+        `Pullout request for ${result.assetCount} asset${result.assetCount > 1 ? "s" : ""} was sent to the Asset Management Office for approval.`,
+      );
+      await loadRecords();
+    } catch (e: any) {
+      console.error("Failed to submit pullout request:", e);
+      Alert.alert("Error", e?.message || "Failed to submit the pullout request.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const closeResolve = () => {
+    setResolveTarget(null);
+    setSelectedAssetIds(new Set());
+    setAssetFilter("");
+    setResolveAction(null);
+    setUserQuery("");
+    setUserOptions([]);
+    setSelectedUser(null);
+    setNewLocation("");
+    setRepairNotes("");
+    setResolveNotes("");
+  };
+
+  const openResolve = (record: PulloutRecord) => {
+    setResolveTarget(record);
+    setSelectedAssetIds(new Set(record.items.map((item) => String(item.assetId))));
+    setAssetFilter("");
+    setResolveAction(null);
+    setUserQuery("");
+    setUserOptions([]);
+    setSelectedUser(null);
+    setNewLocation("");
+    setRepairNotes("");
+    setResolveNotes("");
+  };
+
+  const toggleResolveAsset = (assetId: string | number) => {
+    setSelectedAssetIds((prev) => {
+      const next = new Set(prev);
+      const key = String(assetId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleUserSearch = async (text: string) => {
+    setUserQuery(text);
+    setSelectedUser(null);
+    if (text.trim().length < 2) {
+      setUserOptions([]);
+      return;
+    }
+    setUserSearching(true);
+    try {
+      const results = await searchUsers(text.trim());
+      setUserOptions(results as UserOption[]);
+    } catch (e) {
+      console.warn("User search failed:", e);
+      setUserOptions([]);
+    } finally {
+      setUserSearching(false);
+    }
+  };
+
+  /** Save the Resolve Pullout form — same writes as the web's save button. */
+  const submitResolve = async () => {
+    if (!resolveTarget || resolving) return;
+    if (selectedAssetIds.size === 0) {
+      Alert.alert("No Assets Selected", "Tick at least one asset, or leave the assets you want to keep in pullout unticked and resolve the rest later.");
+      return;
+    }
+    if (!resolveAction) {
+      Alert.alert("Action Required", "Choose whether to assign the assets or send them to repair.");
+      return;
+    }
+    if (resolveAction === "assign" && !selectedUser) {
+      Alert.alert("New Owner Required", "Search for and select the user who will receive the asset.");
+      return;
+    }
+    if (resolveAction === "assign" && !newLocation.trim()) {
+      Alert.alert("Location Required", "Enter the asset's new location (e.g. Room 301, Faculty Office, Lab 2).");
+      return;
+    }
+
+    setResolving(true);
+    try {
+      const user = await getStoredUser();
+      const result = await resolvePullout({
+        pulloutId: resolveTarget.pulloutId,
+        action: resolveAction,
+        assetIds: Array.from(selectedAssetIds),
+        assignToUserId: selectedUser?.id ?? null,
+        newLocation: newLocation.trim(),
+        repairNotes: repairNotes.trim(),
+        notes: resolveNotes.trim(),
+        actorId: user?.id ?? null,
+      });
+
+      const completedMsg = result.completed
+        ? ""
+        : ` ${result.remainingCount} asset${result.remainingCount > 1 ? "s" : ""} remain in this pullout.`;
+      Alert.alert(
+        "Pullout Resolved",
+        `${result.message}${completedMsg}${result.completed ? " The pullout is now completed." : ""}`,
+      );
+      closeResolve();
+      await loadRecords();
+    } catch (e: any) {
+      console.error("Failed to resolve pullout:", e);
+      Alert.alert("Action Failed", e?.message || "Could not resolve the pullout.");
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const filteredPullouts = useMemo(() => {
     const query = search.trim().toLowerCase();
     const fromD = fromDate;
     const toD = toDate;
 
-    return logs.filter((row) => {
-      const code = String(row.asset_id ?? "").trim();
-      const asset = assetsByCode[code];
-      const title = String(asset?.Asset_name ?? row.title ?? "").trim();
-      const category = String(asset?.Category ?? "").trim();
-      const department = String(asset?.department ?? "").trim();
-      const requestedBy =
-        usersById[String(row.performed_by ?? "")]?.full_name ??
-        String(row.performed_by ?? "");
-      const reasonText = String(row.description ?? "").trim();
-
-      const haystack = [title, category, department, requestedBy, code, reasonText]
+    // Pending pullouts are decisions (they live on the Requests screen) and
+    // Completed pullouts are done — their assets were already assigned or sent
+    // to repair. This page only tracks pullouts still needing action.
+    return records
+      .filter((row) => {
+        const status = pulloutStatusLabel(row.status);
+        return status !== "Pending" && status !== "Completed";
+      })
+      .filter((row) => {
+      const haystack = [
+        row.requestedBy,
+        row.description,
+        row.notes,
+        row.destination ?? "",
+        row.status,
+        ...row.items.map((item) => `${item.name} ${item.code} ${item.custodian}`),
+      ]
         .join(" ")
         .toLowerCase();
 
       if (query && !haystack.includes(query)) return false;
 
       if (fromD || toD) {
-        const created = row.created_at ? new Date(String(row.created_at)) : null;
+        const raw = row.pulloutDate || row.createdAt;
+        const created = raw ? new Date(String(raw)) : null;
         if (!created || Number.isNaN(created.getTime())) return false;
         if (fromD) {
           const start = new Date(fromD);
@@ -194,7 +324,7 @@ export default function PulloutScreen() {
 
       return true;
     });
-  }, [logs, search, fromDate, toDate, assetsByCode, usersById]);
+  }, [records, search, fromDate, toDate]);
 
   const formatDay = (d: Date | null) => {
     if (!d) return "Any";
@@ -243,85 +373,39 @@ export default function PulloutScreen() {
       }
 
       const status = String(asset.Lifecycle_Status ?? "").trim();
-      if (status !== "Active" && status !== "Acquired") {
-        Alert.alert("Not Allowed", `Only Active or Acquired assets can be pulled out. Current status: ${status || "Unknown"}`);
+      if (status === "Pullout") {
+        Alert.alert("Already Pulled Out", `${asset.Asset_name ?? "This asset"} is already in Pullout status.`);
         setScanned(false);
         return;
       }
 
-      setPendingCode(code);
-      setPendingAsset(asset as AssetRow);
-      setReason("");
-      setScannerVisible(false);
-      setReasonModalVisible(true);
+      // An asset can only sit in one pending/approved pullout at a time.
+      const blocked = await fetchBlockedPulloutAssetIds();
+      if (blocked.has(String(asset.id))) {
+        Alert.alert(
+          "Already In A Pullout",
+          `${asset.Asset_name ?? "This asset"} is already part of a pending or approved pullout request.`,
+        );
+        setScanned(false);
+        return;
+      }
+
+      if (batch.some((staged) => String(staged.id) === String(asset.id))) {
+        Alert.alert("Already Added", `${asset.Asset_name ?? "This asset"} is already staged in this pullout request.`);
+        setScanned(false);
+        return;
+      }
+
+      // Stage it. The first asset closes the scanner so the staged list becomes
+      // visible; scan again to group more assets into one bulk pullout.
+      const wasEmpty = batch.length === 0;
+      setBatch((prev) => [...prev, asset as AssetRow]);
+      if (wasEmpty) setScannerVisible(false);
+      setScanned(false);
     } catch (e: any) {
       console.error("Scan lookup failed:", e);
       Alert.alert("Error", e?.message || "Failed to validate scanned asset.");
       setScanned(false);
-    }
-  };
-
-  const confirmPullout = async () => {
-    if (!pendingCode) return;
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const user = await getStoredUser();
-      const approver = String(user?.email ?? user?.full_name ?? "Admin");
-      const note = reason.trim() || "Pulled out via QR scan";
-      const now = new Date().toISOString();
-      const d = new Date();
-      const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-      // Asset_id is an int8 FK — resolve the scanned code to its numeric id.
-      const pendingId = pendingAsset?.id;
-      const resolved =
-        pendingId !== null && pendingId !== undefined && pendingId !== ""
-          ? { data: { id: pendingId } }
-          : await supabase
-              .from("assets")
-              .select("id")
-              .eq("Asset_code", pendingCode)
-              .maybeSingle();
-      const assetId = (resolved as any)?.data?.id;
-      if (assetId === null || assetId === undefined) {
-        throw new Error("Could not resolve the scanned asset to its database id.");
-      }
-
-      // Real pullouts columns: asset_id, Approve_by, Description, notes,
-      // pullout_date, status, destination, expected_return_date.
-      const { error: logError } = await supabase.from("pullouts").insert([
-        {
-          asset_id: assetId,
-          Approve_by: approver,
-          Description: note === "Pulled out via QR scan" ? "Pullout" : note,
-          notes: note,
-          pullout_date: dateOnly,
-          status: "approved",
-          destination: null,
-          expected_return_date: null,
-          created_at: now,
-          updated_at: now,
-        },
-      ]);
-      if (logError) throw logError;
-
-      // The web side uses the literal status value "Pullout".
-      const { error: assetError } = await supabase
-        .from("assets")
-        .update({ Lifecycle_Status: "Pullout", updated_at: now })
-        .eq("id", assetId);
-      if (assetError) throw assetError;
-
-      setReasonModalVisible(false);
-      setPendingAsset(null);
-      setPendingCode("");
-      await loadLogs();
-    } catch (e: any) {
-      console.error("Failed to log pullout:", e);
-      Alert.alert("Error", e?.message || "Failed to record pullout.");
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -375,9 +459,9 @@ export default function PulloutScreen() {
             />
             <Text style={styles.statsCardTitle}>Total Pulled Out Assets</Text>
           </View>
-          <Text style={styles.statsCardValue}>{logs.length}</Text>
+          <Text style={styles.statsCardValue}>{totalPulledOut}</Text>
           <Text style={styles.statsCardSubtitle}>
-            Complete log of all pulled out institutional assets
+            Assets currently in Pullout status. Their records stay in the inventory for reporting and auditing.
           </Text>
         </LinearGradient>
 
@@ -411,51 +495,163 @@ export default function PulloutScreen() {
             onPress={openScanner}
             activeOpacity={0.8}
           >
-            <Text style={styles.actionButtonText}>Log Pullout</Text>
+            <MaterialCommunityIcons name="qrcode-scan" size={16} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>
+              {batch.length > 0 ? "Scan Another" : "Scan Asset"}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionButton, styles.turnoverButton]}
+            style={[
+              styles.actionButton,
+              styles.turnoverButton,
+              batch.length === 0 && styles.actionButtonDisabled,
+            ]}
+            onPress={() => {
+              setReason("");
+              setReasonModalVisible(true);
+            }}
+            disabled={batch.length === 0}
             activeOpacity={0.8}
           >
-            <Text style={styles.actionButtonText}>Turn Over</Text>
+            <MaterialCommunityIcons name="check-circle-outline" size={16} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>
+              {batch.length > 1 ? `Submit Request (${batch.length})` : "Submit Request"}
+            </Text>
           </TouchableOpacity>
         </View>
+
+        {batch.length > 0 ? (
+          <View style={styles.batchCard}>
+            <View style={styles.batchHeader}>
+              <MaterialCommunityIcons name="playlist-check" size={18} color="#0284C7" />
+              <Text style={styles.batchTitle}>
+                {batch.length === 1 ? "1 asset staged" : `${batch.length} assets staged (bulk pullout)`}
+              </Text>
+            </View>
+            <Text style={styles.batchHint}>
+              {batch.length === 1
+                ? "Submit to send this asset for approval, or scan more to make it a bulk pullout."
+                : "These assets are grouped into ONE pullout transaction, but each keeps its own record and history."}
+            </Text>
+            {batch.map((staged) => (
+              <View key={String(staged.id)} style={styles.batchRow}>
+                <MaterialCommunityIcons name="cube-outline" size={16} color="#0284C7" />
+                <View style={styles.itemBody}>
+                  <Text style={styles.itemName} numberOfLines={1}>
+                    {staged.Asset_name ?? "Unknown Asset"}
+                  </Text>
+                  <Text style={styles.itemCode} numberOfLines={1}>
+                    {staged.Asset_code ?? ""}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => removeFromBatch(staged.id)} activeOpacity={0.8}>
+                  <MaterialCommunityIcons name="close-circle" size={20} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
+            ))}
+            <TouchableOpacity style={styles.batchClear} onPress={() => setBatch([])} activeOpacity={0.8}>
+              <Text style={styles.batchClearText}>Clear all</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {loading ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#0284C7" />
           </View>
         ) : (
-          filteredPullouts.map((row) => {
-            const code = String(row.asset_id ?? "").trim();
-            const asset = assetsByCode[code];
-            const title = String(asset?.Asset_name ?? row.title ?? "Unknown Asset");
-            const category = String(asset?.Category ?? "Unknown");
-            const destination = String(row.destination ?? "N/A");
-            const requestedBy =
-              usersById[String(row.performed_by ?? "")]?.full_name ??
-              String(row.performed_by ?? "N/A");
-            const reasonText = String(row.description ?? "N/A");
-            const statusLabel = pulloutStatusLabel(row.status);
-            const dateShown = formatDateTime(row.created_at);
+          filteredPullouts.map((record) => {
+            const statusLabel = pulloutStatusLabel(record.status);
+            const dateShown = formatDateTime(record.pulloutDate || record.createdAt);
+            const isApproved = statusLabel === "Approved";
+            const statusStyle =
+              statusLabel === "Approved" || statusLabel === "Completed"
+                ? styles.statusDone
+                : statusLabel === "Rejected" || statusLabel === "Cancelled"
+                  ? styles.statusCancelled
+                  : styles.statusOpen;
 
             return (
-              <View key={String(row.id)} style={styles.disposalCard}>
-            <View style={styles.cardHeader}>
-              <View style={styles.categoryTag}>
-                <Text style={styles.categoryTagText}>{category}</Text>
-              </View>
-              <Text style={styles.cardDate}>{dateShown}</Text>
-            </View>
-            <Text style={styles.disposalTitle}>{title}</Text>
-            <Text style={styles.assetCodeLine}>{code}</Text>
-            <View style={styles.statusLine}>
-              <Text style={[styles.statusTextChip, statusLabel === "Completed" ? styles.statusDone : styles.statusOpen]}>{statusLabel}</Text>
-            </View>
-            <Text style={styles.cardMeta}>{`Destination: ${destination}`}</Text>
-            <Text style={styles.cardMeta}>{`Recorded by: ${requestedBy}`}</Text>
-            <Text style={styles.cardReasonTitle}>Reason</Text>
-            <Text style={styles.cardReason}>{reasonText}</Text>
+              <View key={String(record.pulloutId)} style={styles.disposalCard}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.categoryTag}>
+                    <Text style={styles.categoryTagText}>
+                      {record.items.length > 1 ? `BULK \u00b7 ${record.items.length} ASSETS` : "SINGLE ASSET"}
+                    </Text>
+                  </View>
+                  <Text style={styles.cardDate}>{dateShown}</Text>
+                </View>
+
+                <View style={styles.statusLine}>
+                  <Text style={[styles.statusTextChip, statusStyle]}>{statusLabel}</Text>
+                  {record.requestId != null ? (
+                    <Text style={styles.requestRef}>{`REQ-${String(record.requestId)}`}</Text>
+                  ) : null}
+                </View>
+
+                <Text style={styles.cardMeta}>{`Requested by: ${record.requestedBy}`}</Text>
+                {record.approvedBy ? (
+                  <Text style={styles.cardMeta}>{`Approved by: ${record.approvedBy}`}</Text>
+                ) : null}
+                {record.destination ? (
+                  <Text style={styles.cardMeta}>{`Destination: ${record.destination}`}</Text>
+                ) : null}
+
+                <Text style={styles.cardReasonTitle}>Reason</Text>
+                <Text style={styles.cardReason}>
+                  {record.description || record.notes || "No reason provided"}
+                </Text>
+
+                <Text style={styles.cardActionLabel}>
+                  {record.items.length > 1 ? `Assets (${record.items.length})` : "Asset"}
+                </Text>
+                <View style={styles.itemList}>
+                  {record.items.length === 0 ? (
+                    <Text style={styles.itemEmpty}>
+                      {statusLabel === "Completed"
+                        ? "All assets have been resolved and released from this pullout."
+                        : "No asset is linked to this pullout."}
+                    </Text>
+                  ) : (
+                    record.items.map((item) => (
+                      <View key={`${record.pulloutId}-${item.assetId}`} style={styles.itemRow}>
+                        <View style={styles.itemIcon}>
+                          <MaterialCommunityIcons name="cube-outline" size={16} color="#0284C7" />
+                        </View>
+                        <View style={styles.itemBody}>
+                          <Text style={styles.itemName} numberOfLines={2}>
+                            {item.name}
+                          </Text>
+                          <Text style={styles.itemCode} numberOfLines={1}>
+                            {item.code || "\u2014"}
+                          </Text>
+                        </View>
+                        <View style={styles.itemRight}>
+                          <Text style={styles.itemStatus} numberOfLines={1}>
+                            {item.lifecycleStatus || "\u2014"}
+                          </Text>
+                        </View>
+                      </View>
+                    ))
+                  )}
+                </View>
+
+                {isApproved && record.items.length > 0 ? (
+                  <TouchableOpacity
+                    style={styles.resolveButton}
+                    activeOpacity={0.85}
+                    onPress={() => openResolve(record)}
+                  >
+                    <MaterialCommunityIcons name="clipboard-check-outline" size={18} color="#FFFFFF" />
+                    <Text style={styles.resolveButtonText}>Resolve Pullout</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                {isApproved ? (
+                  <Text style={styles.itemHint}>
+                    Resolving assigns the asset to a new user (releasing it from storage to Active) or sends it to repair. Repair returns the asset to Pullout afterwards — only assigning releases it.
+                  </Text>
+                ) : null}
               </View>
             );
           })
@@ -464,7 +660,7 @@ export default function PulloutScreen() {
         {!loading && filteredPullouts.length === 0 && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>
-              No pulled out assets match your search.
+              No pullouts need action right now. Pending requests live on the Requests screen, and completed pullouts are archived once every asset is resolved.
             </Text>
           </View>
         )}
@@ -572,13 +768,27 @@ export default function PulloutScreen() {
       <Modal visible={reasonModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Confirm Pullout</Text>
-            <Text style={styles.confirmLine}>{pendingAsset?.Asset_name || "Asset"}</Text>
-            <Text style={styles.confirmCode}>{pendingCode}</Text>
+            <Text style={styles.modalTitle}>
+              {batch.length > 1 ? `Submit Bulk Pullout (${batch.length})` : "Submit Pullout Request"}
+            </Text>
+            <Text style={styles.modalHint}>
+              This request goes to the Asset Management Office for approval. The assets move to
+              Pullout only once it is approved.
+            </Text>
+
+            <View style={styles.batchPreview}>
+              {batch.map((staged) => (
+                <Text key={String(staged.id)} style={styles.batchPreviewLine} numberOfLines={1}>
+                  • {staged.Asset_name ?? "Unknown Asset"}
+                  {staged.Asset_code ? ` (${staged.Asset_code})` : ""}
+                </Text>
+              ))}
+            </View>
+
             <TextInput
               value={reason}
               onChangeText={setReason}
-              placeholder="Reason (optional)"
+              placeholder="Reason for pullout (optional)"
               placeholderTextColor="#94A3B8"
               style={styles.modalInput}
               multiline
@@ -586,24 +796,211 @@ export default function PulloutScreen() {
             <View style={styles.modalRow}>
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnGhost]}
-                onPress={() => {
-                  setReasonModalVisible(false);
-                  setPendingAsset(null);
-                  setPendingCode("");
-                }}
+                onPress={() => setReasonModalVisible(false)}
                 disabled={submitting}
               >
                 <Text style={styles.modalBtnGhostText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnPrimary]}
-                onPress={confirmPullout}
+                onPress={submitBatch}
                 disabled={submitting}
               >
                 {submitting ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.modalBtnPrimaryText}>Confirm</Text>
+                  <Text style={styles.modalBtnPrimaryText}>Submit Request</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={resolveTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeResolve}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
+              <View style={styles.actionModalHeader}>
+                <View style={styles.actionModalTitleWrap}>
+                  <Text style={styles.modalTitle}>Resolve Pullout</Text>
+                  <Text style={styles.confirmCode}>{`Pullout #${resolveTarget?.pulloutId ?? ""}`}</Text>
+                </View>
+                <TouchableOpacity onPress={closeResolve} activeOpacity={0.8} disabled={resolving}>
+                  <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Assets in this pullout */}
+              <View style={styles.resolveSectionHeader}>
+                <Text style={styles.resolveSectionTitle}>Assets in this pullout *</Text>
+                <TouchableOpacity onPress={() => setSelectedAssetIds(new Set((resolveTarget?.items ?? []).map((i) => String(i.assetId))))}>
+                  <Text style={styles.resolveSelectAll}>Select All</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                value={assetFilter}
+                onChangeText={setAssetFilter}
+                placeholder="Filter assets by name or code..."
+                placeholderTextColor="#94A3B8"
+                style={styles.resolveInput}
+              />
+              <View style={styles.resolveAssetList}>
+                {(resolveTarget?.items ?? [])
+                  .filter((item) => {
+                    const q = assetFilter.trim().toLowerCase();
+                    if (!q) return true;
+                    return `${item.name} ${item.code}`.toLowerCase().includes(q);
+                  })
+                  .map((item) => {
+                    const checked = selectedAssetIds.has(String(item.assetId));
+                    return (
+                      <TouchableOpacity
+                        key={String(item.assetId)}
+                        style={styles.resolveAssetRow}
+                        activeOpacity={0.7}
+                        onPress={() => toggleResolveAsset(item.assetId)}
+                      >
+                        <MaterialCommunityIcons
+                          name={checked ? "checkbox-marked" : "checkbox-blank-outline"}
+                          size={20}
+                          color={checked ? "#D9A426" : "#94A3B8"}
+                        />
+                        <View style={styles.resolveAssetText}>
+                          <Text style={styles.resolveAssetName} numberOfLines={1}>
+                            {item.name} <Text style={styles.resolveAssetCode}>{item.code}</Text>
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                {(resolveTarget?.items ?? []).length === 0 ? (
+                  <Text style={styles.itemEmpty}>No asset is linked to this pullout.</Text>
+                ) : null}
+              </View>
+              <Text style={styles.resolveFootnote}>Uncheck any asset you want to leave in pullout.</Text>
+
+              {/* Action */}
+              <Text style={styles.resolveSectionTitle}>Action *</Text>
+              {RESOLVE_ACTIONS.map((option) => {
+                const active = resolveAction === option.key;
+                return (
+                  <View key={option.key}>
+                    <TouchableOpacity
+                      style={[styles.resolveActionOption, active && styles.resolveActionOptionActive]}
+                      activeOpacity={0.7}
+                      onPress={() => setResolveAction(option.key)}
+                    >
+                      <MaterialCommunityIcons
+                        name={option.key === "assign" ? "account-arrow-right-outline" : "wrench-outline"}
+                        size={18}
+                        color={active ? "#B98A1B" : "#64748B"}
+                      />
+                      <Text style={[styles.resolveActionLabel, active && styles.resolveActionLabelActive]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                    {active ? <Text style={styles.resolveActionHint}>{option.hint}</Text> : null}
+                  </View>
+                );
+              })}
+
+              {/* Assign fields */}
+              {resolveAction === "assign" ? (
+                <>
+                  <Text style={styles.resolveSectionTitle}>New Owner *</Text>
+                  <TextInput
+                    value={selectedUser ? `${selectedUser.fullName}${selectedUser.departmentName ? ` — ${selectedUser.departmentName}` : ""}` : userQuery}
+                    onChangeText={handleUserSearch}
+                    placeholder="Type name or email to search..."
+                    placeholderTextColor="#94A3B8"
+                    style={styles.resolveInput}
+                  />
+                  {userSearching ? <ActivityIndicator size="small" color="#D9A426" style={{ marginVertical: 8 }} /> : null}
+                  {userOptions.length > 0 ? (
+                    <View style={styles.resolveUserList}>
+                      {userOptions.map((option) => (
+                        <TouchableOpacity
+                          key={String(option.id)}
+                          style={styles.resolveUserRow}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            setSelectedUser(option);
+                            setUserOptions([]);
+                          }}
+                        >
+                          <Text style={styles.resolveUserName}>{option.fullName || option.email}</Text>
+                          <Text style={styles.resolveUserMeta}>
+                            {option.email ?? ""}{option.departmentName ? ` \u00b7 ${option.departmentName}` : ""}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : null}
+                  <Text style={styles.resolveFootnote}>
+                    Selected: {selectedUser ? selectedUser.fullName : "None"}
+                  </Text>
+
+                  <Text style={styles.resolveSectionTitle}>New Location *</Text>
+                  <TextInput
+                    value={newLocation}
+                    onChangeText={setNewLocation}
+                    placeholder="e.g., Room 301, Faculty Office, Lab 2"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.resolveInput}
+                  />
+                </>
+              ) : null}
+
+              {/* Repair fields */}
+              {resolveAction === "repair" ? (
+                <>
+                  <Text style={styles.resolveSectionTitle}>Issue description</Text>
+                  <TextInput
+                    value={repairNotes}
+                    onChangeText={setRepairNotes}
+                    placeholder="What needs repair?"
+                    placeholderTextColor="#94A3B8"
+                    style={[styles.resolveInput, styles.resolveTextArea]}
+                    multiline
+                  />
+                </>
+              ) : null}
+
+              {/* Notes */}
+              <Text style={styles.resolveSectionTitle}>Notes (optional)</Text>
+              <TextInput
+                value={resolveNotes}
+                onChangeText={setResolveNotes}
+                placeholder="Optional notes..."
+                placeholderTextColor="#94A3B8"
+                style={[styles.resolveInput, styles.resolveTextArea]}
+                multiline
+              />
+            </ScrollView>
+
+            <View style={styles.modalRow}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                onPress={closeResolve}
+                disabled={resolving}
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnSave]}
+                onPress={submitResolve}
+                disabled={resolving}
+              >
+                {resolving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalBtnPrimaryText}>Save</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -742,8 +1139,291 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 52,
     borderRadius: 16,
+    flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 8,
+  },
+  actionButtonDisabled: {
+    opacity: 0.45,
+  },
+  batchCard: {
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+  },
+  batchHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  batchTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#075985",
+  },
+  batchHint: {
+    fontSize: 12,
+    color: "#0369A1",
+    lineHeight: 18,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  batchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  batchClear: {
+    alignSelf: "flex-start",
+    paddingVertical: 4,
+  },
+  batchClearText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#DC2626",
+  },
+  batchPreview: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+  },
+  batchPreviewLine: {
+    fontSize: 13,
+    color: "#334155",
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  actionModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  actionModalTitleWrap: {
+    flex: 1,
+  },
+  resolveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#D9A426",
+    borderRadius: 12,
+    paddingVertical: 13,
+    marginTop: 14,
+  },
+  resolveButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+    fontSize: 14,
+  },
+  resolveSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  resolveSectionTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#334155",
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  resolveSelectAll: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#D9A426",
+  },
+  resolveInput: {
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#0F172A",
+  },
+  resolveTextArea: {
+    minHeight: 70,
+    textAlignVertical: "top",
+  },
+  resolveAssetList: {
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    marginTop: 8,
+    maxHeight: 150,
+  },
+  resolveAssetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#F1F5F9",
+  },
+  resolveAssetText: {
+    flex: 1,
+  },
+  resolveAssetName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  resolveAssetCode: {
+    fontWeight: "500",
+    color: "#64748B",
+    fontSize: 11,
+  },
+  resolveFootnote: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 6,
+  },
+  resolveActionOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginBottom: 6,
+    backgroundColor: "#FFFFFF",
+  },
+  resolveActionOptionActive: {
+    borderColor: "#D9A426",
+    backgroundColor: "#FDF6E3",
+  },
+  resolveActionLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#334155",
+  },
+  resolveActionLabelActive: {
+    color: "#B98A1B",
+    fontWeight: "800",
+  },
+  resolveActionHint: {
+    fontSize: 11,
+    color: "#64748B",
+    lineHeight: 15,
+    marginLeft: 28,
+    marginBottom: 8,
+    marginTop: -2,
+  },
+  resolveUserList: {
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    maxHeight: 160,
+    marginTop: 6,
+  },
+  resolveUserRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#F1F5F9",
+  },
+  resolveUserName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  resolveUserMeta: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  modalBtnSave: {
+    backgroundColor: "#D9A426",
+  },
+  requestRef: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+    marginLeft: 8,
+    alignSelf: "center",
+  },
+  statusCancelled: {
+    backgroundColor: "#FEE2E2",
+    color: "#B91C1C",
+  },
+  itemList: {
+    gap: 8,
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  itemIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: "#E0F2FE",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  itemBody: {
+    flex: 1,
+  },
+  itemName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+    lineHeight: 18,
+  },
+  itemCode: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  itemRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: 110,
+  },
+  itemStatus: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#0369A1",
+    flexShrink: 1,
+    textAlign: "right",
+  },
+  itemEmpty: {
+    fontSize: 13,
+    color: "#94A3B8",
+  },
+  itemHint: {
+    fontSize: 11,
+    color: "#64748B",
+    lineHeight: 16,
+    marginTop: 10,
   },
   logButton: {
     backgroundColor: "#F59E0B",
@@ -837,6 +1517,15 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     fontSize: 14,
     lineHeight: 20,
+  },
+  cardActionLabel: {
+    marginTop: 14,
+    color: "#64748B",
+    fontWeight: "700",
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 8,
   },
   emptyState: {
     marginTop: 24,

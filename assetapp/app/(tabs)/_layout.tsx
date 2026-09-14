@@ -1,6 +1,6 @@
 import { Tabs } from "expo-router";
 import React, { useRef, useEffect } from "react";
-import { View, StyleSheet, Platform, Animated } from "react-native";
+import { View, StyleSheet, Platform, Animated, type ColorValue } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { HapticTab } from "@/components/haptic-tab";
@@ -12,7 +12,7 @@ function AnimatedTabIcon({
   size = 30,
 }: {
   name: string;
-  color: string;
+  color: ColorValue;
   focused: boolean;
   size?: number;
 }) {
@@ -165,7 +165,7 @@ export default function TabLayout() {
           title: "Lifespan",
           tabBarIcon: ({ color, focused }) => (
             <AnimatedTabIcon
-              name={focused ? "clock-alarm" : "clock-alarm-outline"}
+              name={focused ? "clock-alert" : "clock-alert-outline"}
               size={30}
               color={color}
               focused={focused}

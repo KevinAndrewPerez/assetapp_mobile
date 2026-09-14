@@ -1,6 +1,7 @@
 import React from 'react';
-import { Image, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image, View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { evaluateAssetLifecycle } from '@/lib/requestService';
 
 export type RequestStatus =
   | 'Pending'
@@ -57,7 +58,18 @@ interface RequestCardProps {
   onApprove?: () => void;
   onReject?: () => void;
   onViewDetails?: () => void;
+  /** Admin status control: writes the selected status back to Supabase. */
+  onStatusChange?: (status: RequestStatus) => void;
 }
+
+const STATUS_OPTIONS: RequestStatus[] = [
+  'Pending',
+  'Approved',
+  'In Progress',
+  'Completed',
+  'Rejected',
+  'Cancelled',
+];
 
 const statusStyles = {
   Pending: {
@@ -121,7 +133,15 @@ const typeStyles = {
   },
 };
 
-export function RequestCard({ item, expanded, onToggle, onApprove, onReject, onViewDetails }: RequestCardProps) {
+export function RequestCard({
+  item,
+  expanded,
+  onToggle,
+  onApprove,
+  onReject,
+  onViewDetails,
+  onStatusChange,
+}: RequestCardProps) {
   const statusStyle = statusStyles[item.status];
   const requestTypeStyle = typeStyles[item.requestType] ?? typeStyles.Approval;
 
@@ -164,21 +184,48 @@ export function RequestCard({ item, expanded, onToggle, onApprove, onReject, onV
               <Text style={styles.detailLabel}>
                 Linked Assets ({item.linkedAssets.length})
               </Text>
-              {item.linkedAssets.map((a, i) => (
-                <View key={i} style={styles.linkedAssetRow}>
-                  {a.imageUrl ? (
-                    <Image source={{ uri: a.imageUrl }} style={styles.linkedAssetThumb} resizeMode="cover" />
-                  ) : (
-                    <View style={[styles.linkedAssetThumb, styles.linkedAssetThumbPlaceholder]}>
-                      <MaterialCommunityIcons name="cube-outline" size={16} color="#94A3B8" />
+              {item.linkedAssets.map((a, i) => {
+                const evaluation = evaluateAssetLifecycle(a.lifecycleStatus);
+                return (
+                  <View key={i} style={styles.linkedAssetRow}>
+                    {a.imageUrl ? (
+                      <Image source={{ uri: a.imageUrl }} style={styles.linkedAssetThumb} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.linkedAssetThumb, styles.linkedAssetThumbPlaceholder]}>
+                        <MaterialCommunityIcons name="cube-outline" size={16} color="#94A3B8" />
+                      </View>
+                    )}
+                    <View style={styles.linkedAssetTextWrap}>
+                      <Text style={styles.detailValue} numberOfLines={2}>
+                        {a.name}
+                        {a.code ? ` — ${a.code}` : ''}
+                      </Text>
+                      <View style={styles.lifecycleRow}>
+                        <View
+                          style={[
+                            styles.lifecycleChip,
+                            {
+                              backgroundColor: evaluation.assignable ? '#DCFCE7' : '#FEF3C7',
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.lifecycleChipText,
+                              { color: evaluation.assignable ? '#166534' : '#B45309' },
+                            ]}
+                          >
+                            {evaluation.statusLabel}
+                          </Text>
+                        </View>
+                        <Text style={styles.lifecycleNote} numberOfLines={3}>
+                          {evaluation.assignable ? 'Ready to be assigned' : evaluation.reason}
+                        </Text>
+                      </View>
                     </View>
-                  )}
-                  <Text style={[styles.detailValue, { flex: 1 }]} numberOfLines={2}>
-                    {a.name}
-                    {a.code ? ` — ${a.code}` : ''}
-                  </Text>
-                </View>
-              ))}
+                  </View>
+                );
+              })}
             </View>
           ) : (
             <>
@@ -224,6 +271,34 @@ export function RequestCard({ item, expanded, onToggle, onApprove, onReject, onV
               <TouchableOpacity style={[styles.actionButton, styles.rejectButton]} activeOpacity={0.8} onPress={onReject}>
                 <Text style={styles.actionButtonText}>Reject</Text>
               </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {onStatusChange ? (
+            <View style={styles.statusPickerWrap}>
+              <Text style={styles.statusPickerLabel}>Update status</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.statusPickerRow}
+              >
+                {STATUS_OPTIONS.map((option) => {
+                  const active = item.status === option;
+                  return (
+                    <TouchableOpacity
+                      key={option}
+                      style={[styles.statusChip, active && styles.statusChipActive]}
+                      onPress={() => !active && onStatusChange(option)}
+                      disabled={active}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                        {option}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
           ) : null}
 
@@ -324,7 +399,7 @@ const styles = StyleSheet.create({
   },
   linkedAssetRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 10,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
@@ -339,9 +414,64 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#E2E8F0',
   },
+  linkedAssetTextWrap: {
+    flex: 1,
+  },
+  lifecycleRow: {
+    marginTop: 6,
+  },
+  lifecycleChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  lifecycleChipText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  lifecycleNote: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 15,
+    color: '#64748B',
+  },
   linkedAssetThumbPlaceholder: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  statusPickerWrap: {
+    marginBottom: 14,
+  },
+  statusPickerLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  statusPickerRow: {
+    gap: 8,
+    paddingRight: 8,
+  },
+  statusChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  statusChipActive: {
+    backgroundColor: '#1E3A5F',
+    borderColor: '#1E3A5F',
+  },
+  statusChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  statusChipTextActive: {
+    color: '#FFFFFF',
   },
   viewDetailsButton: {
     flexDirection: 'row',

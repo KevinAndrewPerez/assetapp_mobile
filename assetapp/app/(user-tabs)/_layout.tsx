@@ -1,12 +1,12 @@
 import { Tabs } from "expo-router";
 import React, { useRef, useEffect } from "react";
-import { View, StyleSheet, Platform, Animated } from "react-native";
+import { View, StyleSheet, Platform, Animated, type ColorValue } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 
 import { HapticTab } from "@/components/haptic-tab";
 
-function AnimatedTabIcon({ name, color, focused, size = 28 }: { name: string; color: string; focused: boolean; size?: number }) {
+function AnimatedTabIcon({ name, color, focused, size = 28 }: { name: string; color: ColorValue; focused: boolean; size?: number }) {
   const scale = useRef(new Animated.Value(1)).current;
   const rotate = useRef(new Animated.Value(0)).current;
 

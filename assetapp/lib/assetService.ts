@@ -1,7 +1,10 @@
 import { supabase } from './supabase';
+import { resolveAssetImageUrl } from './mediaUrl';
 import bcrypt from 'bcryptjs';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
+import { recordMaintenance } from './maintenanceService';
+import { createNotification } from './notificationService';
 
 export type AssetSummary = {
   id: string;
@@ -17,25 +20,15 @@ export type AssetSummary = {
   category?: string;
   updatedAt?: string;
   imageUrl?: string;
+  /** yyyy-mm-dd the asset's lifespan ends — drives the lifespan evaluation queue. */
+  expirationDate?: string | null;
+  /** Configured lifespan in months, when set. */
+  lifespanMonths?: number | null;
+  purchasePrice?: number | null;
 };
 
-/** Resolve an `asset_files` row to a public Supabase storage URL. */
-const resolveFileUrl = (files: any): string => {
-  const first = Array.isArray(files) ? files[0] : files;
-  if (!first) return '';
-  const raw = String(first?.url ?? first?.file_path ?? '');
-  if (!raw) return '';
-  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-  // `/storage/assets/...` and `assets/...` both map to the assets bucket key.
-  const clean = raw
-    .replace(/^\/+/, '')
-    .replace(/^storage\/v1\/object\/public\//, '')
-    .replace(/^storage\/assets\//, '')
-    .replace(/^assets\//, '');
-  if (!clean) return '';
-  const { data } = supabase.storage.from('assets').getPublicUrl(clean);
-  return data?.publicUrl || '';
-};
+/** Resolve an `asset_files` row to a URL the phone can load (Supabase or the web server). */
+const resolveFileUrl = (files: any): string => resolveAssetImageUrl(files);
 
 export type LifecycleEvent = {
   id: string;
@@ -81,6 +74,12 @@ const firstOf = (value: any): any => (Array.isArray(value) ? value?.[0] : value)
 const resolveUserName = (user: any): string =>
   String(firstOf(user?.employee_numbers)?.Full_Name ?? user?.full_name ?? '');
 
+const toNumberOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
 const normalizeAssetRecord = (record: any): AssetSummary => {
   const user = firstOf(record.users) || {};
   const department = firstOf(user.departments) || {};
@@ -101,6 +100,9 @@ const normalizeAssetRecord = (record: any): AssetSummary => {
     category: String(record.Category ?? record.category ?? ''),
     updatedAt: String(record.updated_at ?? ''),
     imageUrl: resolveFileUrl(record.asset_files),
+    expirationDate: record.expiration_date ? String(record.expiration_date).slice(0, 10) : null,
+    lifespanMonths: toNumberOrNull(record.lifespan_months),
+    purchasePrice: toNumberOrNull(record.purchase_Price),
   };
 };
 
@@ -179,6 +181,102 @@ export async function fetchAssets(): Promise<AssetSummary[]> {
     throw error;
   }
   return (data ?? []).map(normalizeAssetRecord);
+}
+
+/**
+ * Everything the asset-detail screen needs — the same record the web admin's
+ * `/admin/assets/{id}` page renders (assets row + custodian + department +
+ * photo), including the lifespan and upkeep fields.
+ */
+export type AssetDetail = {
+  id: string;
+  assetId: string;
+  title: string;
+  status: string;
+  rawStatus: string;
+  category: string;
+  condition: string;
+  acquisitionDate: string;
+  purchasePrice: number | null;
+  serialNumber: string;
+  location: string;
+  supplier: string;
+  model: string;
+  manufacture: string;
+  warrantyMonths: number | null;
+  lifespanMonths: number | null;
+  expirationDate: string | null;
+  maintenanceInterval: number | null;
+  lastMaintenanceDate: string | null;
+  nextMaintenanceDate: string | null;
+  repairCounts: number | null;
+  qrCodePath: string | null;
+  qrCodeUrl: string | null;
+  custodian: string;
+  userId: string | number | null;
+  department: string;
+  imageUrl: string;
+  updatedAt: string;
+  createdAt: string;
+};
+
+/**
+ * One asset with every column the web's asset record shows (`Asset::with('user')`),
+ * resolved by numeric id or by Asset code.
+ */
+export async function fetchAssetDetail(
+  idOrCode: string | number,
+): Promise<AssetDetail | null> {
+  const key = String(idOrCode ?? '').trim();
+  if (!key) return null;
+
+  const numeric = Number(key);
+  const select =
+    '*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)';
+
+  const { data, error } = await supabase
+    .from('assets')
+    .select(select)
+    .eq(Number.isFinite(numeric) && String(numeric) === key ? 'id' : 'Asset_code', Number.isFinite(numeric) && String(numeric) === key ? numeric : key)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  const record = data as any;
+  const user = firstOf(record.users) || {};
+  const department = firstOf(user.departments) || {};
+
+  return {
+    id: String(record.id ?? ''),
+    assetId: String(record.Asset_code ?? ''),
+    title: String(record.Asset_name ?? 'Asset'),
+    status: normalizeLifecycleStatus(record.Lifecycle_Status),
+    rawStatus: String(record.Lifecycle_Status ?? ''),
+    category: String(record.Category ?? ''),
+    condition: String(record.Condition ?? record.condition ?? ''),
+    acquisitionDate: String(record.accusion_date ?? ''),
+    purchasePrice: toNumberOrNull(record.purchase_Price),
+    serialNumber: String(record.serial_Number ?? ''),
+    location: String(record.asset_location ?? ''),
+    supplier: String(record.supplier ?? ''),
+    model: String(record.model ?? ''),
+    manufacture: String(record.manufacture ?? ''),
+    warrantyMonths: toNumberOrNull(record.warranty_months),
+    lifespanMonths: toNumberOrNull(record.lifespan_months),
+    expirationDate: record.expiration_date ? String(record.expiration_date).slice(0, 10) : null,
+    maintenanceInterval: toNumberOrNull(record.maintenance_interval),
+    lastMaintenanceDate: record.last_maintenance_date ? String(record.last_maintenance_date).slice(0, 10) : null,
+    nextMaintenanceDate: record.next_maintenance_date ? String(record.next_maintenance_date).slice(0, 10) : null,
+    repairCounts: toNumberOrNull(record.repair_counts),
+    qrCodePath: record.qr_code_path ? String(record.qr_code_path) : null,
+    qrCodeUrl: record.qr_code_url ? String(record.qr_code_url) : null,
+    custodian: resolveUserName(user) || 'Unassigned',
+    userId: record.user_id ?? null,
+    department: String(department.Name ?? record.department ?? 'General'),
+    imageUrl: resolveFileUrl(record.asset_files),
+    updatedAt: String(record.updated_at ?? ''),
+    createdAt: String(record.created_at ?? ''),
+  };
 }
 
 export async function fetchAssetsWithDepartments(): Promise<{ assets: AssetSummary[], departments: any[] }> {
@@ -347,6 +445,65 @@ export async function fetchActivityTimeline(limit = 100): Promise<LifecycleEvent
   });
 }
 
+/** Rows requested per audit_logs page (the activity log pages through the DB). */
+export const AUDIT_PAGE_SIZE = 100;
+
+const ACTIVITY_SELECT = '*, assets("Asset_name", "Asset_code"), users(role, employee_numbers("Full_Name")), requests(id, request_type)';
+
+/**
+ * One page of `audit_logs`, newest first. The activity log used to cap its
+ * fetch at 100 rows, which silently hid everything past that; this pages
+ * through the whole table instead.
+ */
+export async function fetchAuditLogsPage(page = 0, pageSize = AUDIT_PAGE_SIZE): Promise<LifecycleEvent[]> {
+  const { data, error } = await supabase
+    .from('audit_logs')
+    .select(ACTIVITY_SELECT)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(page * pageSize, (page + 1) * pageSize - 1);
+
+  if (error) {
+    throw error;
+  }
+  return (data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'audit', idx));
+}
+
+/** Total number of audit rows, so the UI knows when more pages exist. */
+export async function fetchAuditLogsCount(): Promise<number> {
+  const { count, error } = await supabase
+    .from('audit_logs')
+    .select('id', { count: 'exact', head: true });
+  if (error) {
+    throw error;
+  }
+  return count ?? 0;
+}
+
+/**
+ * The non-audit activity sources (repairs, replacements, disposals). These
+ * tables stay small, so one bounded fetch is enough — the audits are the ones
+ * that grow unbounded and need paging.
+ */
+export async function fetchActivitySources(limit = 200): Promise<LifecycleEvent[]> {
+  const [repairRes, replacementRes, disposalRes] = await Promise.all([
+    supabase.from('repairs').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
+    supabase.from('replacements').select('*, old_assets:old_assets_id(Asset_name, Asset_code), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
+    supabase.from('disposals').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
+  ]);
+
+  const errors = [repairRes.error, replacementRes.error, disposalRes.error].filter(Boolean);
+  if (errors.length > 0) {
+    throw errors[0];
+  }
+
+  return [
+    ...(repairRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'repair', idx)),
+    ...(replacementRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'replacement', idx)),
+    ...(disposalRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'disposal', idx)),
+  ];
+}
+
 export async function registerAsset(payload: {
   assetId: string;
   title: string;
@@ -363,6 +520,7 @@ export async function registerAsset(payload: {
   purchasePrice?: number;
   warrantyMonths?: number;
   lifespanMonths?: number;
+  lastMaintenanceDate?: string;
   maintenanceInterval?: number;
   expirationDate?: string;
   nextMaintenanceDate?: string;
@@ -386,6 +544,7 @@ export async function registerAsset(payload: {
     purchase_Price: payload.purchasePrice,
     warranty_months: payload.warrantyMonths,
     lifespan_months: payload.lifespanMonths ?? null,
+    last_maintenance_date: payload.lastMaintenanceDate ?? null,
     maintenance_interval: payload.maintenanceInterval ?? null,
     expiration_date: payload.expirationDate ?? null,
     next_maintenance_date: payload.nextMaintenanceDate ?? null,
@@ -570,74 +729,141 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
   }));
 }
 
-/** Add whole months to a YYYY-MM-DD date string, clamped to the target month's last day. */
-const addMonthsToDate = (dateStr: string, months: number): string => {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const targetMonth = m - 1 + months;
-  const lastDay = new Date(y, targetMonth + 1, 0).getDate();
-  const day = Math.min(d, lastDay);
-  const date = new Date(y, targetMonth, day);
-  return date.toISOString().slice(0, 10);
+export type EvaluationAlert = {
+  id: string | number;
+  assetId: string;
+  name: string;
+  status?: string;
+  expirationDate?: string | null;
+  repairCounts?: number | null;
+  custodian?: string;
+  daysExpired: number;
 };
 
 /**
- * Mark an asset's maintenance as complete (web parity): records last_maintenance_date,
- * reschedules next_maintenance_date by maintenance_interval months, moves an Active asset
- * to "For Checking", and logs the event in audit_logs.
+ * The only lifecycle statuses whose expired lifespan requires an evaluation
+ * decision:
+ *   • Active       → moves to `For Checking` for evaluation
+ *   • For Checking → already queued for evaluation
+ *   • Pullout      → stays Pullout; only "extend lifespan" or "dispose"
+ *
+ * Every other status (For Repair, For Replacement, Disposal, Acquired…) is left
+ * out even when the asset has expired — its evaluation waits until the asset is
+ * back to Active or Pullout.
+ */
+export const EVALUATION_STATUSES = ['Active', 'For Checking', 'Pullout'] as const;
+
+/** Counts behind the bell's maintenance and lifespan alert icons. */
+export type AlertCounts = {
+  /** Scheduled maintenance due today or overdue. */
+  maintenance: number;
+  /** Expired assets in an evaluable lifecycle status. */
+  evaluation: number;
+};
+
+/** Cheap count-only queries for the header alert icons. */
+export async function fetchAlertCounts(): Promise<AlertCounts> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [maintenanceRes, evaluationRes] = await Promise.all([
+    supabase
+      .from('assets')
+      .select('id', { count: 'exact', head: true })
+      .not('next_maintenance_date', 'is', null)
+      .lte('next_maintenance_date', today),
+    supabase
+      .from('assets')
+      .select('id', { count: 'exact', head: true })
+      .not('expiration_date', 'is', null)
+      .lte('expiration_date', today)
+      .in('Lifecycle_Status', EVALUATION_STATUSES as unknown as string[]),
+  ]);
+
+  if (maintenanceRes.error) throw maintenanceRes.error;
+  if (evaluationRes.error) throw evaluationRes.error;
+
+  return {
+    maintenance: maintenanceRes.count ?? 0,
+    evaluation: evaluationRes.count ?? 0,
+  };
+}
+
+/**
+ * Assets whose lifespan (expiration_date) has reached today or passed **and**
+ * whose lifecycle status can still be evaluated — the "For Evaluation" alert on
+ * the admin dashboard and the lifespan screen.
+ */
+export async function fetchAssetsRequiringEvaluation(): Promise<EvaluationAlert[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('assets')
+    .select(
+      'id, Asset_code, Asset_name, Lifecycle_Status, expiration_date, repair_counts, user_id, users(employee_numbers("Full_Name"))',
+    )
+    .not('expiration_date', 'is', null)
+    .lte('expiration_date', today)
+    .in('Lifecycle_Status', EVALUATION_STATUSES as unknown as string[])
+    .order('expiration_date', { ascending: true });
+
+  if (error) throw error;
+
+  const todayMs = new Date(today).getTime();
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    assetId: String(row.Asset_code ?? ''),
+    name: String(row.Asset_name ?? 'Asset'),
+    status: row.Lifecycle_Status ?? undefined,
+    expirationDate: row.expiration_date ?? null,
+    repairCounts: row.repair_counts ?? null,
+    custodian: unwrapCustodian(row.users) || undefined,
+    daysExpired: row.expiration_date
+      ? Math.max(0, Math.floor((todayMs - new Date(row.expiration_date).getTime()) / 86400000))
+      : 0,
+  }));
+}
+
+/**
+ * Mark an asset's maintenance as complete.
+ *
+ * Delegates to the maintenance service, which records the activity, reschedules
+ * `next_maintenance_date` from the configured interval and logs it in the asset
+ * history. The lifecycle status is deliberately **not** changed: maintenance
+ * being due/completed never means the asset is broken (spec §3–§4).
  */
 export async function completeMaintenance(options: {
   assetId: string | number;
   actorId?: string | number | null;
+  actorLabel?: string;
   notes?: string;
-}): Promise<{ nextMaintenanceDate: string | null; status: string }> {
-  const { assetId, actorId, notes } = options;
-  const now = new Date();
-  const nowIso = now.toISOString();
-  const todayStr = nowIso.slice(0, 10);
+  performedDate?: string;
+  maintenanceType?: string;
+  findings?: string;
+  performed?: string;
+  technician?: string;
+  cost?: number | string;
+  problemFound?: boolean;
+  problemDescription?: string;
+}): Promise<{ nextMaintenanceDate: string | null; status: string; repairCreated: boolean; repairRequestRef?: string }> {
+  const result = await recordMaintenance({
+    assetId: options.assetId,
+    actorId: options.actorId,
+    actorLabel: options.actorLabel,
+    performedDate: options.performedDate,
+    maintenanceType: options.maintenanceType,
+    findings: options.findings,
+    performed: options.performed,
+    technician: options.technician,
+    cost: options.cost,
+    remarks: options.notes,
+    problemFound: options.problemFound,
+    problemDescription: options.problemDescription,
+  });
 
-  const { data: asset, error: fetchError } = await supabase
-    .from('assets')
-    .select('Asset_code, Asset_name, Lifecycle_Status, maintenance_interval, next_maintenance_date')
-    .eq('id', assetId as any)
-    .maybeSingle();
-  if (fetchError) throw fetchError;
-  if (!asset || !asset.next_maintenance_date) {
-    throw new Error('Asset has no maintenance schedule');
-  }
-
-  const interval = Number(asset.maintenance_interval ?? 0);
-  const nextDate = interval > 0 ? addMonthsToDate(todayStr, interval) : null;
-  const currentStatus = String(asset.Lifecycle_Status ?? 'Active');
-  const newStatus = currentStatus === 'Active' ? 'For Checking' : currentStatus;
-
-  const { error: updateError } = await supabase
-    .from('assets')
-    .update({
-      last_maintenance_date: todayStr,
-      next_maintenance_date: nextDate,
-      Lifecycle_Status: newStatus,
-      updated_at: nowIso,
-    })
-    .eq('id', assetId as any);
-  if (updateError) throw updateError;
-
-  const assetLabel = `${asset.Asset_name ?? 'Asset'} ${asset.Asset_code ?? ''}`.trim();
-  const description =
-    `Preventive maintenance for ${assetLabel} completed. Lifecycle status set to ${newStatus}.` +
-    (nextDate ? ` Next maintenance scheduled for ${nextDate}.` : '');
-
-  const { error: auditError } = await supabase.from('audit_logs').insert([{
-    user_id: actorId ?? null,
-    asset_id: assetId,
-    notes: notes || `Maintenance completed on ${todayStr}`,
-    action_type: 'UPDATE',
-    action_description: description,
-    created_at: nowIso,
-    updated_at: nowIso,
-  }]);
-  if (auditError) throw auditError;
-
-  return { nextMaintenanceDate: nextDate, status: newStatus };
+  return {
+    nextMaintenanceDate: result.nextMaintenanceDate,
+    status: result.status,
+    repairCreated: result.repairCreated,
+    repairRequestRef: result.repairRequestRef,
+  };
 }
 
 export type ReplacementRecord = {
@@ -771,6 +997,183 @@ export async function fetchReplacementRecords(): Promise<ReplacementRecord[]> {
 }
 
 /**
+ * Create a brand-new asset and link it as the replacement for an old one —
+ * the mobile twin of the web's "Create & Link New Asset" modal
+ * (/admin/replacements/{id}/link). Mirrors the web writes exactly:
+ *   • the new asset is owned by the **old asset's owner** (the requester),
+ *   • it stays `Acquired` until the replacement is marked Received,
+ *   • an optional photo is uploaded to the `assets` storage bucket and
+ *     recorded on `asset_files`,
+ *   • the replacement row is linked via `new_assets_id` (creating the row when
+ *     only the request fallback exists),
+ *   • a CREATE audit entry and a "ready for pickup" notification for the
+ *     requester are written.
+ */
+export async function createAndLinkReplacementAsset(payload: {
+  replacementId: string;
+  requestId: string;
+  oldAssetId: string | number;
+  assetCode: string;
+  title: string;
+  category?: string;
+  serialNumber?: string;
+  location?: string;
+  acquisitionDate?: string;
+  purchasePrice?: number;
+  supplier?: string;
+  warrantyMonths?: number;
+  lifespanMonths?: number;
+  maintenanceInterval?: number;
+  photoUri?: string | null;
+  actorId?: string | number | null;
+}): Promise<{ newAssetId: string; assetCode: string; photoWarning: string | null }> {
+  const now = new Date().toISOString();
+
+  // The old asset carries the owner: whoever requested the replacement keeps
+  // the asset (no user picker here — same as the web).
+  const { data: oldAsset, error: oldErr } = await supabase
+    .from('assets')
+    .select('id, Asset_code, Asset_name, user_id, Category, asset_location, supplier, model, manufacture')
+    .eq('id', payload.oldAssetId as any)
+    .maybeSingle();
+  if (oldErr) throw oldErr;
+  if (!oldAsset) throw new Error('Old asset not found');
+
+  const ownerId = (oldAsset as any).user_id ?? null;
+  const acquisitionDate = payload.acquisitionDate || now.slice(0, 10);
+
+  // Derived dates, exactly like the web's link endpoint.
+  const addMonths = (base: string, months: number) => {
+    const d = new Date(`${base}T00:00:00`);
+    d.setMonth(d.getMonth() + months);
+    return d.toISOString().slice(0, 10);
+  };
+  const expirationDate =
+    payload.lifespanMonths && payload.lifespanMonths > 0 ? addMonths(acquisitionDate, payload.lifespanMonths) : null;
+  const nextMaintenanceDate =
+    payload.maintenanceInterval && payload.maintenanceInterval > 0
+      ? addMonths(acquisitionDate, payload.maintenanceInterval)
+      : null;
+
+  // 1. Create the new asset (Acquired — becomes Active only on pickup).
+  const newAsset = await insertRecord('assets', {
+    user_id: ownerId,
+    Asset_code: payload.assetCode,
+    Asset_name: payload.title,
+    Category: payload.category || (oldAsset as any).Category || null,
+    Condition: 'New',
+    Lifecycle_Status: 'Acquired',
+    accusion_date: acquisitionDate,
+    purchase_Price: payload.purchasePrice ?? null,
+    warranty_months: payload.warrantyMonths ?? null,
+    lifespan_months: payload.lifespanMonths ?? null,
+    maintenance_interval: payload.maintenanceInterval ?? null,
+    expiration_date: expirationDate,
+    next_maintenance_date: nextMaintenanceDate,
+    supplier: payload.supplier || (oldAsset as any).supplier || null,
+    model: (oldAsset as any).model || null,
+    manufacture: (oldAsset as any).manufacture || null,
+    serial_Number: payload.serialNumber || null,
+    asset_location: payload.location || (oldAsset as any).asset_location || null,
+    repair_counts: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  const newAssetId: string = String(newAsset.id);
+
+  // 2. Photo (best-effort — never blocks the registration itself).
+  let photoWarning: string | null = null;
+  if (payload.photoUri) {
+    try {
+      const publicUrl = await uploadAssetPhoto(newAssetId, payload.photoUri);
+      const fileName = publicUrl.split('/').pop()?.split('?')[0] || `${newAssetId}-photo.jpg`;
+      await insertRecord('asset_files', {
+        Asset_id: newAsset.id,
+        file_name: fileName,
+        file_path: publicUrl,
+        file_size: 0,
+        mime_type: /\.png($|\?)/i.test(publicUrl) ? 'image/png' : 'image/jpeg',
+        uploaded_at: now,
+        url: publicUrl,
+        created_at: now,
+        updated_at: now,
+      });
+    } catch (photoErr) {
+      console.warn('Replacement asset photo upload failed:', photoErr);
+      photoWarning = (photoErr as Error)?.message || 'Photo upload failed';
+    }
+  }
+
+  // 3. Link the replacement row (create it when only the request fallback exists).
+  const isRealRow = !String(payload.replacementId).startsWith('req-');
+  if (isRealRow) {
+    const { error: updErr } = await supabase
+      .from('replacements')
+      .update({ new_assets_id: newAsset.id, updated_at: now })
+      .eq('Replacement_id', payload.replacementId as any);
+    if (updErr) throw updErr;
+  } else {
+    const requestIdNum = Number(String(payload.replacementId).slice(4));
+    const { data: existing } = await supabase
+      .from('replacements')
+      .select('Replacement_id')
+      .eq('Request_id', requestIdNum)
+      .maybeSingle();
+    if (existing) {
+      const { error: updErr } = await supabase
+        .from('replacements')
+        .update({ new_assets_id: newAsset.id, updated_at: now })
+        .eq('Replacement_id', (existing as any).Replacement_id);
+      if (updErr) throw updErr;
+    } else {
+      const { error: insErr } = await supabase.from('replacements').insert([
+        {
+          Request_id: requestIdNum,
+          old_assets_id: payload.oldAssetId,
+          new_assets_id: newAsset.id,
+          reason: 'Approved replacement request',
+          notes: 'Created from mobile replacement screen',
+          Replacement_Date: now,
+          Approve_by: 'Asset Management Office',
+          status: 'Approved',
+          replacement_reason: 'End of Lifespan',
+          created_at: now,
+          updated_at: now,
+        },
+      ]);
+      if (insErr) throw insErr;
+    }
+  }
+
+  // 4. Audit + 5. notify the requester (owner) that the asset is ready.
+  try {
+    await insertAuditLog({
+      user_id: payload.actorId ?? null,
+      asset_id: newAsset.id,
+      request_id: payload.requestId ? Number(payload.requestId) || null : null,
+      notes: `New asset created via replacement #${payload.replacementId}`,
+      action_type: 'CREATE',
+      action_description: `Linked to old asset ${(oldAsset as any).Asset_code ?? payload.oldAssetId}. Waiting for physical pickup.`,
+      created_at: now,
+      updated_at: now,
+    });
+  } catch (auditErr) {
+    console.warn('Replacement asset audit log failed:', auditErr);
+  }
+
+  await createNotification({
+    userId: ownerId,
+    title: 'New Asset Ready for Pickup',
+    message: `Your replacement request has been fulfilled. New asset ${payload.assetCode} (${payload.title}) is ready for pickup at the Asset Management Office. Please bring the old asset for exchange.`,
+    type: 'REPLACEMENT',
+    referenceId: payload.replacementId,
+    referenceType: 'replacement',
+  }).catch(() => undefined);
+
+  return { newAssetId, assetCode: payload.assetCode, photoWarning };
+}
+
+/**
  * Link an existing (scanned) asset as the replacement for an old asset.
  */
 export async function linkReplacementAsset(
@@ -873,6 +1276,27 @@ export async function markReplacementReceived(
     updated_at: now,
   }]);
   if (auditErr) throw auditErr;
+
+  // The owner hears that the replacement was fulfilled (web parity:
+  // "New Asset Ready for Pickup").
+  const { data: oldAsset } = await supabase
+    .from('assets')
+    .select('id, Asset_code, Asset_name, user_id')
+    .eq('id', replacement.old_assets_id as any)
+    .maybeSingle();
+  const ownerId = (oldAsset as any)?.user_id ?? null;
+  if (ownerId != null) {
+    await createNotification({
+      userId: ownerId,
+      title: 'New Asset Ready for Pickup',
+      message: `Your replacement request has been fulfilled. New asset ${
+        (oldAsset as any)?.Asset_name ?? ''
+      } is now Active and the previous unit is recorded as pulled out.`.trim(),
+      type: 'REPLACEMENT',
+      referenceId: replacementId,
+      referenceType: 'replacement',
+    });
+  }
 
   return true;
 }

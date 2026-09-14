@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import {
@@ -217,33 +217,45 @@ export default function MaintenanceScreen() {
                   {/* Detail Grid */}
                   <View style={styles.detailGrid}>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="calendar-check-outline" size={14} color="#94A3B8" />
-                      <Text style={styles.detailLabel}>ACQUISITION DATE</Text>
+                      <View style={styles.detailHeader}>
+                        <MaterialCommunityIcons name="calendar-check-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>ACQUISITION DATE</Text>
+                      </View>
                       <Text style={styles.detailValue}>—</Text>
                     </View>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="cash-multiple-outline" size={14} color="#94A3B8" />
-                      <Text style={styles.detailLabel}>PURCHASE PRICE</Text>
+                      <View style={styles.detailHeader}>
+                        <MaterialCommunityIcons name="cash-multiple" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>PURCHASE PRICE</Text>
+                      </View>
                       <Text style={styles.detailValue}>—</Text>
                     </View>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="barcode-outline" size={14} color="#94A3B8" />
-                      <Text style={styles.detailLabel}>SERIAL NUMBER</Text>
+                      <View style={styles.detailHeader}>
+                        <MaterialCommunityIcons name="barcode" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>SERIAL NUMBER</Text>
+                      </View>
                       <Text style={styles.detailValue}>—</Text>
                     </View>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="map-marker-outline" size={14} color="#94A3B8" />
-                      <Text style={styles.detailLabel}>LOCATION</Text>
+                      <View style={styles.detailHeader}>
+                        <MaterialCommunityIcons name="map-marker-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>LOCATION</Text>
+                      </View>
                       <Text style={styles.detailValue}>{item.location || '—'}</Text>
                     </View>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="category-outline" size={14} color="#94A3B8" />
-                      <Text style={styles.detailLabel}>CATEGORY</Text>
+                      <View style={styles.detailHeader}>
+                        <MaterialCommunityIcons name="tag-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>CATEGORY</Text>
+                      </View>
                       <Text style={styles.detailValue}>{item.category || '—'}</Text>
                     </View>
                     <View style={styles.detailItem}>
-                      <MaterialCommunityIcons name="account-outline" size={14} color="#94A3B8" />
-                      <Text style={styles.detailLabel}>ASSIGNED TO</Text>
+                      <View style={styles.detailHeader}>
+                        <MaterialCommunityIcons name="account-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.detailLabel}>ASSIGNED TO</Text>
+                      </View>
                       <Text style={styles.detailValue}>{item.custodian || '—'}</Text>
                     </View>
                   </View>
@@ -262,25 +274,33 @@ export default function MaintenanceScreen() {
 
                     <View style={styles.detailGrid}>
                       <View style={styles.detailItem}>
-                        <MaterialCommunityIcons name="clock-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>MAINTENANCE INTERVAL</Text>
+                        <View style={styles.detailHeader}>
+                          <MaterialCommunityIcons name="clock-outline" size={14} color="#94A3B8" />
+                          <Text style={styles.detailLabel}>MAINTENANCE INTERVAL</Text>
+                        </View>
                         <Text style={styles.detailValue}>{item.maintenanceInterval ? `${item.maintenanceInterval} months` : '—'}</Text>
                       </View>
                       <View style={styles.detailItem}>
-                        <MaterialCommunityIcons name="calendar-alert-outline" size={14} color={dueColor} />
-                        <Text style={[styles.detailLabel, { color: dueColor }]}>NEXT MAINTENANCE DUE</Text>
+                        <View style={styles.detailHeader}>
+                          <MaterialCommunityIcons name="calendar-alert-outline" size={14} color={dueColor} />
+                          <Text style={[styles.detailLabel, { color: dueColor }]}>NEXT MAINTENANCE DUE</Text>
+                        </View>
                         <Text style={[styles.detailValue, { color: dueColor }]}>{formatDateLong(item.nextMaintenanceDate)}</Text>
                       </View>
                       {item.lastMaintenanceDate ? (
                         <View style={styles.detailItem}>
-                          <MaterialCommunityIcons name="history-outline" size={14} color="#94A3B8" />
-                          <Text style={styles.detailLabel}>LAST MAINTENANCE DATE</Text>
+                          <View style={styles.detailHeader}>
+                            <MaterialCommunityIcons name="history" size={14} color="#94A3B8" />
+                            <Text style={styles.detailLabel}>LAST MAINTENANCE DATE</Text>
+                          </View>
                           <Text style={styles.detailValue}>{formatDateLong(item.lastMaintenanceDate)}</Text>
                         </View>
                       ) : null}
                       <View style={styles.detailItem}>
-                        <MaterialCommunityIcons name="wrench-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>REPAIR HISTORY</Text>
+                        <View style={styles.detailHeader}>
+                          <MaterialCommunityIcons name="wrench-outline" size={14} color="#94A3B8" />
+                          <Text style={styles.detailLabel}>REPAIR HISTORY</Text>
+                        </View>
                         <Text style={styles.detailValue}>0 repair(s)</Text>
                       </View>
                     </View>
@@ -570,32 +590,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   detailGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
   },
   detailItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    minWidth: '46%',
-    flexShrink: 1,
+    width: '100%',
     backgroundColor: '#F8FAFC',
-    padding: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
     borderRadius: 8,
   },
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
   detailLabel: {
-    fontSize: 9,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
     color: '#94A3B8',
     textTransform: 'uppercase',
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
   detailValue: {
-    flex: 1,
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     color: '#334155',
+    lineHeight: 18,
   },
   maintenanceSection: {
     marginTop: 10,
@@ -607,8 +628,8 @@ const styles = StyleSheet.create({
   maintenanceHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: 8,
+    marginBottom: 10,
   },
   upkeepLabel: {
     flexDirection: 'row',
@@ -625,6 +646,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     flex: 1,
+    marginRight: 4,
   },
   markCompleteButton: {
     borderRadius: 12,

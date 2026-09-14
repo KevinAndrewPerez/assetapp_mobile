@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,10 +9,13 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { RequestCard, RequestItem, RequestStatus } from '@/components/requests/request-card';
 import { updateRequestStatus } from '@/lib/userService';
+import { summarizeApproval } from '@/lib/requestService';
 import NotificationBell from '@/components/notification-bell';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -46,8 +48,8 @@ export default function RequestsScreen() {
             Full_Name
           )
         ), 
-        assets (Asset_code, Asset_name, asset_files (Asset_file_ID, file_name, file_path, url)),
-        request_items (assets (Asset_code, Asset_name, asset_files (Asset_file_ID, file_name, file_path, url)))
+        assets (Asset_code, Asset_name, Lifecycle_Status, asset_files (Asset_file_ID, file_name, file_path, url)),
+        request_items (assets (Asset_code, Asset_name, Lifecycle_Status, asset_files (Asset_file_ID, file_name, file_path, url)))
       `)
       .order('created_at', { ascending: false });
 
@@ -62,7 +64,7 @@ export default function RequestsScreen() {
     if (requestIds.length > 0) {
       const { data: items, error: itemsErr } = await supabase
         .from('request_items')
-        .select('request_id, assets (Asset_code, Asset_name, asset_files (Asset_file_ID, file_name, file_path, url))')
+        .select('request_id, assets (Asset_code, Asset_name, Lifecycle_Status, asset_files (Asset_file_ID, file_name, file_path, url))')
         .in('request_id', requestIds);
       if (itemsErr) {
         console.error('Failed to fetch request items:', itemsErr.message);
@@ -99,7 +101,7 @@ export default function RequestsScreen() {
         if (wanted.length > 0) {
           const { data: aRows } = await supabase
             .from('assets')
-            .select('id, Asset_code, Asset_name')
+            .select('id, Asset_code, Asset_name, Lifecycle_Status')
             .in('id', wanted);
           const byId = new Map<string, any>();
           (aRows || []).forEach((a: any) => {
@@ -118,27 +120,29 @@ export default function RequestsScreen() {
       }
     }
 
-    const fileUrlOf = (files: any): string => {
-      const first = Array.isArray(files) ? files[0] : files;
-      if (!first) return '';
-      const raw = String(first?.url ?? first?.file_path ?? '');
-      if (!raw) return '';
-      if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-      const clean = raw.replace(/^\/+/, '').replace(/^storage\/v1\/object\/public\//, '').replace(/^storage\/assets\//, '').replace(/^assets\//, '');
-      if (!clean) return '';
-      const { data } = supabase.storage.from('assets').getPublicUrl(clean);
-      return data?.publicUrl || '';
-    };
+    const fileUrlOf = (files: any): string => resolveMediaUrl(files, 'assets');
 
     const mappedItems: RequestItem[] = requests.map((req: any) => {
       const user = req.users;
       const fullName = user?.employee_numbers?.Full_Name || 'Unknown';
 
-      const linked: { id?: string | number | null; code: string; name: string; imageUrl?: string }[] = (itemsByRequest.get(String(req.id)) ?? [])
+      const linked: {
+        id?: string | number | null;
+        code: string;
+        name: string;
+        imageUrl?: string;
+        lifecycleStatus?: string;
+      }[] = (itemsByRequest.get(String(req.id)) ?? [])
         .map((it: any) => {
           const a = Array.isArray(it?.assets) ? it.assets[0] : it?.assets;
           return a
-            ? { id: a.id, code: String(a.Asset_code ?? ''), name: String(a.Asset_name ?? ''), imageUrl: fileUrlOf(a.asset_files) }
+            ? {
+                id: a.id,
+                code: String(a.Asset_code ?? ''),
+                name: String(a.Asset_name ?? ''),
+                imageUrl: fileUrlOf(a.asset_files),
+                lifecycleStatus: String(a.Lifecycle_Status ?? ''),
+              }
             : null;
         })
         .filter((a: any): a is NonNullable<typeof a> => a && (a.code || a.name));
@@ -146,7 +150,12 @@ export default function RequestsScreen() {
       if (linked.length === 0) {
         (replacementAssetsByRequest.get(String(req.id)) ?? []).forEach((a: any) => {
           if (a && a.id != null && !linked.some((x) => String(x.id) === String(a.id))) {
-            linked.push({ id: a.id, code: String(a.Asset_code ?? ''), name: String(a.Asset_name ?? '') });
+            linked.push({
+              id: a.id,
+              code: String(a.Asset_code ?? ''),
+              name: String(a.Asset_name ?? ''),
+              lifecycleStatus: String(a.Lifecycle_Status ?? ''),
+            });
           }
         });
       }
@@ -176,7 +185,15 @@ export default function RequestsScreen() {
           linked.length > 0
             ? linked.map((a, i) => ({ ...a, imageUrl: a.imageUrl || (i === 0 ? directImage : '') }))
             : directName || directCode
-              ? [{ id: directAsset?.id, code: directCode, name: directName, imageUrl: directImage }]
+              ? [
+                  {
+                    id: directAsset?.id,
+                    code: directCode,
+                    name: directName,
+                    imageUrl: directImage,
+                    lifecycleStatus: String(directAsset?.Lifecycle_Status ?? ''),
+                  },
+                ]
               : undefined,
       };
     });
@@ -229,6 +246,30 @@ export default function RequestsScreen() {
     router.push({ pathname: '/request-detail', params: { id: requestId } });
   };
 
+  const handleStatusChange = async (requestId: string, status: RequestStatus) => {
+    try {
+      const userJson = await AsyncStorage.getItem('user');
+      if (!userJson) {
+        Alert.alert('Error', 'User session not found.');
+        return;
+      }
+      const user = JSON.parse(userJson);
+
+      // Approving an assignment request returns a per-asset report: each asset
+      // is only issued if its lifecycle status allows it.
+      const report = await updateRequestStatus(requestId, status as any, user.id);
+      if (report) {
+        Alert.alert('Request Approved', summarizeApproval(report));
+      } else {
+        Alert.alert('Success', `Request marked ${status}.`);
+      }
+      fetchRequests(); // Refresh list
+    } catch (error) {
+      console.error('Failed to update request status:', error);
+      Alert.alert('Error', 'Failed to update request status.');
+    }
+  };
+
   const handleAction = async (requestId: string, status: 'Approved' | 'Rejected') => {
     try {
       const userJson = await AsyncStorage.getItem('user');
@@ -238,8 +279,12 @@ export default function RequestsScreen() {
       }
       const user = JSON.parse(userJson);
 
-      await updateRequestStatus(requestId, status, user.id);
-      Alert.alert('Success', `Request ${status.toLowerCase()} successfully.`);
+      const report = await updateRequestStatus(requestId, status, user.id);
+      if (report) {
+        Alert.alert('Request Approved', summarizeApproval(report));
+      } else {
+        Alert.alert('Success', `Request ${status.toLowerCase()} successfully.`);
+      }
       fetchRequests(); // Refresh list
     } catch (error) {
       console.error(`Failed to ${status.toLowerCase()} request:`, error);
@@ -279,6 +324,7 @@ export default function RequestsScreen() {
             onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
             onApprove={() => handleAction(item.id, 'Approved')}
             onReject={() => handleAction(item.id, 'Rejected')}
+            onStatusChange={(status) => handleStatusChange(item.id, status)}
             onViewDetails={() => handleViewDetails(item.id)}
           />
         ))}

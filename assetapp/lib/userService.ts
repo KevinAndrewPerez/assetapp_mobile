@@ -3,6 +3,16 @@ import bcrypt from 'bcryptjs';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { supabase, SUPABASE_URL } from './supabase';
+import { resolveMediaUrl } from './mediaUrl';
+import { writeAudit } from './auditService';
+import {
+  ApprovalReport,
+  approveRequestWithEvaluation,
+  isAssignmentRequest,
+} from './requestService';
+import { applyRequestStatusToRepairs } from './repairService';
+import { applyRequestStatusToDisposals } from './disposalService';
+import { createNotification, notifyAdmins } from './notificationService';
 
 export type StoredUser = {
   id?: number | string;
@@ -112,87 +122,7 @@ export type RequestDetail = {
   attachedFileUrl?: string;
 };
 
-const KNOWN_STORAGE_BUCKETS = ['assets', 'qr_codes', 'photos', 'public', 'asset_files'];
-const PUBLIC_PREFIX = '/storage/v1/object/public/';
-
-const resolveStorageUrl = (raw: any, fallbackBucket = 'assets'): string => {
-  if (!raw) return '';
-
-  // Unwrap object or stringified JSON
-  let str = '';
-  if (typeof raw === 'object' && raw !== null) {
-    str = raw.url || raw.file_path || raw.path || raw.FilePath || '';
-  } else {
-    str = String(raw).trim();
-    if (str.startsWith('{') && str.endsWith('}')) {
-      try {
-        const parsed = JSON.parse(str);
-        str = parsed.url || parsed.file_path || parsed.path || parsed.FilePath || str;
-      } catch {}
-    }
-  }
-
-  if (!str) return '';
-
-  // ---------- Already a full URL ----------
-  if (str.startsWith('http://') || str.startsWith('https://')) {
-    // Fix the exact double-nested patterns that appear in the logs
-    str = str
-      .replace(
-        /\/storage\/v1\/object\/public\/assets\/storage\/assets\//g,
-        '/storage/v1/object/public/assets/'
-      )
-      .replace(
-        /\/storage\/v1\/object\/public\/assets\/storage\//g,
-        '/storage/v1/object/public/assets/'
-      )
-      .replace(
-        /\/storage\/assets\/storage\/assets\//g,
-        '/storage/v1/object/public/assets/'
-      );
-
-    return str;
-  }
-
-  // ---------- Relative path ----------
-  str = str.replace(/^\/+/, '');
-  str = str.replace(/^storage\/v1\/object\/public\//, '');
-
-  // Remove accidental "storage/assets/" or "assets/storage/assets/" prefixes
-  str = str
-    .replace(/^storage\/assets\//, '')
-    .replace(/^assets\/storage\/assets\//, '')
-    .replace(/^storage\//, '');
-
-  // Detect real bucket from the path
-  let targetBucket = fallbackBucket;
-  for (const bucket of KNOWN_STORAGE_BUCKETS) {
-    if (str.startsWith(`${bucket}/`)) {
-      targetBucket = bucket;
-      str = str.slice(bucket.length + 1);
-      break;
-    }
-  }
-
-  // Force everything into the only existing bucket (assets)
-  // QR codes live under assets/qr/
-  if (targetBucket === 'qr_codes') {
-    targetBucket = 'assets';
-    if (!str.startsWith('qr/')) {
-      str = `qr/${str}`;
-    }
-  }
-
-  // Encode each segment (important for iOS)
-  const encodedPath = str
-    .split('/')
-    .filter(Boolean)
-    .map((seg) => encodeURIComponent(seg))
-    .join('/');
-
-  const { data } = supabase.storage.from(targetBucket).getPublicUrl(encodedPath);
-  return data?.publicUrl || '';
-};
+const resolveStorageUrl = (raw: any, fallbackBucket = 'assets'): string => resolveMediaUrl(raw, fallbackBucket);
 
 const normalizeUserAsset = (row: any): UserAsset => {
   const status = String(row.Lifecycle_Status ?? row.status ?? 'Unknown');
@@ -847,6 +777,20 @@ export async function submitUserRequest(
     throw itemsError;
   }
 
+  // A request submitted by a user has to reach the Asset Management Office:
+  // every admin gets a bell notification carrying the same reference the
+  // Requests screen shows.
+  const requester = String(user.full_name ?? user.email ?? 'A user');
+  await notifyAdmins({
+    title: `New ${requestType} Request — REQ-${requestId}`,
+    message: `${requester} submitted a ${requestType} request for ${resolvedIds.length} asset${
+      resolvedIds.length > 1 ? 's' : ''
+    }.${note ? ` Note: ${note}` : ''}`,
+    type: 'REQUEST',
+    referenceId: requestId,
+    referenceType: 'request',
+  });
+
   return data;
 }
 
@@ -1026,8 +970,8 @@ export async function searchUsers(query: string) {
 export async function updateRequestStatus(
   requestId: string,
   status: 'Pending' | 'In Progress' | 'Completed' | 'Cancelled' | 'Approved' | 'Rejected',
-  adminId: string | number
-) {
+  adminId: string | number,
+): Promise<ApprovalReport | null> {
   const { data: request, error: fetchError } = await supabase
     .from('requests')
     .select('*, assets(Asset_code, Asset_name)')
@@ -1035,6 +979,20 @@ export async function updateRequestStatus(
     .single();
 
   if (fetchError) throw fetchError;
+
+  // ---------- Assignment requests (Transfer / asset request) ----------
+  // Approving an issue/transfer request must NOT blindly override an asset's
+  // lifecycle status: each linked asset is evaluated individually and only the
+  // suitable ones are assigned. The report is returned so the UI can show
+  // which assets were issued and which must run their own process first.
+  if (status === 'Approved' && isAssignmentRequest(request.request_type)) {
+    return approveRequestWithEvaluation({
+      requestId: String(requestId ?? '').trim(),
+      actorId: adminId,
+      assignToUserId: (request as any).assign_to_user_id ?? null,
+      notes: String(request.Note ?? request.note ?? ''),
+    });
+  }
 
   const now = new Date().toISOString();
 
@@ -1079,101 +1037,141 @@ export async function updateRequestStatus(
   for (const row of (Array.isArray(itemRows) ? itemRows : [])) pushAsset(Number(row?.asset_id));
 
   // ---------- Repairs ----------
+  // Repair decisions are applied per asset through the shared repair service:
+  // it updates the repair row, moves the asset through its lifecycle, writes the
+  // audit trail, notifies the owner and re-derives the request status. Every
+  // write lands in the same rows the Laravel web app reads.
   if (request.request_type === 'Repair') {
-    const approver = await resolveApprover(adminId);
-    const updatableRepairRows = linkedRepairRows.filter((row: any) => {
-      const rs = String(row?.status ?? '').toLowerCase();
-      return rs !== 'cancelled' && rs !== 'rejected';
+    await applyRequestStatusToRepairs({
+      requestId: requestIdText,
+      status,
+      actorId: adminId,
+      actorLabel: await resolveApprover(adminId),
+      notes: note,
     });
+  }
 
-    if (status === 'Approved' && linkedAssetIds.length > 0) {
-      // Flag the asset(s) as needing repair (log rows are created/updated below
-      // for non-terminal transitions).
-      const { error: flagErr } = await supabase
-        .from('assets')
-        .update({ Lifecycle_Status: 'For Repair', updated_at: now })
-        .in('id', linkedAssetIds);
-      if (flagErr) throw flagErr;
-    }
+  // ---------- Disposals ----------
+  // A disposal is a reviewed transaction: approving it authorizes the disposal,
+  // completing it marks the asset Disposed (never deleted) and cancelling it
+  // returns the asset to the status it had before. Same rows the web reads.
+  if (request.request_type === 'Disposal') {
+    await applyRequestStatusToDisposals({
+      requestId: requestIdText,
+      status,
+      actorId: adminId,
+      actorLabel: await resolveApprover(adminId),
+      notes: note,
+    });
+  }
 
-    if (!isTerminal && status !== 'Pending') {
-      if (linkedRepairRows.length > 0) {
-        // Update the per-asset repair rows of the request (never resurrect rows
-        // that were individually cancelled/rejected).
-        if (updatableRepairRows.length > 0) {
-          const updatableIds = updatableRepairRows.map((row: any) => row.Repair_id);
-          const { error: updErr } = await supabase
-            .from('repairs')
-            .update({ status, Repair_Date: now, Repair_result: note, notes: note, updated_at: now })
-            .in('Repair_id', updatableIds);
-          if (updErr) throw updErr;
+  // ---------- Terminal pullout decisions ----------
+  // Rejecting or cancelling a pullout request must also close its transaction;
+  // the assets themselves stay exactly as they are (never hidden or deleted).
+  if (request.request_type === 'Pullout' && isTerminal) {
+    const decisionStatus = status === 'Rejected' ? 'rejected' : 'cancelled';
+    const { error: cancelErr } = await supabase
+      .from('pullouts')
+      .update({ status: decisionStatus, updated_at: now })
+      .eq('request_id', requestIdText);
+    if (cancelErr) throw cancelErr;
 
-          if (status === 'Completed') {
-            const activeIds = updatableRepairRows
-              .map((row: any) => Number(row?.Assets_id))
-              .filter((n: number) => Number.isFinite(n) && n > 0);
-            if (activeIds.length > 0) {
-              const { error: actErr } = await supabase
-                .from('assets')
-                .update({ Lifecycle_Status: 'Active', updated_at: now })
-                .in('id', activeIds);
-              if (actErr) throw actErr;
-            }
-          }
-        }
-      } else if (linkedAssetIds.length > 0) {
-        // Fresh request with no repairs rows yet — create one per linked asset.
-        const { error: insertErr } = await supabase.from('repairs').insert(
-          linkedAssetIds.map((assetId) => ({
-            Assets_id: assetId,
-            Request_id: requestIdText,
-            Repair_Description: note,
-            Repair_Date: now,
-            Approve_by: approver,
-            Repair_Cost: 0,
-            status,
-            Repair_result: note,
-            notes: note,
-            created_at: now,
-            updated_at: now,
-          })),
-        );
-        if (insertErr) throw insertErr;
-
-        if (status === 'Completed') {
-          const { error: actErr } = await supabase
-            .from('assets')
-            .update({ Lifecycle_Status: 'Active', updated_at: now })
-            .in('id', linkedAssetIds);
-          if (actErr) throw actErr;
-        }
-      }
+    for (const assetId of linkedAssetIds) {
+      await writeAudit({
+        actorId: adminId,
+        assetId,
+        requestId: requestIdText,
+        actionType: 'PULLOUT',
+        description: `Pullout request ${decisionStatus}`,
+        notes: note || `Pullout request ${decisionStatus}`,
+      });
     }
   }
 
   // ---------- Approvals for the other request types ----------
-  if (status === 'Approved' && linkedAssetIds.length > 0) {
+  // (Repairs and disposals are handled above through their own per-asset
+  // workflows, because their transitions are per asset, not per request.)
+  if (
+    status === 'Approved' &&
+    request.request_type !== 'Repair' &&
+    request.request_type !== 'Disposal' &&
+    linkedAssetIds.length > 0
+  ) {
     const approver = await resolveApprover(adminId);
 
     if (request.request_type === 'Pullout') {
       // Pullouts live in the `pullouts` table (not disposals); the DB/web uses
-      // the literal status "Pullout" on the asset.
+      // the literal status "Pullout" on the asset. Pulled-out assets are NOT
+      // deleted or hidden — they stay in the inventory so departmental
+      // reporting and the audit history remain intact.
       const { error: aErr } = await supabase
         .from('assets')
         .update({ Lifecycle_Status: 'Pullout', updated_at: now })
         .in('id', linkedAssetIds);
       if (aErr) throw aErr;
-      for (const assetId of linkedAssetIds) {
-        await insertPulloutLog(request, assetId, requestIdText, approver, 'Approved pullout request', note, now);
+
+      // Approve the pullout transaction(s) already created for this request.
+      const { data: existingTransactions } = await supabase
+        .from('pullouts')
+        .select('id')
+        .eq('request_id', requestIdText);
+      const transactionIds = (Array.isArray(existingTransactions) ? existingTransactions : [])
+        .map((row: any) => row?.id)
+        .filter((id: any) => id != null);
+
+      if (transactionIds.length > 0) {
+        const { error: syncErr } = await supabase
+          .from('pullouts')
+          .update({ status: 'approved', Approve_by: approver, updated_at: now })
+          .in('id', transactionIds);
+        if (syncErr) throw syncErr;
+      } else {
+        // Legacy request created before pullout transactions existed: group the
+        // linked assets under one transaction, one item row per asset.
+        const { data: header, error: headerErr } = await supabase
+          .from('pullouts')
+          .insert([
+            {
+              request_id: requestIdText,
+              asset_id: linkedAssetIds[0],
+              Approve_by: approver,
+              Description: 'Approved pullout request',
+              notes: note,
+              pullout_date: now.slice(0, 10),
+              status: 'approved',
+              destination: null,
+              expected_return_date: null,
+              created_at: now,
+              updated_at: now,
+            },
+          ])
+          .select('id')
+          .single();
+        if (headerErr) throw headerErr;
+
+        const headerId = (header as any)?.id;
+        if (headerId != null) {
+          const { error: itemsErr } = await supabase.from('pullout_items').insert(
+            linkedAssetIds.map((assetId) => ({
+              pullout_id: headerId,
+              asset_id: assetId,
+              created_at: now,
+              updated_at: now,
+            })),
+          );
+          if (itemsErr) throw itemsErr;
+        }
       }
-    } else if (request.request_type === 'Disposal') {
-      const { error: aErr } = await supabase
-        .from('assets')
-        .update({ Lifecycle_Status: 'Disposal', updated_at: now })
-        .in('id', linkedAssetIds);
-      if (aErr) throw aErr;
+
       for (const assetId of linkedAssetIds) {
-        await insertDisposalLog(request, assetId, requestIdText, approver, 'Disposal', note, now);
+        await writeAudit({
+          actorId: adminId,
+          assetId,
+          requestId: requestIdText,
+          actionType: 'PULLOUT',
+          description: `Pullout request approved (${linkedAssetIds.length > 1 ? 'bulk' : 'single'})`,
+          notes: note || 'Approved pullout request',
+        });
       }
     } else if (request.request_type === 'Replacement') {
       // A `replacements` row needs both old and new asset ids; the new asset
@@ -1198,7 +1196,39 @@ export async function updateRequestStatus(
     }
   }
 
-  return true;
+  // The requester hears about the decision — same notifications the web's
+  // approve / reject endpoints send.
+  if (status === 'Approved' || status === 'Rejected') {
+    const requesterId = (request as any).user_id ?? null;
+    if (requesterId != null) {
+      const typeLabel = String(request.request_type ?? 'request');
+      const directAsset = firstOf((request as any).assets);
+      const assetLabel =
+        [directAsset?.Asset_name, directAsset?.Asset_code].filter(Boolean).join(' ') ||
+        (linkedAssetIds.length > 0
+          ? `${linkedAssetIds.length} asset(s)`
+          : 'your asset');
+      const isReplacement = typeLabel.trim().toLowerCase().includes('replacement');
+
+      await createNotification({
+        userId: requesterId,
+        title: isReplacement
+          ? status === 'Approved'
+            ? 'Replacement Request Approved'
+            : 'Request Rejected'
+          : `Request ${status}`,
+        message:
+          status === 'Approved'
+            ? `Your ${typeLabel} request for ${assetLabel} has been approved by the Asset Management Office.`
+            : `Your ${typeLabel} request for ${assetLabel} has been rejected. Please check your request for more details.`,
+        type: 'REQUEST',
+        referenceId: requestIdText,
+        referenceType: 'request',
+      });
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -1219,64 +1249,47 @@ async function resolveApprover(adminId: string | number): Promise<string> {
   return 'Admin';
 }
 
-/**
- * Insert a row into `disposals` using its real columns
- * (Disposal_ID / Asset_id / Request_id / notes / Approve_by /
- * Description / disposal_date / disposal_reason).
- */
-async function insertDisposalLog(
-  request: any,
-  assetId: number,
-  requestId: string,
-  approver: string,
-  description: string,
-  note: string,
-  now: string,
-) {
-  const d = new Date();
-  const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-  await supabase.from('disposals').insert([{
-    Asset_id: assetId,
-    Request_id: requestId,
-    notes: note,
-    Approve_by: approver,
-    Description: description,
-    disposal_date: dateOnly,
-    disposal_reason: note || `${description} approved`,
-    created_at: now,
-    updated_at: now,
-  }]);
-}
+export type PendingRequestAlert = {
+  id: string;
+  requestId: string;
+  requestType: string;
+  title: string;
+  submittedBy: string;
+  dateSubmitted: string;
+  status: string;
+  assetCode?: string;
+};
 
 /**
- * Insert a row into the `pullouts` table (id / request_id / asset_id /
- * Approve_by / Description / notes / pullout_date / status / destination /
- * expected_return_date). One row per approved asset.
+ * Pending requests submitted by employees / department heads — feeds the
+ * "User Requests" alert on the admin dashboard (pending first).
  */
-async function insertPulloutLog(
-  request: any,
-  assetId: number,
-  requestId: string,
-  approver: string,
-  description: string,
-  note: string,
-  now: string,
-) {
-  const d = new Date();
-  const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export async function fetchPendingRequestsForAlerts(limit = 25): Promise<PendingRequestAlert[]> {
+  const { data, error } = await supabase
+    .from('requests')
+    .select(
+      'id, request_type, status, Note, created_at, assets(Asset_code, Asset_name), users:user_id(employee_numbers(Full_Name))',
+    )
+    .eq('status', 'Pending')
+    .order('created_at', { ascending: false })
+    .limit(limit);
 
-  await supabase.from('pullouts').insert([{
-    request_id: requestId,
-    asset_id: assetId,
-    Approve_by: approver,
-    Description: description,
-    notes: note || description,
-    pullout_date: dateOnly,
-    status: 'approved',
-    destination: null,
-    expected_return_date: null,
-    created_at: now,
-    updated_at: now,
-  }]);
+  if (error) throw error;
+
+  return (data ?? []).map((row: any) => {
+    const asset = Array.isArray(row.assets) ? row.assets[0] : row.assets;
+    const user = Array.isArray(row.users) ? row.users[0] : row.users;
+    const emp = Array.isArray(user?.employee_numbers) ? user.employee_numbers[0] : user?.employee_numbers;
+    return {
+      id: String(row.id ?? ''),
+      requestId: `REQ-${String(row.id ?? '')}`,
+      requestType: String(row.request_type ?? 'Request'),
+      title: String(asset?.Asset_name ?? row.request_type ?? 'Request'),
+      submittedBy: String(emp?.Full_Name ?? 'Unknown'),
+      dateSubmitted: new Date(String(row.created_at ?? '')).toLocaleDateString(),
+      status: String(row.status ?? 'Pending'),
+      assetCode: String(asset?.Asset_code ?? ''),
+    };
+  });
 }
+
