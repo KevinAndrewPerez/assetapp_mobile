@@ -73,7 +73,7 @@ export default function MyRequests() {
               onPress={() => router.push('/submit-request' as any)}
               activeOpacity={0.85}
             >
-              <MaterialCommunityIcons name="plus" size={18} color="#1a3a5c" />
+              <MaterialCommunityIcons name="plus" size={18} color="#1E3A5F" />
               <Text style={styles.newRequestText}>New</Text>
             </TouchableOpacity>
             <NotificationBell />
@@ -81,7 +81,7 @@ export default function MyRequests() {
         </View>
         <View style={styles.container}>
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#f4b942" />
+            <ActivityIndicator size="large" color="#FDB833" />
           </View>
         </View>
       </View>
@@ -98,7 +98,7 @@ export default function MyRequests() {
             onPress={() => router.push('/submit-request' as any)}
             activeOpacity={0.85}
           >
-            <MaterialCommunityIcons name="plus" size={18} color="#1a3a5c" />
+            <MaterialCommunityIcons name="plus" size={18} color="#1E3A5F" />
             <Text style={styles.newRequestText}>New</Text>
           </TouchableOpacity>
           <NotificationBell />
@@ -154,7 +154,7 @@ export default function MyRequests() {
                   <Image source={{ uri: request.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
                 ) : (
                   <View style={styles.qrPlaceholder}>
-                    <MaterialCommunityIcons name="qrcode" size={40} color="#f4b942" />
+                    <MaterialCommunityIcons name="qrcode" size={40} color="#FDB833" />
                     <Text style={styles.barcodeText}>{request.barcode || 'REQ'}</Text>
                   </View>
                 )}
@@ -185,7 +185,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     flexDirection: 'row',
@@ -198,8 +198,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C134F',
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -239,7 +239,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   newRequestText: {
-    color: '#1a3a5c',
+    color: '#1E3A5F',
     fontWeight: '800',
     fontSize: 12,
   },
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
   },
   activeTab: {
     borderBottomWidth: 2,
-    borderBottomColor: '#f4b942',
+    borderBottomColor: '#FDB833',
   },
   tabText: {
     fontSize: 15,
@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   activeTabText: {
-    color: '#f4b942',
+    color: '#FDB833',
     fontWeight: '700',
   },
   scrollContent: {

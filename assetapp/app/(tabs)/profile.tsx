@@ -81,15 +81,16 @@ export default function ProfileScreen() {
   ];
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.headerSafe}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Profile</Text>
       </View>
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.container}>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* User Card */}
         <LinearGradient
-          colors={['#1E3A5F', '#0F172A']}
+          colors={['#0C134F', '#1E3A5F']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.userCard}
@@ -145,7 +146,7 @@ export default function ProfileScreen() {
                 <MaterialCommunityIcons name={option.icon as any} size={20} color={option.color} />
               </View>
               <Text style={styles.settingLabel}>{option.label}</Text>
-              <MaterialCommunityIcons name="chevron-right" size={24} color="#D1D5DB" />
+              <MaterialCommunityIcons name="chevron-right" size={24} color="#CBD5E1" />
             </TouchableOpacity>
           ))}
         </View>
@@ -156,7 +157,7 @@ export default function ProfileScreen() {
           onPress={handleLogout}
           activeOpacity={0.8}
         >
-          <MaterialCommunityIcons name="logout" size={20} color="#FFFFFF" />
+          <MaterialCommunityIcons name="logout" size={20} color="#B91C1C" />
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
 
@@ -165,46 +166,54 @@ export default function ProfileScreen() {
           <Text style={styles.footer}>NU TRACE v1.0.0 • National University Lipa</Text>
         </View>
       </ScrollView>
+      </SafeAreaView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  headerSafe: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 6,
+    paddingBottom: 16,
+    backgroundColor: '#0C134F',
+  },
+  headerTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 116,
   },
   userCard: {
-    borderRadius: 24,
-    padding: 28,
+    borderRadius: 18,
+    padding: 26,
     alignItems: 'center',
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    marginBottom: 16,
+    shadowColor: '#0C134F',
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   avatarContainer: {
     marginBottom: 16,
@@ -212,20 +221,20 @@ const styles = StyleSheet.create({
   avatar: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FBBF24',
+    borderRadius: 26,
+    backgroundColor: '#FDB833',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    shadowColor: '#F0A925',
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 6,
   },
   avatarText: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#3D2E00',
   },
   userName: {
     fontSize: 18,
@@ -235,24 +244,38 @@ const styles = StyleSheet.create({
   },
   userRole: {
     fontSize: 14,
-    color: '#E5E7EB',
+    color: '#E2E8F0',
     marginBottom: 2,
   },
   userOrganization: {
     fontSize: 13,
-    color: '#D1D5DB',
+    color: '#CBD5E1',
   },
   settingsSection: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 20,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   accountDetails: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 20,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   detailRow: {
     flexDirection: 'row',
@@ -284,16 +307,16 @@ const styles = StyleSheet.create({
   settingItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 14,
     marginBottom: 8,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   settingIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -305,23 +328,20 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   logoutButton: {
-    backgroundColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 20,
+    paddingVertical: 15,
+    borderRadius: 16,
     marginBottom: 24,
     gap: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
   logoutButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: '#B91C1C',
+    fontSize: 15,
     fontWeight: '700',
   },
   footerContainer: {
@@ -332,6 +352,6 @@ const styles = StyleSheet.create({
   footer: {
     textAlign: 'center',
     fontSize: 12,
-    color: '#9CA3AF',
+    color: '#94A3B8',
   },
 });

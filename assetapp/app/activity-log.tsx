@@ -333,10 +333,10 @@ export default function ActivityLogScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1E3A5F',
     paddingVertical: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -352,8 +352,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     marginRight: 10,
   },
   tagItemActive: {
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
     borderColor: '#FBBF24',
   },
   tagLabel: {
-    color: '#374151',
+    color: '#334155',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
   },
   activityDetails: {
     marginTop: 12,
@@ -530,7 +530,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyText: {
-    color: '#6B7280',
+    color: '#64748B',
     fontSize: 15,
     textAlign: 'center',
   },

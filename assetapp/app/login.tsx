@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -63,7 +63,7 @@ export default function LoginScreen() {
       } else {
         setGeneralError('Unauthorized role');
       }
-    } catch (err) {
+    } catch {
       setGeneralError('Login failed. Please try again.');
     } finally {
       setLoading(false);
@@ -79,13 +79,13 @@ export default function LoginScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.headerContainer}>
             <LinearGradient
-              colors={['#1a3a5c', 'rgba(26, 58, 92, 0.8)']}
+              colors={['#1E3A5F', '#16324F']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.logoContainer}
             >
               <View style={styles.logoBorder}>
-                <View style={styles.logoContent} />
+                <MaterialIcons name="qr-code-scanner" size={20} color="#FDB833" />
               </View>
             </LinearGradient>
             <Text style={styles.title}>Welcome to NU TRACE</Text>
@@ -103,7 +103,7 @@ export default function LoginScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
               <View style={[styles.inputWrapper, emailError ? styles.inputError : null]}>
-                <MaterialIcons name="email" size={18} color={emailError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
+                <MaterialIcons name="email" size={18} color={emailError ? "#DC2626" : "#94A3B8"} style={styles.inputIcon} />
                 <TextInput
                   style={[styles.input, emailError ? styles.inputTextError : null]}
                   placeholder="your.email@nu.edu.ph"
@@ -123,7 +123,7 @@ export default function LoginScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
               <View style={[styles.inputWrapper, passwordError ? styles.inputError : null]}>
-                <MaterialIcons name="lock" size={18} color={passwordError ? "#DC2626" : "#9CA3AF"} style={styles.inputIcon} />
+                <MaterialIcons name="lock" size={18} color={passwordError ? "#DC2626" : "#94A3B8"} style={styles.inputIcon} />
                 <TextInput
                   style={[styles.input, passwordError ? styles.inputTextError : null]}
                   placeholder="Enter your password"
@@ -141,14 +141,18 @@ export default function LoginScreen() {
               {passwordError ? <Text style={styles.fieldErrorText}>{passwordError}</Text> : null}
             </View>
 
-            <TouchableOpacity onPress={handleLogin} activeOpacity={0.8}>
+            <TouchableOpacity onPress={handleLogin} activeOpacity={0.85}>
               <LinearGradient
-                colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
+                colors={['#FDB833', '#F0A925']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.loginButton}
               >
-                <Text style={styles.loginButtonText}>Login</Text>
+                {loading ? (
+                  <ActivityIndicator size="small" color="#3D2E00" />
+                ) : (
+                  <Text style={styles.loginButtonText}>Login</Text>
+                )}
               </LinearGradient>
             </TouchableOpacity>
 
@@ -204,7 +208,7 @@ const styles = StyleSheet.create({
     height: 35,
     borderRadius: 10.5,
     borderWidth: 2.909,
-    borderColor: '#f4b942',
+    borderColor: '#FDB833',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -213,14 +217,15 @@ const styles = StyleSheet.create({
     height: 0,
   },
   title: {
-    color: '#1a3a5c',
-    fontSize: 21,
-    fontWeight: '700',
+    color: '#1E3A5F',
+    fontSize: 22,
+    fontWeight: '800',
     marginBottom: 6,
+    letterSpacing: 0.2,
   },
   subtitle: {
-    color: '#4a5565',
-    fontSize: 12.25,
+    color: '#64748B',
+    fontSize: 13,
     textAlign: 'center',
   },
   formContainer: {
@@ -239,19 +244,19 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    borderRadius: 14.5,
-    borderWidth: 0.727,
-    borderColor: '#e5e7eb',
+    backgroundColor: '#F4F7FB',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    height: 43.455,
+    height: 48,
   },
   inputIcon: {
     marginRight: 10.5,
   },
   input: {
     flex: 1,
-    color: '#1e293b',
+    color: '#0F172A',
     fontSize: 14,
   },
   eyeIcon: {
@@ -267,21 +272,22 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   loginButton: {
-    borderRadius: 24403200,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 45.5,
+    height: 48,
     marginBottom: 21,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 15,
+    shadowColor: '#F0A925',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   loginButtonText: {
-    color: '#1a3a5c',
-    fontSize: 14,
-    fontWeight: '600',
+    color: '#3D2E00',
+    fontSize: 14.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   registerContainer: {
     flexDirection: 'row',
@@ -293,7 +299,7 @@ const styles = StyleSheet.create({
     fontSize: 12.25,
   },
   registerLink: {
-    color: '#f4b942',
+    color: '#FDB833',
     fontSize: 14,
     fontWeight: '500',
   },

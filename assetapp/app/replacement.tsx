@@ -153,7 +153,8 @@ export default function ReplacementModule() {
   const openRegisterForm = (record: ReplacementRecord) => {
     setNewCode(generateAssetCode());
     setNewName(record.oldAsset.name === 'No asset linked' ? '' : record.oldAsset.name);
-    setNewCategory('');
+    // Category is locked to the old asset's category; condition is always New.
+    setNewCategory(record.oldAsset.category || 'Uncategorized');
     setNewCondition('New');
     setNewLocation('');
     setNewSerial('');
@@ -316,8 +317,8 @@ export default function ReplacementModule() {
 
   const statusStyle = (status: string) =>
     status === 'Received'
-      ? { backgroundColor: '#DCFCE7', color: '#166534' }
-      : { backgroundColor: '#DBEAFE', color: '#1D4ED8' };
+      ? { backgroundColor: '#ECFDF5', color: '#047857' }
+      : { backgroundColor: '#EFF6FF', color: '#1D4ED8' };
 
   if (loading && items.length === 0) {
     return (
@@ -490,7 +491,7 @@ export default function ReplacementModule() {
 
                       {item.status === 'Received' && (
                         <View style={styles.receivedNote}>
-                          <MaterialCommunityIcons name="check-circle" size={16} color="#166534" />
+                          <MaterialCommunityIcons name="check-circle" size={16} color="#047857" />
                           <Text style={styles.receivedNoteText}>Replacement received — new asset Active, old asset Pullout.</Text>
                         </View>
                       )}
@@ -526,7 +527,7 @@ export default function ReplacementModule() {
                 if (record) openScanner(record);
               }}
             >
-              <View style={[styles.chooserIcon, { backgroundColor: '#DBEAFE' }]}>
+              <View style={[styles.chooserIcon, { backgroundColor: '#EFF6FF' }]}>
                 <MaterialCommunityIcons name="qrcode-scan" size={24} color="#1D4ED8" />
               </View>
               <View style={styles.chooserOptionTextWrap}>
@@ -547,7 +548,7 @@ export default function ReplacementModule() {
                 if (record) openRegisterForm(record);
               }}
             >
-              <View style={[styles.chooserIcon, { backgroundColor: '#FEF3C7' }]}>
+              <View style={[styles.chooserIcon, { backgroundColor: '#FEF6E4' }]}>
                 <MaterialCommunityIcons name="package-variant-closed-plus" size={24} color="#B45309" />
               </View>
               <View style={styles.chooserOptionTextWrap}>
@@ -602,12 +603,30 @@ export default function ReplacementModule() {
 
             <View style={styles.regRow}>
               <View style={styles.regCol}>
-                <Text style={styles.regLabel}>Category</Text>
-                <TextInput style={styles.regInput} value={newCategory} onChangeText={setNewCategory} placeholder="Category" placeholderTextColor="#94A3B8" />
+                <View style={styles.lockedLabelRow}>
+                  <Text style={styles.regLabel}>Category</Text>
+                  <MaterialCommunityIcons name="lock" size={12} color="#94A3B8" />
+                </View>
+                <View style={styles.lockedInputWrap}>
+                  <TextInput
+                    style={[styles.regInput, styles.lockedInput]}
+                    value={newCategory}
+                    placeholderTextColor="#94A3B8"
+                    editable={false}
+                    pointerEvents="none"
+                  />
+                  <MaterialCommunityIcons name="tag" size={16} color="#94A3B8" style={styles.lockedInputIcon} />
+                </View>
               </View>
               <View style={styles.regCol}>
-                <Text style={styles.regLabel}>Condition</Text>
-                <TextInput style={styles.regInput} value={newCondition} onChangeText={setNewCondition} placeholderTextColor="#94A3B8" editable={false} />
+                <View style={styles.lockedLabelRow}>
+                  <Text style={styles.regLabel}>Condition</Text>
+                  <MaterialCommunityIcons name="lock" size={12} color="#94A3B8" />
+                </View>
+                <View style={styles.lockedInputWrap}>
+                  <TextInput style={[styles.regInput, styles.lockedInput]} value={newCondition} placeholderTextColor="#94A3B8" editable={false} pointerEvents="none" />
+                  <MaterialCommunityIcons name="certificate-outline" size={16} color="#16A34A" style={styles.lockedInputIcon} />
+                </View>
               </View>
             </View>
 
@@ -740,7 +759,7 @@ export default function ReplacementModule() {
 
 const styles = StyleSheet.create({
   screenContainer: { flex: 1, backgroundColor: '#1E3A5F' },
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  container: { flex: 1, backgroundColor: '#F4F7FB' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -752,7 +771,7 @@ const styles = StyleSheet.create({
   },
   backButton: { width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
   headerSpacer: { width: 32 },
-  title: { fontSize: 22, fontWeight: '700', color: '#FFFFFF' },
+  title: { fontSize: 21, fontWeight: '800', color: '#FFFFFF' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollContent: { paddingBottom: 24 },
   searchBarWrap: {
@@ -771,7 +790,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
@@ -779,7 +798,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14, color: '#0F172A' },
   avatarButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EA5E9', justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#FFFFFF', fontWeight: '700' },
-  filterScroll: { backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  filterScroll: { backgroundColor: '#F4F7FB', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
   filterContent: { gap: 8, paddingHorizontal: 18, paddingVertical: 12 },
   filterButton: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' },
   filterButtonActive: { backgroundColor: '#1E3A5F', borderColor: '#1E3A5F' },
@@ -787,13 +806,13 @@ const styles = StyleSheet.create({
   filterLabelActive: { color: '#FFFFFF' },
   listContainer: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 30 },
   recordCard: {
-    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16,
+    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#EDF1F7', borderRadius: 18,
     paddingHorizontal: 14, paddingTop: 14, paddingBottom: 12, marginBottom: 14,
     shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
   recordHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   assetSummary: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
-  assetIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#DBEAFE', justifyContent: 'center', alignItems: 'center' },
+  assetIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#EFF6FF', justifyContent: 'center', alignItems: 'center' },
   assetTextWrap: { flex: 1 },
   assetName: { fontSize: 15, fontWeight: '700', color: '#0F172A', lineHeight: 20 },
   assetCode: { fontSize: 12, color: '#64748B', marginTop: 2 },
@@ -805,10 +824,10 @@ const styles = StyleSheet.create({
   detailBlock: { flex: 1 },
   detailSection: { gap: 5 },
   detailLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', textTransform: 'uppercase' },
-  detailValue: { fontSize: 14, color: '#111827', fontWeight: '700', marginTop: 4 },
+  detailValue: { fontSize: 14, color: '#0F172A', fontWeight: '700', marginTop: 4 },
   detailSubValue: { fontSize: 12, color: '#64748B', marginTop: 3 },
-  notesBox: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 12 },
-  notesText: { fontSize: 14, color: '#111827', lineHeight: 20 },
+  notesBox: { backgroundColor: '#F4F7FB', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, padding: 12 },
+  notesText: { fontSize: 14, color: '#0F172A', lineHeight: 20 },
   actionButtons: { gap: 10, marginTop: 4 },
   linkButton: {
     flexDirection: 'row',
@@ -834,13 +853,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#ECFDF5',
     borderWidth: 1,
     borderColor: '#BBF7D0',
     borderRadius: 12,
     padding: 10,
   },
-  receivedNoteText: { color: '#166534', fontSize: 12, fontWeight: '600', flex: 1 },
+  receivedNoteText: { color: '#047857', fontSize: 12, fontWeight: '600', flex: 1 },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 42 },
   emptyStateText: { marginTop: 12, color: '#94A3B8', fontSize: 16, fontWeight: '600' },
   chooserOverlay: {
@@ -865,7 +884,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     marginBottom: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   chooserIcon: {
     width: 46,
@@ -898,7 +917,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   qrPreviewCode: { fontSize: 14, fontWeight: '700', color: '#0F172A', marginTop: 12, letterSpacing: 0.5 },
-  regScreen: { flex: 1, backgroundColor: '#F8FAFC' },
+  regScreen: { flex: 1, backgroundColor: '#F4F7FB' },
   regHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -955,6 +974,15 @@ const styles = StyleSheet.create({
   },
   regRow: { flexDirection: 'row', gap: 10 },
   regCol: { flex: 1 },
+  lockedLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  lockedInputWrap: { position: 'relative', marginBottom: 12 },
+  lockedInput: {
+    backgroundColor: '#F1F5F9',
+    color: '#475569',
+    borderColor: '#E2E8F0',
+    paddingRight: 34,
+  },
+  lockedInputIcon: { position: 'absolute', right: 12, top: 14 },
   photoBox: {
     borderWidth: 2,
     borderColor: '#E2E8F0',

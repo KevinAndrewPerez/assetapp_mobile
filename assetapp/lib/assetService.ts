@@ -684,6 +684,10 @@ export type MaintenanceAlert = {
   maintenanceInterval?: number | null;
   location?: string | null;
   custodian?: string;
+  acquisitionDate?: string | null;
+  purchasePrice?: number | null;
+  serialNumber?: string | null;
+  repairCounts?: number | null;
   daysOverdue: number;
 };
 
@@ -703,7 +707,7 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
   const { data, error } = await supabase
     .from('assets')
     .select(
-      'id, Asset_code, Asset_name, Category, Lifecycle_Status, next_maintenance_date, last_maintenance_date, maintenance_interval, asset_location, user_id, users(employee_numbers("Full_Name"))',
+      'id, Asset_code, Asset_name, Category, Lifecycle_Status, next_maintenance_date, last_maintenance_date, maintenance_interval, asset_location, user_id, accusion_date, purchase_Price, serial_Number, repair_counts, users(employee_numbers("Full_Name"))',
     )
     .not('next_maintenance_date', 'is', null)
     .lte('next_maintenance_date', today)
@@ -723,6 +727,10 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
     maintenanceInterval: row.maintenance_interval ?? null,
     location: row.asset_location ?? null,
     custodian: unwrapCustodian(row.users) || undefined,
+    acquisitionDate: row.accusion_date ? String(row.accusion_date).slice(0, 10) : null,
+    purchasePrice: toNumberOrNull(row.purchase_Price),
+    serialNumber: row.serial_Number ? String(row.serial_Number) : null,
+    repairCounts: typeof row.repair_counts === 'number' ? row.repair_counts : null,
     daysOverdue: row.next_maintenance_date
       ? Math.max(0, Math.floor((todayMs - new Date(row.next_maintenance_date).getTime()) / 86400000))
       : 0,
@@ -869,7 +877,7 @@ export async function completeMaintenance(options: {
 export type ReplacementRecord = {
   replacementId: string;
   requestId: string;
-  oldAsset: { id: string | number; code: string; name: string };
+  oldAsset: { id: string | number; code: string; name: string; category: string };
   newAsset: { id: string | number; code: string; name: string } | null;
   requestedBy: string;
   reason: string;
@@ -927,7 +935,7 @@ export async function fetchReplacementRecords(): Promise<ReplacementRecord[]> {
   if (wantedIds.length > 0) {
     const { data, error } = await supabase
       .from('assets')
-      .select('id, Asset_code, Asset_name')
+      .select('id, Asset_code, Asset_name, Category')
       .in('id', wantedIds);
     if (error) {
       console.error('Failed to fetch replacement assets:', error.message);
@@ -936,13 +944,14 @@ export async function fetchReplacementRecords(): Promise<ReplacementRecord[]> {
     }
   }
 
-  const assetsById = new Map<string, { id: string | number; code: string; name: string }>();
+  const assetsById = new Map<string, { id: string | number; code: string; name: string; category: string }>();
   assetRows.forEach((a: any) => {
     if (a.id != null) {
       assetsById.set(String(a.id), {
         id: a.id,
         code: String(a.Asset_code ?? ''),
         name: String(a.Asset_name ?? 'Unknown Asset'),
+        category: String(a.Category ?? ''),
       });
     }
   });
@@ -957,6 +966,7 @@ export async function fetchReplacementRecords(): Promise<ReplacementRecord[]> {
       id: row.old_assets_id ?? '',
       code: String(row.old_assets_id ?? 'N/A'),
       name: 'No asset linked',
+      category: '',
     };
     const same =
       row.new_assets_id != null &&

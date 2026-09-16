@@ -38,6 +38,7 @@ function AnimatedTabIcon({
   return (
     <Animated.View style={[styles.iconWrap, { transform: [{ scale }, { rotate: rotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '5deg'] }) }] }]}>
       <MaterialCommunityIcons name={name as any} size={size} color={color} />
+      <Animated.View style={[styles.activeDot, { opacity: focused ? 1 : 0 }]} />
     </Animated.View>
   );
 }
@@ -47,7 +48,7 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: "#FDB833",
-        tabBarInactiveTintColor: "rgba(253, 184, 51, 0.5)",
+        tabBarInactiveTintColor: "rgba(255, 255, 255, 0.48)",
         headerShown: false,
         tabBarHideOnKeyboard: true,
         tabBarButton: HapticTab,
@@ -181,5 +182,12 @@ const styles = StyleSheet.create({
   iconWrap: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#FDB833',
+    marginTop: 3,
   },
 });

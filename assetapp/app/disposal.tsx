@@ -369,14 +369,14 @@ export default function DisposalScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['left','right','bottom']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
           activeOpacity={0.8}
         >
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#0F172A" />
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Record Disposal</Text>
         <TouchableOpacity
@@ -413,11 +413,11 @@ export default function DisposalScreen() {
 
         <View style={styles.searchRow}>
           <View style={styles.searchInputContainer}>
-            <MaterialCommunityIcons name="magnify" size={22} color="#6B7280" />
+            <MaterialCommunityIcons name="magnify" size={22} color="#64748B" />
             <TextInput
               style={styles.searchInput}
               placeholder="Search disposed assets..."
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor="#94A3B8"
               value={search}
               onChangeText={setSearch}
             />
@@ -642,32 +642,31 @@ export default function DisposalScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#F4F7FB",
   },
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#0C134F',
     paddingHorizontal: 16,
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
+    paddingTop: 48,
+    paddingBottom: 14,
   },
   backButton: {
     width: 42,
     height: 42,
     borderRadius: 14,
-    backgroundColor: "#F9FAFB",
-    justifyContent: "center",
-    alignItems: "center",
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#0F172A",
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#FFFFFF',
     flex: 1,
-    textAlign: "center",
+    textAlign: 'center',
   },
   notificationButton: {
     position: "relative",
@@ -693,8 +692,8 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   statsCard: {
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 18,
+    padding: 16,
     marginBottom: 18,
   },
   statsCardHeader: {
@@ -704,12 +703,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   statsCardTitle: {
-    color: "#F8FAFC",
+    color: "#F4F7FB",
     fontSize: 15,
     fontWeight: "600",
   },
   statsCardValue: {
-    color: "#F8FAFC",
+    color: "#F4F7FB",
     fontSize: 40,
     fontWeight: "800",
     marginBottom: 8,
@@ -783,14 +782,16 @@ const styles = StyleSheet.create({
   },
   disposalCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 18,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#EDF1F7",
+    padding: 16,
+    marginBottom: 14,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cardHeader: {
     flexDirection: "row",
@@ -805,12 +806,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   categoryTagText: {
-    color: "#1F2937",
+    color: "#0F172A",
     fontWeight: "700",
     fontSize: 12,
   },
   cardDate: {
-    color: "#6B7280",
+    color: "#64748B",
     fontSize: 12,
   },
   disposalTitle: {
@@ -820,7 +821,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   cardMeta: {
-    color: "#4B5563",
+    color: "#475569",
     fontSize: 13,
     lineHeight: 20,
     marginBottom: 4,
@@ -833,7 +834,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   cardReason: {
-    color: "#4B5563",
+    color: "#475569",
     fontSize: 14,
     lineHeight: 20,
   },
@@ -845,7 +846,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   emptyStateText: {
-    color: "#6B7280",
+    color: "#64748B",
     fontSize: 15,
     textAlign: "center",
   },
@@ -879,7 +880,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   modalInput: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#F4F7FB",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -907,7 +908,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 14,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#F4F7FB",
     borderWidth: 1,
     borderColor: "#E2E8F0",
     minWidth: 160,
@@ -977,7 +978,7 @@ const styles = StyleSheet.create({
   scanFrame: {
     width: 250,
     height: 250,
-    borderRadius: 24,
+    borderRadius: 18,
     borderWidth: 2,
     borderColor: "#FBBF24",
     backgroundColor: "rgba(0,0,0,0.15)",

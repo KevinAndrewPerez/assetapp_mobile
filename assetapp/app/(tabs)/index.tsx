@@ -23,7 +23,7 @@ export default function App() {
   const [userName, setUserName] = useState('Admin');
   const [stats, setStats] = useState([
     { title: 'Total Assets', value: '0', icon: 'database', iconColor: '#FDB833', backgroundColor: '#FEF9E7' },
-    { title: 'Deployed', value: '0', icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#F0FDF4' },
+    { title: 'Deployed', value: '0', icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#ECFDF5' },
     { title: 'For Repair', value: '0', icon: 'wrench', iconColor: '#F59E0B', backgroundColor: '#FFFBEB' },
     { title: 'Pending Requests', value: '0', icon: 'clock', iconColor: '#3B82F6', backgroundColor: '#EFF6FF' },
   ]);
@@ -48,7 +48,7 @@ export default function App() {
 
       setStats([
         { title: 'Total Assets', value: String(assetsRes.count || 0), icon: 'database', iconColor: '#FDB833', backgroundColor: '#FEF9E7' },
-        { title: 'Deployed', value: String(deploysRes.count || 0), icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#F0FDF4' },
+        { title: 'Deployed', value: String(deploysRes.count || 0), icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#ECFDF5' },
         { title: 'For Repair', value: String(repairsRes.count || 0), icon: 'wrench', iconColor: '#F59E0B', backgroundColor: '#FFFBEB' },
         { title: 'Pending Requests', value: String(requestsRes.count || 0), icon: 'clock', iconColor: '#3B82F6', backgroundColor: '#EFF6FF' },
       ]);
@@ -75,7 +75,7 @@ export default function App() {
       subtitle: 'View pending approvals',
       icon: 'clock-outline',
       onPress: () => router.push('/requests'),
-      gradientColors: ['#1E3A5F', '#2C5282'],
+      gradientColors: ['#0C134F', '#1E3A5F'],
       titleColor: '#FDB833',
       subtitleColor: 'rgba(253, 184, 51, 0.7)',
       iconColor: '#FDB833',
@@ -85,7 +85,7 @@ export default function App() {
       subtitle: 'Register new assets',
       icon: 'plus-box',
       onPress: () => router.push('/asset-registry'),
-      gradientColors: ['#FDB833', '#F59E0B'],
+      gradientColors: ['#FDB833', '#F0A925'],
       titleColor: '#1E3A5F',
       subtitleColor: 'rgba(30, 58, 95, 0.7)',
       iconColor: '#1E3A5F',
@@ -95,7 +95,7 @@ export default function App() {
       subtitle: 'Track due maintenance',
       icon: 'calendar-check',
       onPress: () => router.push('/maintenance'),
-      gradientColors: ['#38BDF8', '#0EA5E9'],
+      gradientColors: ['#3B82F6', '#1D4ED8'],
       titleColor: '#0C134F',
       subtitleColor: 'rgba(12, 19, 79, 0.6)',
       iconColor: '#0C134F',
@@ -105,7 +105,7 @@ export default function App() {
       subtitle: 'Log disposed assets',
       icon: 'trash-can-outline',
       onPress: () => router.push('/disposal'),
-      gradientColors: ['#F87171', '#DC2626'],
+      gradientColors: ['#EF4444', '#B91C1C'],
       titleColor: '#FFFFFF',
       subtitleColor: 'rgba(255, 255, 255, 0.7)',
       iconColor: '#FFFFFF',
@@ -115,7 +115,7 @@ export default function App() {
       subtitle: 'Log pulled out assets',
       icon: 'arrow-up-box',
       onPress: () => router.push('/pullout'),
-      gradientColors: ['#9CA3AF', '#64748B'],
+      gradientColors: ['#64748B', '#334155'],
       titleColor: '#FFFFFF',
       subtitleColor: 'rgba(255, 255, 255, 0.7)',
       iconColor: '#FFFFFF',
@@ -125,7 +125,7 @@ export default function App() {
       subtitle: 'Request asset repair',
       icon: 'wrench',
       onPress: () => router.push('/repair'),
-      gradientColors: ['#FB923C', '#F59E0B'],
+      gradientColors: ['#FBBF24', '#F59E0B'],
       titleColor: '#FFFFFF',
       subtitleColor: 'rgba(255, 255, 255, 0.7)',
       iconColor: '#FFFFFF',
@@ -171,7 +171,10 @@ export default function App() {
   return (
     <View style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Dashboard</Text>
+        <View style={styles.headerIntro}>
+          <Text style={styles.headerGreeting}>Welcome back,</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>{userName}</Text>
+        </View>
         <NotificationBell />
       </View>
       <SafeAreaView style={styles.container}>
@@ -257,24 +260,31 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 18,
     paddingTop: 44,
-    paddingBottom: 0,
+    paddingBottom: 14,
     backgroundColor: '#0C134F',
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  headerIntro: {
     flex: 1,
-    textAlign: 'center',
+    paddingRight: 10,
+  },
+  headerGreeting: {
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.66)',
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  headerTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   notificationButton: {
     position: 'relative',
@@ -323,7 +333,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     textAlign: 'center',
-    color: '#9CA3AF',
+    color: '#94A3B8',
     marginTop: 10,
     fontSize: 14,
   },

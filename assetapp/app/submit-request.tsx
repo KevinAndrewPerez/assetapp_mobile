@@ -79,11 +79,11 @@ const parseDateInput = (raw: string): string | null => {
 
 const statusTone = (status?: string) => {
   const key = String(status ?? '').trim().toLowerCase();
-  if (key === 'disposal' || key === 'disposed') return { bg: '#FEE2E2', color: '#B91C1C' };
-  if (key === 'for repair' || key === 'repair') return { bg: '#FEF3C7', color: '#B45309' };
+  if (key === 'disposal' || key === 'disposed') return { bg: '#FEF2F2', color: '#B91C1C' };
+  if (key === 'for repair' || key === 'repair') return { bg: '#FEF6E4', color: '#92400E' };
   if (key === 'for replacement' || key === 'replacement') return { bg: '#EDE9FE', color: '#6D28D9' };
-  if (key === 'pullout') return { bg: '#DBEAFE', color: '#1D4ED8' };
-  return { bg: '#DCFCE7', color: '#15803D' };
+  if (key === 'pullout') return { bg: '#EFF6FF', color: '#1D4ED8' };
+  return { bg: '#ECFDF5', color: '#15803D' };
 };
 
 export default function SubmitRepairRequest() {
@@ -355,7 +355,7 @@ export default function SubmitRepairRequest() {
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.8}>
-          <MaterialCommunityIcons name="chevron-left" size={24} color="#1F2937" />
+          <MaterialCommunityIcons name="chevron-left" size={24} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.pageTitle}>Report Repair</Text>
         <View style={{ width: 32 }} />
@@ -495,10 +495,10 @@ export default function SubmitRepairRequest() {
                 const active = priority === level;
                 const tone =
                   level === 'High'
-                    ? { bg: '#FEE2E2', border: '#EF4444', text: '#B91C1C' }
+                    ? { bg: '#FEF2F2', border: '#EF4444', text: '#B91C1C' }
                     : level === 'Low'
-                      ? { bg: '#DCFCE7', border: '#22C55E', text: '#15803D' }
-                      : { bg: '#FEF3C7', border: '#F59E0B', text: '#B45309' };
+                      ? { bg: '#ECFDF5', border: '#22C55E', text: '#15803D' }
+                      : { bg: '#FEF6E4', border: '#F59E0B', text: '#92400E' };
                 return (
                   <TouchableOpacity
                     key={level}
@@ -506,7 +506,7 @@ export default function SubmitRepairRequest() {
                       styles.priorityChip,
                       {
                         backgroundColor: active ? tone.bg : '#FFFFFF',
-                        borderColor: active ? tone.border : '#D1D5DB',
+                        borderColor: active ? tone.border : '#CBD5E1',
                       },
                     ]}
                     onPress={() => setPriority(level)}
@@ -625,7 +625,7 @@ export default function SubmitRepairRequest() {
           <View style={styles.pickerHeader}>
             <Text style={styles.pickerTitle}>My Assets</Text>
             <TouchableOpacity style={styles.pickerClose} onPress={() => setPickerVisible(false)} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="close" size={20} color="#1F2937" />
+              <MaterialCommunityIcons name="close" size={20} color="#0F172A" />
             </TouchableOpacity>
           </View>
 
@@ -731,7 +731,7 @@ export default function SubmitRepairRequest() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F1F5F9',
   },
   topBar: {
     flexDirection: 'row',
@@ -749,7 +749,7 @@ const styles = StyleSheet.create({
   pageTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#1F2937',
+    color: '#0F172A',
     letterSpacing: -0.4,
   },
   pageSubtitle: {
@@ -798,7 +798,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#0F172A',
     marginBottom: 8,
   },
   required: {
@@ -811,12 +811,12 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderRadius: 12,
     paddingHorizontal: 14,
     height: 52,
     fontSize: 15,
-    color: '#1F2937',
+    color: '#0F172A',
   },
   inputWithIcon: {
     flexDirection: 'row',
@@ -824,7 +824,7 @@ const styles = StyleSheet.create({
     gap: 10,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderRadius: 12,
     paddingHorizontal: 14,
     height: 52,
@@ -832,7 +832,7 @@ const styles = StyleSheet.create({
   inputFlex: {
     flex: 1,
     fontSize: 15,
-    color: '#1F2937',
+    color: '#0F172A',
   },
   assetActionsRow: {
     flexDirection: 'row',
@@ -870,7 +870,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -893,7 +893,7 @@ const styles = StyleSheet.create({
   assetChipName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#0F172A',
   },
   assetChipCode: {
     fontSize: 12,
@@ -912,7 +912,7 @@ const styles = StyleSheet.create({
   },
   textAreaWrapper: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
     minHeight: 110,
@@ -922,7 +922,7 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 100,
     fontSize: 15,
-    color: '#1F2937',
+    color: '#0F172A',
     textAlignVertical: 'top',
   },
   priorityRow: {
@@ -945,10 +945,10 @@ const styles = StyleSheet.create({
   },
   photoUploadArea: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderStyle: 'dashed',
     borderRadius: 16,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     paddingVertical: 26,
     alignItems: 'center',
     justifyContent: 'center',
@@ -968,7 +968,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     backgroundColor: '#FFFFFF',
   },
   photoPreview: {
@@ -991,7 +991,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
   },
   photoRemoveBtn: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
   },
   photoActionText: {
     fontSize: 13,
@@ -1046,14 +1046,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderRadius: 12,
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cancelButtonText: {
-    color: '#1F2937',
+    color: '#0F172A',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -1077,7 +1077,7 @@ const styles = StyleSheet.create({
   },
   pickerContainer: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F1F5F9',
   },
   pickerHeader: {
     flexDirection: 'row',
@@ -1089,13 +1089,13 @@ const styles = StyleSheet.create({
   pickerTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#1F2937',
+    color: '#0F172A',
   },
   pickerClose: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1108,14 +1108,14 @@ const styles = StyleSheet.create({
     height: 48,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     borderRadius: 12,
     marginBottom: 12,
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: '#1F2937',
+    color: '#0F172A',
   },
   pickerLoading: {
     flex: 1,
@@ -1150,7 +1150,7 @@ const styles = StyleSheet.create({
   },
   pickerRowSelected: {
     borderColor: '#16A34A',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#ECFDF5',
   },
   pickerRowText: {
     flex: 1,
@@ -1159,7 +1159,7 @@ const styles = StyleSheet.create({
   pickerRowName: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#0F172A',
   },
   pickerRowCode: {
     fontSize: 12,

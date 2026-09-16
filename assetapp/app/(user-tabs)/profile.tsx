@@ -58,7 +58,7 @@ export default function UserProfile() {
         </View>
         <View style={styles.container}>
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#f4b942" />
+            <ActivityIndicator size="large" color="#FDB833" />
           </View>
         </View>
       </View>
@@ -88,9 +88,9 @@ export default function UserProfile() {
           <Text style={styles.sectionTitle}>Settings</Text>
           <View style={styles.settingsContainer}>
             {[
-              { title: 'Edit Profile', icon: 'account-outline', color: '#f4b942' },
-              { title: 'Change Password', icon: 'lock-outline', color: '#f4b942' },
-              { title: 'Notifications', icon: 'bell-outline', color: '#f4b942' },
+              { title: 'Edit Profile', icon: 'account-outline', color: '#FDB833' },
+              { title: 'Change Password', icon: 'lock-outline', color: '#FDB833' },
+              { title: 'Notifications', icon: 'bell-outline', color: '#FDB833' },
             ].map((item, index) => (
               <TouchableOpacity
                 key={item.title}
@@ -115,7 +115,7 @@ export default function UserProfile() {
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <MaterialCommunityIcons name="logout" size={20} color="#FFFFFF" style={styles.logoutIcon} />
+          <MaterialCommunityIcons name="logout" size={20} color="#B91C1C" style={styles.logoutIcon} />
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
 
@@ -135,21 +135,21 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: '#0C134F',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 0,
     paddingTop: 48,
-    paddingBottom: 12,
+    paddingBottom: 14,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -159,12 +159,12 @@ const styles = StyleSheet.create({
     paddingBottom: 112,
   },
   profileCard: {
-    backgroundColor: '#1a3a5c',
-    borderRadius: 24,
+    backgroundColor: '#0C134F',
+    borderRadius: 18,
     padding: 32,
     alignItems: 'center',
     marginBottom: 24,
-    shadowColor: '#1a3a5c',
+    shadowColor: '#1E3A5F',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
     shadowRadius: 16,
@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#f4b942',
+    backgroundColor: '#FDB833',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#1a3a5c',
+    color: '#1E3A5F',
   },
   userName: {
     fontSize: 22,
@@ -251,25 +251,22 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   logoutButton: {
-    backgroundColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 24,
+    paddingVertical: 15,
+    borderRadius: 16,
     marginBottom: 32,
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
   },
   logoutIcon: {
     marginRight: 8,
   },
   logoutButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: '#B91C1C',
+    fontSize: 15,
     fontWeight: '700',
   },
   footer: {

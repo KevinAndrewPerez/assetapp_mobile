@@ -159,7 +159,7 @@ export default function AssetsListScreen() {
         {filteredAssets.map((item) => {
           const expanded = expandedId === item.id;
           const statusColor = item.status === 'Active' ? '#10B981' : item.status === 'For Repair' ? '#F59E0B' : '#64748B';
-          const statusBg = item.status === 'Active' ? '#F0FDF4' : item.status === 'For Repair' ? '#FFFBEB' : '#F8FAFC';
+          const statusBg = item.status === 'Active' ? '#ECFDF5' : item.status === 'For Repair' ? '#FFFBEB' : '#F4F7FB';
 
           return (
             <View key={item.id} style={styles.assetCard}>
@@ -289,7 +289,7 @@ function DetailItem({ icon, label, value }: { icon: string, label: string, value
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: '#1E3A5F',
@@ -399,8 +399,8 @@ const styles = StyleSheet.create({
   },
   assetCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 18,
+    padding: 16,
     marginBottom: 16,
     shadowColor: '#000',
     shadowOpacity: 0.05,
@@ -423,7 +423,7 @@ const styles = StyleSheet.create({
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,
@@ -473,7 +473,7 @@ const styles = StyleSheet.create({
   photoPlaceholder: {
     height: 120,
     borderRadius: 16,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderStyle: 'dashed',
@@ -525,7 +525,7 @@ const styles = StyleSheet.create({
     // Full width: a half-width box left the value text stranded on the left with a
     // block of empty space beside it on phone screens.
     width: '100%',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 16,
     padding: 14,
   },

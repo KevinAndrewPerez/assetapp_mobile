@@ -15,7 +15,7 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [departments, setDepartments] = useState<any[]>([]);
+  const [, setDepartments] = useState<any[]>([]);
 
   useEffect(() => {
     const loadDepartments = async () => {
@@ -75,7 +75,7 @@ export default function RegisterScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Full Name</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="person-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="person-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Juan Dela Cruz"
@@ -90,7 +90,7 @@ export default function RegisterScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="mail-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="mail-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="juan.delacruz@nu.edu.ph"
@@ -107,7 +107,7 @@ export default function RegisterScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Department ID (Refer to database)</Text>
               <View style={styles.inputWrapper}>
-                <MaterialCommunityIcons name="office-building-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialCommunityIcons name="office-building-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="e.g. 1"
@@ -123,7 +123,7 @@ export default function RegisterScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Unit Head Number</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="phone" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="phone" size={18} color="#94A3B8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="09XXXXXXXXX"
@@ -139,7 +139,7 @@ export default function RegisterScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
               <View style={styles.inputWrapper}>
-                <MaterialIcons name="lock-outline" size={18} color="#9CA3AF" style={styles.inputIcon} />
+                <MaterialIcons name="lock-outline" size={18} color="#94A3B8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Create a strong password"
@@ -149,7 +149,7 @@ export default function RegisterScreen() {
                   onChangeText={setPassword}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
-                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color="#6B7280" />
+                  <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color="#64748B" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -162,13 +162,13 @@ export default function RegisterScreen() {
               disabled={loading}
             >
               <LinearGradient
-                colors={['#f4b942', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
+                colors={['#FDB833', '#f5bc48', '#f5be4e', '#f6c154', '#f6c35a', '#f7c65f', '#f7c864', '#f8cb69', '#f8cd6e']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={[styles.registerButton, loading && { opacity: 0.7 }]}
               >
                 {loading ? (
-                  <ActivityIndicator color="#1a3a5c" />
+                  <ActivityIndicator color="#1E3A5F" />
                 ) : (
                   <Text style={styles.registerButtonText}>Register</Text>
                 )}
@@ -212,14 +212,15 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   title: {
-    color: '#1a3a5c',
-    fontSize: 21,
-    fontWeight: '700',
+    color: '#1E3A5F',
+    fontSize: 22,
+    fontWeight: '800',
     marginBottom: 6,
+    letterSpacing: 0.2,
   },
   subtitle: {
-    color: '#4a5565',
-    fontSize: 12.25,
+    color: '#64748B',
+    fontSize: 13,
     textAlign: 'center',
   },
   formContainer: {
@@ -238,19 +239,19 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    borderRadius: 14.5,
-    borderWidth: 0.727,
-    borderColor: '#e5e7eb',
+    backgroundColor: '#F4F7FB',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    height: 43.455,
+    height: 48,
   },
   inputIcon: {
     marginRight: 10.5,
   },
   input: {
     flex: 1,
-    color: '#1e293b',
+    color: '#0F172A',
     fontSize: 14,
     height: '100%',
   },
@@ -261,21 +262,22 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   registerButton: {
-    borderRadius: 24403200,
-    height: 45.5,
+    borderRadius: 14,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 21,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 15,
+    shadowColor: '#F0A925',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   registerButtonText: {
-    color: '#1a3a5c',
-    fontSize: 14,
-    fontWeight: '600',
+    color: '#3D2E00',
+    fontSize: 14.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   loginContainer: {
     flexDirection: 'row',
@@ -284,11 +286,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   loginText: {
-    color: '#4a5565',
-    fontSize: 12.25,
+    color: '#64748B',
+    fontSize: 13,
   },
   loginLink: {
-    color: '#f4b942',
+    color: '#FDB833',
     fontSize: 14,
     fontWeight: '500',
   },

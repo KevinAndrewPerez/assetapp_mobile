@@ -104,19 +104,6 @@ export default function MaintenanceScreen() {
     }
   };
 
-  const formatDateLong = (d?: string | null) => {
-    if (!d) return 'Not scheduled';
-    try {
-      return new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
-        month: 'long',
-        day: '2-digit',
-        year: 'numeric',
-      });
-    } catch {
-      return d;
-    }
-  };
-
   const formatDateShort = (d?: string | null) => {
     if (!d) return 'N/A';
     try {
@@ -128,6 +115,11 @@ export default function MaintenanceScreen() {
     } catch {
       return d;
     }
+  };
+
+  const formatPrice = (p?: number | null) => {
+    if (p == null || Number.isNaN(Number(p))) return '—';
+    return `₱${Number(p).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   return (
@@ -202,7 +194,7 @@ export default function MaintenanceScreen() {
                           <View style={[styles.badgePill, { backgroundColor: badgeColor }]}>
                             <Text style={styles.badgeText}>{badgeLabel}</Text>
                           </View>
-                          <Text style={styles.assetName}>{item.name}</Text>
+                          <Text style={styles.assetName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
                         </View>
                       </View>
                     </View>
@@ -214,49 +206,49 @@ export default function MaintenanceScreen() {
 
                   <Text style={styles.assetCode}>{item.assetId}</Text>
 
-                  {/* Detail Grid */}
+                  {/* Detail Grid — 2 columns on phones so cards stay compact */}
                   <View style={styles.detailGrid}>
                     <View style={styles.detailItem}>
                       <View style={styles.detailHeader}>
-                        <MaterialCommunityIcons name="calendar-check-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>ACQUISITION DATE</Text>
+                        <MaterialCommunityIcons name="calendar-check-outline" size={13} color="#94A3B8" />
+                        <Text style={styles.detailLabel} numberOfLines={1}>ACQUIRED</Text>
                       </View>
-                      <Text style={styles.detailValue}>—</Text>
+                      <Text style={styles.detailValue}>{item.acquisitionDate ? formatDateShort(item.acquisitionDate) : '—'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <View style={styles.detailHeader}>
-                        <MaterialCommunityIcons name="cash-multiple" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>PURCHASE PRICE</Text>
+                        <MaterialCommunityIcons name="cash-multiple" size={13} color="#94A3B8" />
+                        <Text style={styles.detailLabel} numberOfLines={1}>PRICE</Text>
                       </View>
-                      <Text style={styles.detailValue}>—</Text>
+                      <Text style={styles.detailValue} numberOfLines={1}>{formatPrice(item.purchasePrice)}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <View style={styles.detailHeader}>
-                        <MaterialCommunityIcons name="barcode" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>SERIAL NUMBER</Text>
+                        <MaterialCommunityIcons name="barcode" size={13} color="#94A3B8" />
+                        <Text style={styles.detailLabel} numberOfLines={1}>SERIAL #</Text>
                       </View>
-                      <Text style={styles.detailValue}>—</Text>
+                      <Text style={styles.detailValue} numberOfLines={1}>{item.serialNumber || '—'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <View style={styles.detailHeader}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>LOCATION</Text>
+                        <MaterialCommunityIcons name="map-marker-outline" size={13} color="#94A3B8" />
+                        <Text style={styles.detailLabel} numberOfLines={1}>LOCATION</Text>
                       </View>
-                      <Text style={styles.detailValue}>{item.location || '—'}</Text>
+                      <Text style={styles.detailValue} numberOfLines={1}>{item.location || '—'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <View style={styles.detailHeader}>
-                        <MaterialCommunityIcons name="tag-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>CATEGORY</Text>
+                        <MaterialCommunityIcons name="tag-outline" size={13} color="#94A3B8" />
+                        <Text style={styles.detailLabel} numberOfLines={1}>CATEGORY</Text>
                       </View>
-                      <Text style={styles.detailValue}>{item.category || '—'}</Text>
+                      <Text style={styles.detailValue} numberOfLines={2}>{item.category || '—'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <View style={styles.detailHeader}>
-                        <MaterialCommunityIcons name="account-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.detailLabel}>ASSIGNED TO</Text>
+                        <MaterialCommunityIcons name="account-outline" size={13} color="#94A3B8" />
+                        <Text style={styles.detailLabel} numberOfLines={1}>ASSIGNED TO</Text>
                       </View>
-                      <Text style={styles.detailValue}>{item.custodian || '—'}</Text>
+                      <Text style={styles.detailValue} numberOfLines={1}>{item.custodian || '—'}</Text>
                     </View>
                   </View>
 
@@ -275,33 +267,33 @@ export default function MaintenanceScreen() {
                     <View style={styles.detailGrid}>
                       <View style={styles.detailItem}>
                         <View style={styles.detailHeader}>
-                          <MaterialCommunityIcons name="clock-outline" size={14} color="#94A3B8" />
-                          <Text style={styles.detailLabel}>MAINTENANCE INTERVAL</Text>
+                          <MaterialCommunityIcons name="clock-outline" size={13} color="#94A3B8" />
+                          <Text style={styles.detailLabel} numberOfLines={1}>INTERVAL</Text>
                         </View>
-                        <Text style={styles.detailValue}>{item.maintenanceInterval ? `${item.maintenanceInterval} months` : '—'}</Text>
+                        <Text style={styles.detailValue} numberOfLines={1}>{item.maintenanceInterval ? `${item.maintenanceInterval} mo` : '—'}</Text>
                       </View>
                       <View style={styles.detailItem}>
                         <View style={styles.detailHeader}>
-                          <MaterialCommunityIcons name="calendar-alert-outline" size={14} color={dueColor} />
-                          <Text style={[styles.detailLabel, { color: dueColor }]}>NEXT MAINTENANCE DUE</Text>
+                          <MaterialCommunityIcons name="calendar-alert-outline" size={13} color={dueColor} />
+                          <Text style={[styles.detailLabel, { color: dueColor }]} numberOfLines={1}>NEXT DUE</Text>
                         </View>
-                        <Text style={[styles.detailValue, { color: dueColor }]}>{formatDateLong(item.nextMaintenanceDate)}</Text>
+                        <Text style={[styles.detailValue, { color: dueColor }]} numberOfLines={1}>{formatDateShort(item.nextMaintenanceDate)}</Text>
                       </View>
                       {item.lastMaintenanceDate ? (
                         <View style={styles.detailItem}>
                           <View style={styles.detailHeader}>
-                            <MaterialCommunityIcons name="history" size={14} color="#94A3B8" />
-                            <Text style={styles.detailLabel}>LAST MAINTENANCE DATE</Text>
+                            <MaterialCommunityIcons name="history" size={13} color="#94A3B8" />
+                            <Text style={styles.detailLabel} numberOfLines={1}>LAST DONE</Text>
                           </View>
-                          <Text style={styles.detailValue}>{formatDateLong(item.lastMaintenanceDate)}</Text>
+                          <Text style={styles.detailValue} numberOfLines={1}>{formatDateShort(item.lastMaintenanceDate)}</Text>
                         </View>
                       ) : null}
                       <View style={styles.detailItem}>
                         <View style={styles.detailHeader}>
-                          <MaterialCommunityIcons name="wrench-outline" size={14} color="#94A3B8" />
-                          <Text style={styles.detailLabel}>REPAIR HISTORY</Text>
+                          <MaterialCommunityIcons name="wrench-outline" size={13} color="#94A3B8" />
+                          <Text style={styles.detailLabel} numberOfLines={1}>REPAIRS</Text>
                         </View>
-                        <Text style={styles.detailValue}>0 repair(s)</Text>
+                        <Text style={styles.detailValue}>{item.repairCounts ?? 0} repair(s)</Text>
                       </View>
                     </View>
                   </View>
@@ -409,7 +401,7 @@ export default function MaintenanceScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: '#0C134F',
@@ -428,8 +420,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -510,10 +502,12 @@ const styles = StyleSheet.create({
   },
   assetCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
     padding: 14,
     marginBottom: 12,
-    shadowColor: '#000',
+    shadowColor: '#0F172A',
     shadowOpacity: 0.04,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
@@ -546,6 +540,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexShrink: 1,
   },
   badgePill: {
     paddingVertical: 3,
@@ -567,6 +562,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: '#1E293B',
+    flexShrink: 1,
   },
   assetCode: {
     fontSize: 12,
@@ -581,6 +577,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 999,
     borderWidth: 1,
+    flexShrink: 0,
+    marginLeft: 8,
   },
   statusDot: {
     marginRight: 4,
@@ -590,14 +588,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   detailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   detailItem: {
-    width: '100%',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-    borderRadius: 8,
+    width: '47.5%',
+    flexGrow: 1,
+    backgroundColor: '#F4F7FB',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
   detailHeader: {
     flexDirection: 'row',
@@ -718,7 +719,7 @@ const styles = StyleSheet.create({
   dateInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -732,7 +733,7 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   textArea: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -781,7 +782,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   modalBtnGhost: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },

@@ -137,7 +137,7 @@ export default function UserDashboard() {
 
     return [
       { label: 'Acquired', count: counts.Acquired, color: '#3B82F6', lightColor: '#EFF6FF' },
-      { label: 'Active', count: counts.Active, color: '#10B981', lightColor: '#F0FDF4' },
+      { label: 'Active', count: counts.Active, color: '#10B981', lightColor: '#ECFDF5' },
       { label: 'For Repair', count: counts['For Repair'], color: '#F59E0B', lightColor: '#FFFBEB' },
       { label: 'Pulled Out', count: counts['Pulled Out'], color: '#6366F1', lightColor: '#EEF2FF' },
       { label: 'Disposed', count: counts.Disposed, color: '#EF4444', lightColor: '#FEF2F2' },
@@ -147,7 +147,7 @@ export default function UserDashboard() {
   const recentRequests = useMemo(() => {
     return requests.slice(0, 5).map(req => ({
       ...req,
-      statusBg: req.status === 'Approved' ? '#F0FDF4' : req.status === 'Pending' ? '#FFFBEB' : '#FEF2F2',
+      statusBg: req.status === 'Approved' ? '#ECFDF5' : req.status === 'Pending' ? '#FFFBEB' : '#FEF2F2',
       statusColor: req.status === 'Approved' ? '#10B981' : req.status === 'Pending' ? '#F59E0B' : '#EF4444',
     }));
   }, [requests]);
@@ -161,7 +161,7 @@ export default function UserDashboard() {
         </View>
         <View style={styles.container}>
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#f4b942" />
+            <ActivityIndicator size="large" color="#FDB833" />
           </View>
         </View>
       </View>
@@ -174,7 +174,10 @@ export default function UserDashboard() {
   return (
     <View style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Dashboard</Text>
+        <View style={styles.headerIntro}>
+          <Text style={styles.headerGreeting}>Welcome back,</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>{userName}</Text>
+        </View>
         <NotificationBell />
       </View>
       <View style={styles.container}>
@@ -318,7 +321,7 @@ export default function UserDashboard() {
               end={{ x: 1, y: 0 }}
               style={styles.submitGradient}
             >
-              <MaterialCommunityIcons name="file-document-edit-outline" size={24} color="#1a3a5c" />
+              <MaterialCommunityIcons name="file-document-edit-outline" size={24} color="#1E3A5F" />
               <Text style={styles.submitButtonText}>Submit Request</Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -367,24 +370,32 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: '#0C134F',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 0,
     paddingTop: 48,
-    paddingBottom: 12,
+    paddingBottom: 14,
+  },
+  headerIntro: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  headerGreeting: {
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.66)',
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
     color: '#FFFFFF',
-    flex: 1,
-    textAlign: 'center',
   },
   notificationButton: {
     position: 'relative',
@@ -414,7 +425,7 @@ const styles = StyleSheet.create({
   },
   welcomeCard: {
     padding: 24,
-    borderRadius: 20,
+    borderRadius: 18,
     marginBottom: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -435,7 +446,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 20,
     marginBottom: 24,
     shadowColor: '#000',
@@ -444,7 +455,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#EDF1F7',
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -533,7 +544,7 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 10,
-    color: '#1a3a5c',
+    color: '#1E3A5F',
     fontWeight: '800',
   },
   divider: {
@@ -544,7 +555,7 @@ const styles = StyleSheet.create({
   sectionTitleSmall: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1a3a5c',
+    color: '#1E3A5F',
     marginBottom: 16,
   },
   statusScroll: {
@@ -559,7 +570,7 @@ const styles = StyleSheet.create({
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 18,
     marginBottom: 8,
   },
   statusLabel: {
@@ -590,7 +601,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1a3a5c',
+    color: '#1E3A5F',
   },
   viewAllText: {
     fontSize: 12,
@@ -616,7 +627,7 @@ const styles = StyleSheet.create({
   submitButtonText: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1a3a5c',
+    color: '#1E3A5F',
   },
   requestsContainer: {
     gap: 12,
@@ -629,7 +640,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#EDF1F7',
   },
   requestInfo: {
     flex: 1,
@@ -667,7 +678,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#EDF1F7',
     borderStyle: 'dashed',
   },
   emptyStateText: {

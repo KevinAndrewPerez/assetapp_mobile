@@ -64,7 +64,7 @@ export default function AssetsScreen() {
       case 'For Repair':
         return '#F59E0B';
       case 'Pullout':
-        return '#6B7280';
+        return '#64748B';
       case 'Disposal':
         return '#EF4444';
       case 'Acquired':
@@ -84,7 +84,7 @@ export default function AssetsScreen() {
         <TextInput
           style={styles.searchInput}
           placeholder="Search by code, name, or category..."
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor="#94A3B8"
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -133,7 +133,7 @@ export default function AssetsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: '#0F172A',
@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: '#F4F7FB',
   },
   searchContainer: {
     paddingHorizontal: 16,
@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
   },
   searchInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 8,

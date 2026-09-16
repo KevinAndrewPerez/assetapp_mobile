@@ -224,7 +224,7 @@ export default function LifespanScreen() {
         ? { bg: '#EFF6FF', fg: '#0369A1' }
         : expired
           ? { bg: '#FEF2F2', fg: '#B91C1C' }
-          : { bg: '#F0FDF4', fg: '#047857' };
+          : { bg: '#ECFDF5', fg: '#047857' };
     const detailCell = (label: string, value: string) => (
       <View style={styles.detailCell} key={label}>
         <Text style={styles.detailLabel}>{label}</Text>
@@ -678,7 +678,7 @@ export default function LifespanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: '#0C134F',
@@ -697,8 +697,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -868,7 +868,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   lifecycleBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
@@ -1117,7 +1117,7 @@ const styles = StyleSheet.create({
   },
   extendInput: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1149,7 +1149,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   textArea: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1174,7 +1174,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalBtnGhost: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },

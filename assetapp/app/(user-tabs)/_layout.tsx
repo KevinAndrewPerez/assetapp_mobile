@@ -29,6 +29,7 @@ function AnimatedTabIcon({ name, color, focused, size = 28 }: { name: string; co
   return (
     <Animated.View style={[styles.iconWrap, { transform: [{ scale }, { rotate: rotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '5deg'] }) }] }]}>
       <MaterialCommunityIcons name={name as any} size={size} color={color} />
+      <Animated.View style={[styles.activeDot, { opacity: focused ? 1 : 0 }]} />
     </Animated.View>
   );
 }
@@ -145,5 +146,12 @@ const styles = StyleSheet.create({
   iconWrap: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#0C134F',
+    marginTop: 3,
   },
 });

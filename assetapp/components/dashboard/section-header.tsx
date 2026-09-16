@@ -30,18 +30,19 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   title: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    letterSpacing: 0.1,
   },
   button: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   buttonText: {
-    fontSize: 13,
-    color: '#3B82F6',
-    fontWeight: '500',
+    fontSize: 12.5,
+    color: '#1E3A5F',
+    fontWeight: '700',
     marginRight: 2,
   },
 });

@@ -181,10 +181,10 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1E3A5F',
     paddingVertical: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -200,8 +200,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 22,
     borderRadius: 12,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1E3A5F',
   },
   retryText: {
     color: '#FFFFFF',

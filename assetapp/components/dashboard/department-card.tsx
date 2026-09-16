@@ -34,18 +34,18 @@ export function DepartmentCard({ department, expanded, onToggle }: DepartmentCar
         <View style={styles.headerText}>
           <Text style={styles.departmentName}>{department.name}</Text>
           <View style={styles.row}>  
-            <MaterialCommunityIcons name="account-circle-outline" size={14} color="#6B7280" />
+            <MaterialCommunityIcons name="account-circle-outline" size={14} color="#64748B" />
             <Text style={styles.metaText}>{department.head}</Text>
           </View>
           <View style={styles.row}>
-            <MaterialCommunityIcons name="cube-outline" size={14} color="#6B7280" />
+            <MaterialCommunityIcons name="cube-outline" size={14} color="#64748B" />
             <Text style={styles.metaText}>Total Assets: {department.totalAssets}</Text>
           </View>
         </View>
         <MaterialCommunityIcons
           name={expanded ? 'chevron-up' : 'chevron-down'}
           size={28}
-          color="#374151"
+          color="#334155"
         />
       </TouchableOpacity>
 
@@ -54,7 +54,7 @@ export function DepartmentCard({ department, expanded, onToggle }: DepartmentCar
           <View style={styles.sectionRow}>
             <Text style={styles.sectionLabel}>Department Head</Text>
             <TouchableOpacity style={styles.editButton} activeOpacity={0.7}>
-              <MaterialCommunityIcons name="pencil" size={16} color="#1F2937" />
+              <MaterialCommunityIcons name="pencil" size={16} color="#0F172A" />
             </TouchableOpacity>
           </View>
           <Text style={styles.headName}>{department.head}</Text>
@@ -95,7 +95,7 @@ export function DepartmentCard({ department, expanded, onToggle }: DepartmentCar
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
+    borderRadius: 16,
     padding: 16,
     marginBottom: 16,
     shadowColor: '#000',
@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
   departmentName: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: '#0F172A',
     marginBottom: 8,
   },
   row: {
@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: '#64748B',
   },
   expandedContent: {
     marginTop: 16,
@@ -141,30 +141,30 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#111827',
+    color: '#0F172A',
   },
   editButton: {
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: '#0F172A',
     marginBottom: 2,
   },
   headEmail: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
     marginBottom: 18,
   },
   distributionLabel: {
     marginBottom: 10,
-    color: '#6B7280',
+    color: '#64748B',
     fontSize: 12,
     fontWeight: '600',
     textTransform: 'uppercase',
@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: 'hidden',
     marginBottom: 16,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#E2E8F0',
   },
   progressSegment: {
     height: '100%',
@@ -189,25 +189,25 @@ const styles = StyleSheet.create({
   },
   statBox: {
     width: '48%',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F8FAFC',
     borderRadius: 16,
     padding: 12,
     marginBottom: 12,
   },
   statLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
     marginBottom: 8,
   },
   statValue: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: '#0F172A',
     marginBottom: 4,
   },
   statPercent: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
   },
   viewButton: {
     marginTop: 8,

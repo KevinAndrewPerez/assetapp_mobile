@@ -235,7 +235,7 @@ export default function AssetDetailsScreen() {
 
   const statusTone =
     asset.rawStatus.trim().toLowerCase() === 'active'
-      ? { bg: '#F0FDF4', fg: FOREST }
+      ? { bg: '#ECFDF5', fg: FOREST }
       : isPullout
         ? { bg: '#EFF6FF', fg: STEEL }
         : { bg: '#FFFBEB', fg: BRONZE };
@@ -679,13 +679,13 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     backgroundColor: NAVY,
@@ -700,8 +700,8 @@ const styles = StyleSheet.create({
     marginLeft: -6,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
@@ -1057,7 +1057,7 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,

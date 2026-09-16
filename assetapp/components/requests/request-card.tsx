@@ -73,32 +73,32 @@ const STATUS_OPTIONS: RequestStatus[] = [
 
 const statusStyles = {
   Pending: {
-    backgroundColor: '#FEF3C7',
-    color: '#B45309',
+    backgroundColor: '#FEF6E4',
+    color: '#92400E',
   },
   Approved: {
-    backgroundColor: '#DCFCE7',
-    color: '#166534',
+    backgroundColor: '#ECFDF5',
+    color: '#047857',
   },
   Rejected: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
     color: '#B91C1C',
   },
   'In Progress': {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#EFF6FF',
     color: '#1D4ED8',
   },
   Completed: {
-    backgroundColor: '#DCFCE7',
-    color: '#166534',
+    backgroundColor: '#F5F3FF',
+    color: '#6D28D9',
   },
   Cancelled: {
-    backgroundColor: '#F3F4F6',
-    color: '#374151',
+    backgroundColor: '#F1F5F9',
+    color: '#475569',
   },
   Received: {
-    backgroundColor: '#DCFCE7',
-    color: '#166534',
+    backgroundColor: '#ECFDF5',
+    color: '#047857',
   },
 };
 
@@ -112,12 +112,12 @@ const typeStyles = {
     color: '#0369A1',
   },
   Disposal: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
     color: '#B91C1C',
   },
   'Turn Over': {
-    backgroundColor: '#FEF3C7',
-    color: '#B45309',
+    backgroundColor: '#FEF6E4',
+    color: '#92400E',
   },
   Approval: {
     backgroundColor: '#ECFCCB',
@@ -128,8 +128,8 @@ const typeStyles = {
     color: '#6D28D9',
   },
   Other: {
-    backgroundColor: '#F3F4F6',
-    color: '#374151',
+    backgroundColor: '#F1F5F9',
+    color: '#334155',
   },
 };
 
@@ -205,14 +205,14 @@ export function RequestCard({
                           style={[
                             styles.lifecycleChip,
                             {
-                              backgroundColor: evaluation.assignable ? '#DCFCE7' : '#FEF3C7',
+                              backgroundColor: evaluation.assignable ? '#ECFDF5' : '#FEF6E4',
                             },
                           ]}
                         >
                           <Text
                             style={[
                               styles.lifecycleChipText,
-                              { color: evaluation.assignable ? '#166534' : '#B45309' },
+                              { color: evaluation.assignable ? '#047857' : '#92400E' },
                             ]}
                           >
                             {evaluation.statusLabel}
@@ -317,14 +317,16 @@ export function RequestCard({
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
     padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    marginBottom: 14,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   header: {
     flexDirection: 'row',
@@ -349,26 +351,26 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: '#0F172A',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 13,
-    color: '#4B5563',
+    color: '#475569',
     marginBottom: 6,
   },
   dateText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
   },
   detailsContainer: {
     marginTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: '#E2E8F0',
     paddingTop: 16,
   },
   qrContainer: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 18,
     padding: 16,
     alignItems: 'center',
@@ -378,7 +380,7 @@ const styles = StyleSheet.create({
   qrCodeLabel: {
     marginTop: 12,
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
     fontWeight: '700',
   },
   detailRow: {
@@ -389,21 +391,21 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
     marginBottom: 4,
   },
   detailValue: {
     fontSize: 14,
-    color: '#111827',
+    color: '#0F172A',
     fontWeight: '600',
   },
   linkedAssetRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     borderRadius: 12,
     padding: 8,
     marginTop: 8,
@@ -445,7 +447,7 @@ const styles = StyleSheet.create({
   },
   statusPickerLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#64748B',
     marginBottom: 8,
     fontWeight: '600',
   },

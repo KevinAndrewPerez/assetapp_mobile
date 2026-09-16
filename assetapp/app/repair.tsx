@@ -63,31 +63,31 @@ type AdminAction = {
 const getStatusStyle = (status: RepairStatus) => {
   switch (status) {
     case 'Pending':
-      return { backgroundColor: '#FEF3C7', color: '#B45309' };
+      return { backgroundColor: '#FEF6E4', color: '#92400E' };
     case 'In Progress':
-      return { backgroundColor: '#DBEAFE', color: '#1D4ED8' };
+      return { backgroundColor: '#EFF6FF', color: '#1D4ED8' };
     case 'Completed':
-      return { backgroundColor: '#DCFCE7', color: '#166534' };
+      return { backgroundColor: '#ECFDF5', color: '#047857' };
     case 'Cancelled':
-      return { backgroundColor: '#E5E7EB', color: '#374151' };
+      return { backgroundColor: '#E2E8F0', color: '#334155' };
     default:
-      return { backgroundColor: '#FEF3C7', color: '#B45309' };
+      return { backgroundColor: '#FEF6E4', color: '#92400E' };
   }
 };
 
 const priorityTone = (priority: RepairPriority) => {
-  if (priority === 'High') return { bg: '#FEE2E2', color: '#B91C1C' };
-  if (priority === 'Low') return { bg: '#DCFCE7', color: '#15803D' };
-  return { bg: '#FEF3C7', color: '#B45309' };
+  if (priority === 'High') return { bg: '#FEF2F2', color: '#B91C1C' };
+  if (priority === 'Low') return { bg: '#ECFDF5', color: '#15803D' };
+  return { bg: '#FEF6E4', color: '#92400E' };
 };
 
 const lifecycleTone = (status?: string) => {
   const key = String(status ?? '').trim().toLowerCase();
-  if (key === 'disposal' || key === 'disposed') return { bg: '#FEE2E2', color: '#B91C1C' };
-  if (key === 'for repair') return { bg: '#FEF3C7', color: '#B45309' };
+  if (key === 'disposal' || key === 'disposed') return { bg: '#FEF2F2', color: '#B91C1C' };
+  if (key === 'for repair') return { bg: '#FEF6E4', color: '#92400E' };
   if (key === 'for replacement') return { bg: '#EDE9FE', color: '#6D28D9' };
-  if (key === 'pullout') return { bg: '#DBEAFE', color: '#1D4ED8' };
-  return { bg: '#DCFCE7', color: '#15803D' };
+  if (key === 'pullout') return { bg: '#EFF6FF', color: '#1D4ED8' };
+  return { bg: '#ECFDF5', color: '#15803D' };
 };
 
 const formatPrice = (value: number | null) =>
@@ -894,7 +894,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     flexDirection: 'row',
@@ -913,8 +913,8 @@ const styles = StyleSheet.create({
     width: 32,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
   subtitle: {
@@ -964,7 +964,7 @@ const styles = StyleSheet.create({
   },
   filterContainer: {
     paddingVertical: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
@@ -1003,8 +1003,8 @@ const styles = StyleSheet.create({
   recordCard: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 16,
+    borderColor: '#EDF1F7',
+    borderRadius: 18,
     paddingHorizontal: 14,
     paddingTop: 14,
     paddingBottom: 12,
@@ -1035,7 +1035,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1079,7 +1079,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     justifyContent: 'center',
@@ -1171,7 +1171,7 @@ const styles = StyleSheet.create({
   },
   notesBox: {
     minHeight: 60,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 12,
@@ -1201,7 +1201,7 @@ const styles = StyleSheet.create({
   },
   assetInfoItem: {
     width: '100%',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1264,7 +1264,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#16A34A',
   },
   cancelActionButton: {
-    backgroundColor: '#4B5563',
+    backgroundColor: '#475569',
   },
   neutralActionButton: {
     backgroundColor: '#1E3A5F',
@@ -1472,7 +1472,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#CBD5E1',
     alignItems: 'center',
     justifyContent: 'center',
   },

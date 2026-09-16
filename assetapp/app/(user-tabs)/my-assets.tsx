@@ -249,7 +249,7 @@ export default function MyAssets() {
         </View>
         <View style={[styles.container, { justifyContent: 'center' }]}>
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#f4b942" />
+            <ActivityIndicator size="large" color="#FDB833" />
           </View>
         </View>
       </View>
@@ -259,7 +259,10 @@ export default function MyAssets() {
   return (
     <View style={styles.screenContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{headerTitle}</Text>
+        <View style={styles.headerIntro}>
+          <Text style={styles.headerGreeting} numberOfLines={1}>{headerTitle}</Text>
+          <Text style={styles.headerSub}>{totalAssets} asset{totalAssets === 1 ? '' : 's'} in your care</Text>
+        </View>
         <NotificationBell />
       </View>
       <View style={styles.container}>
@@ -285,7 +288,7 @@ export default function MyAssets() {
             <MaterialCommunityIcons
               name="filter-variant"
               size={20}
-              color={hasActiveFilters ? '#FFFFFF' : '#1a3a5c'}
+              color={hasActiveFilters ? '#FFFFFF' : '#1E3A5F'}
             />
             {hasActiveFilters ? <View style={styles.filterActiveDot} /> : null}
           </TouchableOpacity>
@@ -901,24 +904,36 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F4F7FB',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 0,
     paddingTop: 48,
-    paddingBottom: 12,
+    paddingBottom: 14,
     backgroundColor: '#0C134F',
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  headerIntro: {
     flex: 1,
-    textAlign: 'center',
+    paddingRight: 10,
+  },
+  headerGreeting: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  headerSub: {
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.66)',
+    fontWeight: '600',
+  },
+  headerTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   notificationButton: {
     position: 'relative',
@@ -1327,7 +1342,7 @@ const styles = StyleSheet.create({
   zoomBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1392,7 +1407,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxHeight: '82%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
+    borderRadius: 20,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOpacity: 0.18,
@@ -1466,7 +1481,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 13,
     borderRadius: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F7FB',
     borderWidth: 1.2,
     borderColor: '#E2E8F0',
   },

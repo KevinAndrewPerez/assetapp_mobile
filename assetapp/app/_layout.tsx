@@ -48,8 +48,8 @@ export default function RootLayout() {
   // Prevent "flickering" while the app checks AsyncStorage
   if (!isReady) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1a3a5c' }}>
-        <ActivityIndicator size="large" color="#f4b942" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1E3A5F' }}>
+        <ActivityIndicator size="large" color="#FDB833" />
       </View>
     );
   }

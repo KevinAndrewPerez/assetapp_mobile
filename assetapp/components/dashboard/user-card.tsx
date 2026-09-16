@@ -17,7 +17,7 @@ export function UserCard({
 }: UserCardProps) {
   return (
     <LinearGradient
-      colors={['#1E3A5F', '#2D5A8C']}
+      colors={['#0C134F', '#1E3A5F']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.card}
@@ -39,10 +39,15 @@ export function UserCard({
 
 const styles = StyleSheet.create({
   card: {
-    padding: 16,
-    borderRadius: 16,
+    padding: 18,
+    borderRadius: 18,
     marginHorizontal: 16,
-    marginBottom: 20,
+    marginBottom: 18,
+    shadowColor: '#0C134F',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
+    elevation: 8,
   },
   contentContainer: {
     flexDirection: 'row',
@@ -54,26 +59,32 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
     marginBottom: 4,
+    letterSpacing: 0.2,
   },
   subtitle: {
     fontSize: 13,
     color: 'rgba(255, 255, 255, 0.8)',
   },
   avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 54,
+    height: 54,
+    borderRadius: 18,
     backgroundColor: '#FDB833',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 12,
+    shadowColor: '#F0A925',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 5,
   },
   avatarText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#1E3A5F',
+    fontWeight: '800',
+    color: '#3D2E00',
   },
 });

@@ -20,9 +20,9 @@ export function StatCard({
   backgroundColor = '#F5F5F5',
 }: StatCardProps) {
   return (
-    <View style={[styles.card, { backgroundColor }]}>
-      <View style={styles.iconContainer}>
-        <MaterialCommunityIcons name={icon as any} size={24} color={iconColor} />
+    <View style={[styles.card, { backgroundColor: '#FFFFFF' }]}>
+      <View style={[styles.iconContainer, { backgroundColor: backgroundColor || '#F1F5F9' }]}>
+        <MaterialCommunityIcons name={icon as any} size={22} color={iconColor} />
       </View>
       <Text style={styles.value}>{value}</Text>
       <Text style={styles.title}>{title}</Text>
@@ -33,29 +33,42 @@ export function StatCard({
 
 const styles = StyleSheet.create({
   card: {
-    padding: 16,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 16,
     marginRight: 12,
-    minWidth: 140,
+    minWidth: 132,
     alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#EDF1F7',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   iconContainer: {
-    marginBottom: 12,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   value: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 4,
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 2,
   },
   title: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B',
     marginBottom: 2,
   },
   subtitle: {
     fontSize: 11,
     color: '#3B82F6',
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });

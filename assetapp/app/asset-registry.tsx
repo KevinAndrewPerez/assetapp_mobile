@@ -400,7 +400,7 @@ export default function AssetRegistryScreen() {
                   <MaterialCommunityIcons
                     name={option.icon as any}
                     size={24}
-                    color={condition === option.label ? option.color : '#9CA3AF'}
+                    color={condition === option.label ? option.color : '#94A3B8'}
                   />
                   <Text
                     style={[
@@ -721,7 +721,7 @@ export default function AssetRegistryScreen() {
                 </View>
               ) : (
                 <>
-                  <MaterialCommunityIcons name="image-outline" size={40} color="#9CA3AF" />
+                  <MaterialCommunityIcons name="image-outline" size={40} color="#94A3B8" />
                   <Text style={styles.photoUploadTitle}>Upload a file or drag and drop</Text>
                   <Text style={styles.photoUploadSubtitle}>PNG, JPG up to 10MB</Text>
                 </>
@@ -1082,7 +1082,7 @@ const styles = StyleSheet.create({
   photoUploadSubtitle: {
     marginTop: 4,
     fontSize: 12,
-    color: '#9CA3AF',
+    color: '#94A3B8',
   },
   notesInput: {
     height: 110,
@@ -1240,7 +1240,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     gap: 8,
   },
   conditionLabel: {

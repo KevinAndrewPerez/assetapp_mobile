@@ -136,12 +136,12 @@ const normalizeUserAsset = (row: any): UserAsset => {
       : '#64748B';
   const statusBg =
     status === 'Active'
-      ? '#F0FDF4'
+      ? '#ECFDF5'
       : status === 'For Repair'
       ? '#FFFBEB'
       : status === 'Disposal'
       ? '#FEF2F2'
-      : '#F8FAFC';
+      : '#F4F7FB';
 
   const linkedUser = row.users || (row as any).profiles || null;
   const empNumbers = Array.isArray(linkedUser?.employee_numbers)
@@ -230,7 +230,7 @@ const resolveAssetFileUrl = (files: any): string => {
 const normalizeUserRequest = (row: any): UserRequest => {
   const status = String(row.status ?? row.request_status ?? 'Pending');
   const statusColor = status === 'Pending' ? '#F59E0B' : status === 'Approved' ? '#10B981' : '#EF4444';
-  const statusBg = status === 'Pending' ? '#FFFBEB' : status === 'Approved' ? '#F0FDF4' : '#FEF2F2';
+  const statusBg = status === 'Pending' ? '#FFFBEB' : status === 'Approved' ? '#ECFDF5' : '#FEF2F2';
   const asset = row.assets ?? row.asset ?? null;
   const user = Array.isArray(row.users) ? row.users[0] : row.users;
   const empNumbers = Array.isArray(user?.employee_numbers) ? user?.employee_numbers[0] : user?.employee_numbers;
