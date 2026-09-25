@@ -13,7 +13,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
 import { fetchRequestDetail, RequestDetail } from '../lib/userService';
+import { formatStoredTimestamp } from '../lib/time';
+import { requestTypeMeta, REQUEST_TYPE_OUTCOME } from '@/lib/lifecycle';
 import NotificationBell from '@/components/notification-bell';
+import { headerTopPadding } from '@/lib/theme';
 
 const statusColors: Record<string, { bg: string; text: string }> = {
   Pending: { bg: '#FEF6E4', text: '#92400E' },
@@ -23,14 +26,6 @@ const statusColors: Record<string, { bg: string; text: string }> = {
   Rejected: { bg: '#FEF2F2', text: '#B91C1C' },
   Cancelled: { bg: '#F1F5F9', text: '#334155' },
   'In Progress': { bg: '#EFF6FF', text: '#1D4ED8' },
-};
-
-const typeColors: Record<string, { bg: string; text: string }> = {
-  Repair: { bg: '#FCE7F3', text: '#BE185D' },
-  Pullout: { bg: '#E0F2FE', text: '#0369A1' },
-  Disposal: { bg: '#FEF2F2', text: '#B91C1C' },
-  Replacement: { bg: '#E9D5FF', text: '#6D28D9' },
-  Transfer: { bg: '#FEF6E4', text: '#92400E' },
 };
 
 export default function RequestDetailScreen() {
@@ -55,21 +50,12 @@ export default function RequestDetailScreen() {
     if (id) load();
   }, [id]);
 
-  const formatDate = (raw?: string) => {
-    if (!raw) return 'N/A';
-    try {
-      return new Date(raw).toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-      });
-    } catch {
-      return raw;
-    }
-  };
+  // Database timestamps are naive UTC (see lib/time.ts).
+  const formatDate = (raw?: string) => (raw ? formatStoredTimestamp(raw, { day: 'numeric' }) : 'N/A');
+
+  const type = requestTypeMeta(detail?.requestType);
+  const status = detail ? statusColors[detail.status] ?? statusColors.Pending : statusColors.Pending;
+  const currentStep = !detail ? 0 : detail.status === 'Pending' ? 1 : 2;
 
   return (
     <View style={styles.screenContainer}>
@@ -81,7 +67,9 @@ export default function RequestDetailScreen() {
         <NotificationBell />
       </View>
 
-      <SafeAreaView style={styles.container}>
+      {/* Body keeps only the side/bottom insets — the navy header already clears
+          the status bar, so its top inset showed up as a light dead strip. */}
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.container}>
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#1E3A5F" />
@@ -93,47 +81,62 @@ export default function RequestDetailScreen() {
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {/* Top card: type + status + request id + QR */}
-            <View style={styles.heroCard}>
+            {/* Hero: type, status, reference */}
+            <View style={[styles.heroCard, { borderTopColor: type.tone.fg }]}>
               <View style={styles.heroTopRow}>
-                <View
-                  style={[
-                    styles.typeBadge,
-                    { backgroundColor: (typeColors[detail.requestType] ?? typeColors.Transfer).bg },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.typeBadgeText,
-                      { color: (typeColors[detail.requestType] ?? typeColors.Transfer).text },
-                    ]}
-                  >
-                    {detail.requestType} Request
-                  </Text>
+                <View style={styles.heroTypeWrap}>
+                  <View style={[styles.typeIcon, { backgroundColor: type.tone.bg }]}>
+                    <MaterialCommunityIcons name={type.icon as any} size={20} color={type.tone.fg} />
+                  </View>
+                  <View style={styles.heroTypeText}>
+                    <Text style={styles.heroTypeLabel}>{type.label} Request</Text>
+                    <Text style={styles.heroRef}>REQ-{detail.id}</Text>
+                  </View>
                 </View>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: (statusColors[detail.status] ?? statusColors.Pending).bg },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.statusBadgeText,
-                      { color: (statusColors[detail.status] ?? statusColors.Pending).text },
-                    ]}
-                  >
-                    {detail.status}
-                  </Text>
+                <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
+                  <Text style={[styles.statusBadgeText, { color: status.text }]}>{detail.status}</Text>
                 </View>
               </View>
 
               <View style={styles.qrWrap}>
                 <View style={styles.qrBox}>
-                  <QRCode value={detail.requestId} size={96} backgroundColor="white" />
+                  <QRCode value={detail.requestId} size={92} backgroundColor="white" />
                 </View>
                 <Text style={styles.qrLabel}>{detail.requestId}</Text>
+                <Text style={styles.qrHint}>Show this code to the Asset Management Office</Text>
               </View>
+            </View>
+
+            {/* Where it is in the process */}
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Progress</Text>
+
+              <ProgressStep
+                title="Submitted"
+                caption={formatDate(detail.dateSubmitted)}
+                state="done"
+              />
+              <ProgressStep
+                title="Under review"
+                caption={
+                  detail.status === 'Pending'
+                    ? 'Waiting for the Asset Management Office'
+                    : 'Reviewed by the Asset Management Office'
+                }
+                state={currentStep === 1 ? 'current' : 'done'}
+              />
+              <ProgressStep
+                title={detail.status === 'Rejected' ? 'Rejected' : 'Decision'}
+                caption={
+                  detail.status === 'Pending'
+                    ? 'No decision yet'
+                    : detail.status === 'Rejected'
+                      ? 'This request was rejected — check the reason below'
+                      : REQUEST_TYPE_OUTCOME[detail.requestType] ?? 'Approved by the Asset Management Office'
+                }
+                state={detail.status === 'Pending' ? 'todo' : detail.status === 'Rejected' ? 'rejected' : 'done'}
+                last
+              />
             </View>
 
             {/* Linked assets (bulk request) */}
@@ -154,7 +157,9 @@ export default function RequestDetailScreen() {
                       </View>
                     )}
                     <View style={styles.assetTextWrap}>
-                      <Text style={styles.assetName}>{asset.name}</Text>
+                      <Text style={styles.assetName} numberOfLines={1}>
+                        {asset.name}
+                      </Text>
                       {asset.code ? <Text style={styles.assetCode}>{asset.code}</Text> : null}
                     </View>
                   </View>
@@ -167,17 +172,15 @@ export default function RequestDetailScreen() {
               <Text style={styles.sectionTitle}>Request Information</Text>
 
               <InfoRow label="Request ID" value={detail.requestId} />
-              <InfoRow label="Request Type" value={detail.requestType} />
+              <InfoRow label="Request Type" value={`${type.label} Request`} />
               <InfoRow label="Submitted By" value={detail.submittedBy} />
               <InfoRow label="Department" value={detail.department || 'N/A'} />
               <InfoRow label="Date Submitted" value={formatDate(detail.dateSubmitted)} />
-              {detail.assignTo ? <InfoRow label="Assigned To" value={detail.assignTo} /> : null}
+              {detail.assignTo ? (
+                <InfoRow label="Transfer To" value={detail.assignTo} icon="account-arrow-right-outline" />
+              ) : null}
               {detail.attachedFileName ? (
-                <InfoRow
-                  label="Attached File"
-                  value={detail.attachedFileName}
-                  icon="paperclip"
-                />
+                <InfoRow label="Attached File" value={detail.attachedFileName} icon="paperclip" />
               ) : null}
 
               <View style={styles.reasonBlock}>
@@ -194,7 +197,51 @@ export default function RequestDetailScreen() {
   );
 }
 
-function InfoRow({ label, value, icon }: { label: string; value: string; icon?: string }) {
+function ProgressStep({
+  title,
+  caption,
+  state,
+  last,
+}: {
+  title: string;
+  caption: string;
+  state: 'done' | 'current' | 'todo' | 'rejected';
+  last?: boolean;
+}) {
+  const tone =
+    state === 'done'
+      ? { dot: '#10B981', ring: '#ECFDF5', icon: 'check' }
+      : state === 'current'
+        ? { dot: '#F59E0B', ring: '#FFFBEB', icon: 'clock-outline' }
+        : state === 'rejected'
+          ? { dot: '#EF4444', ring: '#FEF2F2', icon: 'close' }
+          : { dot: '#CBD5E1', ring: '#F1F5F9', icon: 'circle-small' };
+
+  return (
+    <View style={styles.stepRow}>
+      <View style={styles.stepRail}>
+        <View style={[styles.stepDot, { backgroundColor: tone.ring }]}>
+          <MaterialCommunityIcons name={tone.icon as any} size={14} color={tone.dot} />
+        </View>
+        {!last ? <View style={[styles.stepLine, { backgroundColor: tone.dot + '40' }]} /> : null}
+      </View>
+      <View style={styles.stepTextWrap}>
+        <Text style={[styles.stepTitle, state === 'todo' && styles.stepTitleMuted]}>{title}</Text>
+        <Text style={styles.stepCaption}>{caption}</Text>
+      </View>
+    </View>
+  );
+}
+
+function InfoRow({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon?: string;
+}) {
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -214,7 +261,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
     backgroundColor: '#0C134F',
   },
@@ -236,6 +283,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     borderColor: '#EDF1F7',
+    borderTopWidth: 4,
     padding: 16,
     marginBottom: 14,
     shadowColor: '#0F172A',
@@ -244,11 +292,20 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  typeBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-  typeBadgeText: { fontSize: 11, fontWeight: '700' },
+  heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  heroTypeWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  typeIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroTypeText: { flex: 1, gap: 2 },
+  heroTypeLabel: { fontSize: 15, fontWeight: '800', color: '#0F172A' },
+  heroRef: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  statusBadgeText: { fontSize: 11.5, fontWeight: '800' },
   qrWrap: { alignItems: 'center', marginTop: 16 },
   qrBox: {
     backgroundColor: '#F4F7FB',
@@ -257,7 +314,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 12,
   },
-  qrLabel: { marginTop: 10, fontSize: 13, fontWeight: '700', color: '#1E3A5F', letterSpacing: 0.5 },
+  qrLabel: { marginTop: 10, fontSize: 13, fontWeight: '800', color: '#1E3A5F', letterSpacing: 0.5 },
+  qrHint: { marginTop: 3, fontSize: 11, color: '#94A3B8' },
   sectionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -272,6 +330,14 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 14 },
+  stepRow: { flexDirection: 'row', gap: 12 },
+  stepRail: { alignItems: 'center', width: 26 },
+  stepDot: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  stepLine: { flex: 1, width: 2, marginVertical: 2, borderRadius: 2 },
+  stepTextWrap: { flex: 1, paddingBottom: 16 },
+  stepTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  stepTitleMuted: { color: '#94A3B8' },
+  stepCaption: { fontSize: 12, color: '#64748B', marginTop: 3, lineHeight: 17 },
   assetRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -299,10 +365,23 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
   },
   infoLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', textTransform: 'uppercase' },
-  infoValueWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' },
+  infoValueWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
   infoValue: { fontSize: 14, color: '#0F172A', fontWeight: '700', textAlign: 'right' },
   reasonBlock: { marginTop: 14 },
-  reasonLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', textTransform: 'uppercase', marginBottom: 8 },
+  reasonLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
   reasonBox: {
     backgroundColor: '#F4F7FB',
     borderWidth: 1,

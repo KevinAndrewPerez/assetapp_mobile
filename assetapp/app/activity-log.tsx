@@ -21,6 +21,8 @@ import {
 } from '../lib/assetService';
 import QRViewModal from '../components/QRViewModal';
 import NotificationBell from '@/components/notification-bell';
+import { formatStoredTimestamp } from '../lib/time';
+import { isSessionAuditRow } from '../lib/auditService';
 
 const activityTags = ['All', 'New Assets', 'User Activity', 'Repairs', 'Pull Outs'];
 const PAGE_SIZE = 15;
@@ -34,11 +36,13 @@ const isAssetRegistration = (a: LifecycleEvent): boolean => {
   return raw?.action_type === 'CREATE' && /regist|new asset/i.test(notes);
 };
 
-// A "user activity" audit row: logins, request submissions and approvals.
+// A "user activity" audit row: logins, logouts, request submissions and
+// approvals.
 const isUserActivity = (a: LifecycleEvent): boolean => {
   const raw = a.raw;
   const actionType = String(raw?.action_type ?? '').toUpperCase();
   const notes = String(raw?.notes ?? raw?.action_description ?? a.title ?? '');
+  if (isSessionAuditRow(raw)) return true;
   if (['LOGIN', 'AUTH', 'APPROVAL', 'TRANSFER'].includes(actionType)) return true;
   return /login|logout|submitted|approved|signed in/i.test(notes);
 };
@@ -152,24 +156,10 @@ export default function ActivityLogScreen() {
     }
   };
 
-  const formatTimestamp = (ts: string) => {
-    try {
-      const date = new Date(ts);
-      return date.toLocaleString('en-US', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      });
-    } catch {
-      return ts;
-    }
-  };
+  const formatTimestamp = (ts: string) => formatStoredTimestamp(ts);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.8}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -178,7 +168,7 @@ export default function ActivityLogScreen() {
         <NotificationBell />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.screenBody} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.searchRow}>
           <View style={styles.searchInputContainer}>
             <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" />
@@ -333,6 +323,10 @@ export default function ActivityLogScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#1E3A5F',
+  },
+  screenBody: {
+    flex: 1,
     backgroundColor: '#F4F7FB',
   },
   header: {
@@ -396,7 +390,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     paddingHorizontal: 14,
-    height: 48,
+    height: 50,
     gap: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -414,15 +408,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   loadMoreButton: {
+    justifyContent: 'center',
     backgroundColor: '#1E3A5F',
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 6,
+    height: 40,
   },
   loadMoreText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   tagScroll: {

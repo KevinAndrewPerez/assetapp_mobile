@@ -424,13 +424,13 @@ const styles = StyleSheet.create({
   },
   lifecycleChip: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: 999,
   },
   lifecycleChipText: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '700',
   },
   lifecycleNote: {
     marginTop: 4,
@@ -456,19 +456,21 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   statusChip: {
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 9,
     borderRadius: 999,
     backgroundColor: '#F1F5F9',
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    height: 40,
   },
   statusChipActive: {
     backgroundColor: '#1E3A5F',
     borderColor: '#1E3A5F',
   },
   statusChipText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#475569',
   },
@@ -484,13 +486,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#C7D2FE',
     borderRadius: 14,
-    paddingVertical: 12,
     marginTop: 4,
+    height: 48,
   },
   viewDetailsText: {
     color: '#1E3A5F',
-    fontWeight: '700',
-    fontSize: 13,
+    fontWeight: '800',
+    fontSize: 14,
   },
   actionRow: {
     flexDirection: 'row',
@@ -499,10 +501,10 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 16,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
+    height: 48,
   },
   approveButton: {
     backgroundColor: '#10B981',
@@ -512,7 +514,7 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
 });

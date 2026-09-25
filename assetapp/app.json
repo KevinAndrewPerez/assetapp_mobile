@@ -1,35 +1,42 @@
 {
   "expo": {
-    "name": "assetapp",
-    "slug": "assetapp",
+    "name": "NUTrace",
+    "slug": "nutrace-assetapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "assetapp",
-    "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "scheme": "nutrace",
+    "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nutrace.assetapp",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1E3A5F",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "package": "com.nutrace.assetapp",
+      "versionCode": 1,
       "permissions": [
-        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_MEDIA_AUDIO"
-      ],
-      "package": "com.anonymous.assetapp"
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+      ]
     },
     "web": {
       "output": "static",
@@ -50,16 +57,29 @@
         }
       ],
       [
+        "expo-camera",
+        {
+          "cameraPermission": "NUTrace uses the camera to scan asset QR codes.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-image-picker",
         {
-          "photosPermission": "The app accesses your photos to let you share them with your friends."
+          "photosPermission": "NUTrace needs access to your photos so you can attach a picture of an asset or of the damage being reported.",
+          "cameraPermission": "NUTrace uses the camera to take a picture of an asset or of the damage being reported.",
+          "microphonePermission": false
         }
       ],
       [
         "expo-media-library",
         {
           "photosPermission": "Allow NUTrace to save QR codes to your gallery.",
-          "savePhotosPermission": "Allow NUTrace to save QR codes to your gallery."
+          "savePhotosPermission": "Allow NUTrace to save QR codes to your gallery.",
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ],
       "@react-native-community/datetimepicker",
@@ -70,6 +90,22 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "EXPO_PUBLIC_SUPABASE_URL": "https://mpzkrhaxbdvgkvphkqqb.supabase.co",
+      "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_CnZ0NqOLkSu-D5Ao1mexoA_6G7XOVYt",
+      "EXPO_PUBLIC_WEB_URL": "https://nutrace-production.up.railway.app",
+      "router": {},
+      "eas": {
+        "projectId": "a3ec0a1a-6f48-40c6-89b2-2d6df511351c"
+      }
+    },
+    "owner": "migz20",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a3ec0a1a-6f48-40c6-89b2-2d6df511351c"
     }
   }
 }

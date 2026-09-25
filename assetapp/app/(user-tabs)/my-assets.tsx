@@ -17,6 +17,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
 import NotificationBell from '@/components/notification-bell';
+import { parseStoredTimestamp } from '@/lib/time';
 import {
   enrichUserWithEmployeeData,
   fetchAssetCategories,
@@ -27,6 +28,7 @@ import {
   UserAsset,
 } from '@/lib/userService';
 import { LinearGradient } from 'expo-linear-gradient';
+import { headerTopPadding } from '@/lib/theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -161,8 +163,9 @@ export default function MyAssets() {
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'N/A';
     try {
-      const date = new Date(dateStr);
-      if (Number.isNaN(date.getTime())) return dateStr;
+      // Handles both date-only columns and naive-UTC timestamps (lib/time.ts).
+      const date = parseStoredTimestamp(dateStr);
+      if (!date) return dateStr;
       return date.toLocaleDateString('en-US', {
         month: 'long',
         day: 'numeric',
@@ -187,9 +190,11 @@ export default function MyAssets() {
         setIsDeptHead(head);
 
         const scope: 'own' | 'department' = head ? 'department' : 'own';
-        setOnlyMyAssets(false);
+        // A department head opens on **their own** assets; the department-wide
+        // list stays one tap away in the filter. Never open on "everything".
+        setOnlyMyAssets(head);
         setSelectedCategories([]);
-        setDraftOnlyMy(false);
+        setDraftOnlyMy(head);
         setDraftCategories([]);
 
         const [fetchedAssets, pending, cats] = await Promise.all([
@@ -212,11 +217,27 @@ export default function MyAssets() {
     loadAssets();
   }, []);
 
-  const totalAssets = assets.length;
-  const activeAssets = useMemo(
-    () => assets.filter((a) => a.status === 'Active').length,
-    [assets],
+  // The numbers follow the active scope, so a head whose filter is "My Assets"
+  // never sees a department-wide count above a personal list.
+  const scopedAssets = useMemo(
+    () =>
+      isDeptHead && onlyMyAssets
+        ? assets.filter((a) => String(a.userId) === String(user?.id))
+        : assets,
+    [assets, isDeptHead, onlyMyAssets, user],
   );
+
+  const totalAssets = scopedAssets.length;
+  const activeAssets = useMemo(
+    () => scopedAssets.filter((a) => a.status === 'Active').length,
+    [scopedAssets],
+  );
+
+  const headerSub = isDeptHead
+    ? onlyMyAssets
+      ? `${totalAssets} asset${totalAssets === 1 ? '' : 's'} assigned to you`
+      : `${totalAssets} asset${totalAssets === 1 ? '' : 's'} across your department`
+    : `${totalAssets} asset${totalAssets === 1 ? '' : 's'} in your care`;
 
   const filteredAssets = useMemo(
     () =>
@@ -238,7 +259,7 @@ export default function MyAssets() {
   const hasActiveFilters =
     selectedCategories.length > 0 || (isDeptHead && onlyMyAssets);
 
-  const headerTitle = isDeptHead ? 'Department Assets' : 'My Assets';
+  const headerTitle = isDeptHead && !onlyMyAssets ? 'Department Assets' : 'My Assets';
 
   if (loading) {
     return (
@@ -261,7 +282,7 @@ export default function MyAssets() {
       <View style={styles.header}>
         <View style={styles.headerIntro}>
           <Text style={styles.headerGreeting} numberOfLines={1}>{headerTitle}</Text>
-          <Text style={styles.headerSub}>{totalAssets} asset{totalAssets === 1 ? '' : 's'} in your care</Text>
+          <Text style={styles.headerSub}>{headerSub}</Text>
         </View>
         <NotificationBell />
       </View>
@@ -912,7 +933,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 18,
     paddingVertical: 0,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
     backgroundColor: '#0C134F',
   },
@@ -937,6 +958,11 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     position: 'relative',
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationBadge: {
     position: 'absolute',
@@ -967,24 +993,29 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 44,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    // Field height, so the search box lines up with the 50px filter button
+    // sitting beside it (it used to be 48 and sat 2px proud).
+    height: 50,
   },
   searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
-    color: '#1e293b',
+    paddingVertical: 0,
+    fontSize: 14.5,
+    color: '#0F172A',
   },
   filterButton: {
-    width: 44,
-    height: 44,
+    width: 50,
+    height: 50,
     backgroundColor: '#F1F5F9',
-    borderRadius: 12,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -995,7 +1026,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 96,
+    paddingBottom: 112,
   },
   statsRow: {
     flexDirection: 'row',
@@ -1143,9 +1174,9 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
   },
   statusTag: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 999,
   },
   statusTagText: {
     fontSize: 11,
@@ -1172,13 +1203,13 @@ const styles = StyleSheet.create({
     top: 10,
     right: 10,
     zIndex: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   mediaTypeBadgeText: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     letterSpacing: 0.8,
   },
   imageStageWrap: {
@@ -1303,10 +1334,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C134F',
   },
   imageModalCloseBtn: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 14,
   },
   imageModalTitle: {
     flex: 1,
@@ -1340,9 +1372,9 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   zoomBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1431,9 +1463,9 @@ const styles = StyleSheet.create({
     color: '#0C134F',
   },
   filterModalClose: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F1F5F9',
@@ -1452,16 +1484,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   clearFilterBtn: {
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: '#FEF2F2',
+    height: 40,
   },
   clearFilterText: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#EF4444',
     fontWeight: '700',
   },
@@ -1479,11 +1512,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 14,
+    borderRadius: 999,
     backgroundColor: '#F4F7FB',
-    borderWidth: 1.2,
+    borderWidth: 1,
     borderColor: '#E2E8F0',
+    height: 40,
   },
   categoryChipSelectedSoft: {
     backgroundColor: '#F1F5F9',
@@ -1496,8 +1529,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   categoryChipText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
     color: '#0C134F',
     flexShrink: 1,
   },
@@ -1507,26 +1540,26 @@ const styles = StyleSheet.create({
   },
   categoryChipCount: {
     minWidth: 28,
-    height: 26,
-    paddingHorizontal: 8,
-    borderRadius: 13,
+    paddingHorizontal: 9,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#E2E8F0',
+    paddingVertical: 4,
   },
   categoryChipCountActiveSoft: {
     backgroundColor: '#0C134F',
   },
   categoryChipCountText: {
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 12.5,
+    fontWeight: '700',
     color: '#334155',
   },
   chipEmptyCircle: {
     width: 18,
     height: 18,
     borderRadius: 9,
-    borderWidth: 1.4,
+    borderWidth: 1,
     borderColor: '#CBD5E1',
     backgroundColor: '#FFFFFF',
   },
@@ -1534,7 +1567,7 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    borderWidth: 1.4,
+    borderWidth: 1,
     borderColor: '#0C134F',
     backgroundColor: '#0C134F',
     alignItems: 'center',
@@ -1554,15 +1587,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 13,
     borderRadius: 14,
     backgroundColor: '#F1F5F9',
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    height: 48,
   },
   secondaryBtnText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#0C134F',
   },
   primaryBtn: {
@@ -1571,13 +1604,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 13,
     borderRadius: 14,
     backgroundColor: '#0C134F',
+    height: 48,
   },
   primaryBtnText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#FFFFFF',
   },
 });

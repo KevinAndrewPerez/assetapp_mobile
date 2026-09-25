@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { formatStoredDate, parseStoredTimestamp } from './time';
 
 /**
  * Roles that make up the Asset Management Office — the accounts that review
@@ -192,7 +193,9 @@ export async function markAllNotificationsRead(
 /** Small helper shared by screens that show notification times. */
 export function formatNotificationTime(ts: string): string {
   try {
-    const date = new Date(ts);
+    // naive UTC from Postgres → real instant (see lib/time.ts)
+    const date = parseStoredTimestamp(ts);
+    if (!date) return ts;
     const now = new Date();
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
@@ -200,7 +203,7 @@ export function formatNotificationTime(ts: string): string {
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
     if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
-    return date.toLocaleDateString();
+    return formatStoredDate(date);
   } catch {
     return ts;
   }

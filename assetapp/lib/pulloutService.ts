@@ -3,6 +3,7 @@ import { writeAudit } from './auditService';
 import { notifyAdmins } from './notificationService';
 import { resolveActingUserLabel } from './actorService';
 import { NOTE_SEP } from './noteUtils';
+import { pulloutMarkerNote } from './pulloutMarker';
 import { StoredUser, updateRequestStatus } from './userService';
 
 export type PulloutDecision = 'approved' | 'rejected' | 'cancelled';
@@ -517,8 +518,8 @@ export async function resolvePullout(options: {
           Repair_result: null,
           // The "From pullout #N" marker matters later: when this repair is
           // completed or cancelled the asset returns to Pullout, not Active
-          // (see repairCameFromPullout in repairService).
-          notes: `From pullout #${pulloutId}`,
+          // (see lib/pulloutMarker.ts).
+          notes: pulloutMarkerNote(pulloutId),
           created_at: now,
           updated_at: now,
         },
@@ -591,11 +592,3 @@ export async function resolvePullout(options: {
   };
 }
 
-/**
- * Whether assets that entered repair from a pullout must go back to Pullout
- * (never Active) when their repair closes. Keyed by the repair row's note.
- */
-export const CAME_FROM_PULLOUT_NOTE = 'From pullout #';
-
-export const repairCameFromPullout = (repairNotes: string | null | undefined): boolean =>
-  String(repairNotes ?? '').includes(CAME_FROM_PULLOUT_NOTE);

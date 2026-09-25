@@ -1,16 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { AssetScanButton } from '@/components/asset-scanner';
+import { Avatar } from '@/components/avatar';
+import { fetchLiveUser, signOutMobile } from '@/lib/userService';
 
 interface UserProfile {
   full_name: string;
   email: string;
   role: string;
   department: string;
+  photo: string;
 }
 
 export default function ProfileScreen() {
@@ -18,31 +22,52 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const userJson = await AsyncStorage.getItem('user');
-        if (userJson) {
-          const user = JSON.parse(userJson);
-          setProfile({
-            full_name: user.full_name || 'Admin User',
-            email: user.email || 'N/A',
-            role: user.role || 'Administrator',
-            department: user.department || 'Administration',
-          });
-        }
-      } catch (error) {
-        console.error('Failed to load profile:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadProfile();
-  }, []);
+  // Reload on focus, not just on mount: the tab stays mounted, so a photo saved
+  // in Edit Profile would otherwise not appear until the next sign-in.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const loadProfile = async () => {
+        try {
+          const userJson = await AsyncStorage.getItem('user');
+          let user = userJson ? JSON.parse(userJson) : null;
 
+          if (user?.id) {
+            try {
+              const live = await fetchLiveUser(user.id);
+              if (live) user = { ...user, ...live };
+            } catch {
+              /* keep the stored copy */
+            }
+          }
+
+          if (active && user) {
+            setProfile({
+              full_name: user.full_name || 'Admin User',
+              email: user.email || 'N/A',
+              role: user.role || 'Administrator',
+              department: user.department || 'Administration',
+              photo: user.profile_photo || '',
+            });
+          }
+        } catch (error) {
+          console.error('Failed to load profile:', error);
+        } finally {
+          if (active) setLoading(false);
+        }
+      };
+      loadProfile();
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  // `signOutMobile` records the sign-out in the audit trail before clearing
+  // the stored session (the admin used to disappear from the log silently).
   const handleLogout = async () => {
     try {
-      await AsyncStorage.removeItem('user');
+      await signOutMobile();
       router.replace('/login');
     } catch (error) {
       console.error('Logout Error:', error);
@@ -62,19 +87,13 @@ export default function ProfileScreen() {
   const settingsOptions = [
     {
       id: 'edit-profile',
-      icon: 'pencil',
+      icon: 'account-edit-outline',
       label: 'Edit Profile',
       color: '#FBBF24',
     },
     {
-      id: 'change-password',
-      icon: 'lock',
-      label: 'Change Password',
-      color: '#F59E0B',
-    },
-    {
       id: 'notifications',
-      icon: 'bell',
+      icon: 'bell-outline',
       label: 'Notifications',
       color: '#FBBF24',
     },
@@ -84,6 +103,7 @@ export default function ProfileScreen() {
     <SafeAreaView edges={['top']} style={styles.headerSafe}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Profile</Text>
+        <AssetScanButton />
       </View>
       <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.container}>
 
@@ -96,9 +116,7 @@ export default function ProfileScreen() {
           style={styles.userCard}
         >
           <View style={styles.avatarContainer}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{profile.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}</Text>
-            </View>
+            <Avatar name={profile.full_name} photo={profile.photo} size={88} ring />
           </View>
           <Text style={styles.userName}>{profile.full_name}</Text>
           <Text style={styles.userRole}>{profile.role}</Text>
@@ -139,6 +157,7 @@ export default function ProfileScreen() {
               style={styles.settingItem}
               activeOpacity={0.7}
               onPress={() => {
+                if (option.id === 'edit-profile') router.push('/edit-profile' as any);
                 if (option.id === 'notifications') router.push('/notifications');
               }}
             >
@@ -202,7 +221,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 116,
+    paddingBottom: 112,
   },
   userCard: {
     borderRadius: 18,
@@ -217,24 +236,6 @@ const styles = StyleSheet.create({
   },
   avatarContainer: {
     marginBottom: 16,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 26,
-    backgroundColor: '#FDB833',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#F0A925',
-    shadowOpacity: 0.45,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 6,
-  },
-  avatarText: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#3D2E00',
   },
   userName: {
     fontSize: 18,
@@ -334,15 +335,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 15,
-    borderRadius: 16,
+    borderRadius: 14,
     marginBottom: 24,
     gap: 8,
+    height: 48,
   },
   logoutButtonText: {
     color: '#B91C1C',
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
   },
   footerContainer: {
     marginTop: 8,

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -20,6 +22,7 @@ import {
   fetchMaintenanceAlerts,
   MaintenanceAlert,
 } from '@/lib/assetService';
+import { canCompleteMaintenanceStatus, maintenanceBlockedReason } from '@/lib/lifecycle';
 import { getStoredUser } from '@/lib/userService';
 
 const NAVY = '#0C134F';
@@ -43,7 +46,10 @@ export default function MaintenanceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | number | null>(null);
   const [modalData, setModalData] = useState<MaintenanceAlert | null>(null);
+  // Stored as `yyyy-mm-dd` (the format the database and the service expect) and
+  // displayed in full — the admin picks it from a calendar instead of typing.
   const [completionDate, setCompletionDate] = useState('');
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [maintenanceNotes, setMaintenanceNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -68,17 +74,40 @@ export default function MaintenanceScreen() {
     setRefreshing(false);
   };
 
+  /** Today's date on the phone (local), not UTC — otherwise a 7am completion
+   *  would be recorded as yesterday. */
+  const todayLocalIso = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate(),
+    ).padStart(2, '0')}`;
+  };
+
   const openCompleteModal = (alertItem: MaintenanceAlert) => {
     setModalData(alertItem);
-    const today = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-    setCompletionDate(today);
+    setCompletionDate(todayLocalIso());
+    setDatePickerOpen(false);
     setMaintenanceNotes('');
   };
 
   const closeCompleteModal = () => {
     setModalData(null);
     setCompletionDate('');
+    setDatePickerOpen(false);
     setMaintenanceNotes('');
+  };
+
+  const isoToDate = (value: string): Date | null => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? '').trim());
+    if (!match) return null;
+    const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const formatLongDate = (value: string): string => {
+    const d = isoToDate(value);
+    if (!d) return '';
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
   const handleMarkComplete = async () => {
@@ -89,6 +118,9 @@ export default function MaintenanceScreen() {
       const result = await completeMaintenance({
         assetId: modalData.id,
         actorId: user?.id,
+        // The date the admin picked drives last_maintenance_date and the next
+        // schedule — it used to be dropped, so every completion landed on today.
+        performedDate: completionDate || undefined,
         notes: maintenanceNotes || 'Maintenance completed via mobile app',
       });
       Alert.alert(
@@ -123,7 +155,7 @@ export default function MaintenanceScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.8}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -133,6 +165,7 @@ export default function MaintenanceScreen() {
       </View>
 
       <ScrollView
+        style={styles.screenBody}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -180,6 +213,9 @@ export default function MaintenanceScreen() {
               const badgeColor = isOverdue ? '#EF4444' : GOLD;
               const badgeLabel = isOverdue ? 'OVERDUE' : 'DUE SOON';
               const statusColor = STATUS_COLORS[item.status || ''] || '#64748B';
+              // Disposal is final and an Acquired asset is not issued yet — only
+              // a serviceable asset has upkeep left to complete.
+              const canComplete = canCompleteMaintenanceStatus(item.status);
 
               return (
                 <View key={String(item.id)} style={styles.assetCard}>
@@ -298,22 +334,31 @@ export default function MaintenanceScreen() {
                     </View>
                   </View>
 
-                  {/* Mark Complete Button */}
-                  <TouchableOpacity
-                    style={styles.markCompleteButton}
-                    onPress={() => openCompleteModal(item)}
-                    activeOpacity={0.85}
-                  >
-                    <LinearGradient
-                      colors={isOverdue ? ['#DC2626', '#B91C1C'] : ['#10B981', '#059669']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.markCompleteGradient}
+                  {/* Mark Complete Button — only while the asset is serviceable */}
+                  {canComplete ? (
+                    <TouchableOpacity
+                      style={styles.markCompleteButton}
+                      onPress={() => openCompleteModal(item)}
+                      activeOpacity={0.85}
                     >
-                      <MaterialCommunityIcons name="check-circle" size={22} color="#FFFFFF" />
-                      <Text style={styles.markCompleteText}>Mark Maintenance Complete</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
+                      <LinearGradient
+                        colors={isOverdue ? ['#DC2626', '#B91C1C'] : ['#10B981', '#059669']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.markCompleteGradient}
+                      >
+                        <MaterialCommunityIcons name="check-circle" size={22} color="#FFFFFF" />
+                        <Text style={styles.markCompleteText} numberOfLines={1}>
+                          Mark Maintenance Complete
+                        </Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.blockedNotice}>
+                      <MaterialCommunityIcons name="lock-outline" size={17} color="#B91C1C" />
+                      <Text style={styles.blockedNoticeText}>{maintenanceBlockedReason(item.status)}</Text>
+                    </View>
+                  )}
                 </View>
               );
             })}
@@ -336,15 +381,47 @@ export default function MaintenanceScreen() {
               {/* Completion Date */}
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>COMPLETION DATE</Text>
-                <View style={styles.dateInputWrap}>
+                <TouchableOpacity
+                  style={styles.dateInputWrap}
+                  activeOpacity={0.85}
+                  onPress={() => setDatePickerOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose the maintenance completion date"
+                >
                   <MaterialCommunityIcons name="calendar" size={18} color="#64748B" />
-                  <TextInput
-                    style={styles.dateInput}
-                    value={completionDate}
-                    onChangeText={setCompletionDate}
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
+                  <Text style={styles.dateInput} numberOfLines={1}>
+                    {completionDate ? formatLongDate(completionDate) : 'Select a date'}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-down" size={18} color="#94A3B8" />
+                </TouchableOpacity>
+                {datePickerOpen ? (
+                  <View style={styles.datePickerWrap}>
+                    <DateTimePicker
+                      value={isoToDate(completionDate) ?? new Date()}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                      onValueChange={(_event, selected) => {
+                        if (Platform.OS !== 'ios') setDatePickerOpen(false);
+                        if (selected) {
+                          const iso = `${selected.getFullYear()}-${String(
+                            selected.getMonth() + 1,
+                          ).padStart(2, '0')}-${String(selected.getDate()).padStart(2, '0')}`;
+                          setCompletionDate(iso);
+                        }
+                      }}
+                      onDismiss={() => setDatePickerOpen(false)}
+                    />
+                    {Platform.OS === 'ios' ? (
+                      <TouchableOpacity
+                        style={styles.datePickerDone}
+                        activeOpacity={0.85}
+                        onPress={() => setDatePickerOpen(false)}
+                      >
+                        <Text style={styles.datePickerDoneText}>Done</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
 
               {/* Maintenance Notes */}
@@ -376,7 +453,7 @@ export default function MaintenanceScreen() {
                 onPress={closeCompleteModal}
                 disabled={submitting}
               >
-                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                <Text style={styles.modalBtnGhostText} numberOfLines={1}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalBtn, styles.modalBtnGreen]}
@@ -388,7 +465,7 @@ export default function MaintenanceScreen() {
                 ) : (
                   <MaterialCommunityIcons name="check-circle" size={20} color="#FFFFFF" />
                 )}
-                <Text style={styles.modalBtnGreenText}>Mark Complete</Text>
+                <Text style={styles.modalBtnGreenText} numberOfLines={1}>Mark Complete</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -400,6 +477,10 @@ export default function MaintenanceScreen() {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: '#0C134F',
+  },
+  screenBody: {
     flex: 1,
     backgroundColor: '#F4F7FB',
   },
@@ -454,11 +535,13 @@ const styles = StyleSheet.create({
     maxWidth: 270,
   },
   retryButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 6,
-    paddingVertical: 10,
     paddingHorizontal: 22,
     borderRadius: 12,
     backgroundColor: NAVY,
+    height: 40,
   },
   retryText: {
     color: '#FFFFFF',
@@ -466,16 +549,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   backButtonSimple: {
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginTop: 12,
-    paddingVertical: 8,
     paddingHorizontal: 16,
     backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    height: 40,
   },
   backButtonText: {
     color: NAVY,
@@ -531,7 +615,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
+    borderWidth: 1,
   },
   cardHeaderInfo: {
     flex: 1,
@@ -543,8 +627,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   badgePill: {
-    paddingVertical: 3,
-    paddingHorizontal: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 9,
     borderRadius: 999,
   },
   badgeText: {
@@ -649,26 +733,38 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 4,
   },
+  // Hero CTA.
+  //
+  // The wrapper used to be `alignItems: 'center'` with no width on the gradient,
+  // so the gradient shrank to its content and sat as a narrow red pill in the
+  // middle of the grey button — the white gutters on both sides in the reported
+  // screenshot, with the label overflowing the pill. The gradient now stretches
+  // to the full width of the wrapper (`flex: 1`) and owns the horizontal padding,
+  // and the label shrinks/ellipsizes instead of spilling out.
   markCompleteButton: {
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: 'hidden',
     elevation: 3,
     shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
+    height: 52,
+    backgroundColor: '#DC2626',
   },
   markCompleteGradient: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 11,
+    paddingHorizontal: 14,
     gap: 8,
   },
   markCompleteText: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
+    flexShrink: 1,
   },
   modalOverlay: {
     position: 'absolute',
@@ -719,29 +815,69 @@ const styles = StyleSheet.create({
   dateInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
     backgroundColor: '#F4F7FB',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    height: 48,
+    height: 50,
   },
   dateInput: {
     flex: 1,
-    paddingVertical: 12,
-    fontSize: 15,
+    paddingVertical: 0,
+    fontSize: 14.5,
     color: '#0F172A',
+  },
+  datePickerWrap: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 10,
+    marginTop: 10,
+  },
+  datePickerDone: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: NAVY_MID,
+  },
+  datePickerDoneText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+  },
+  blockedNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 4,
+  },
+  blockedNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#B91C1C',
+    fontWeight: '600',
   },
   textArea: {
     backgroundColor: '#F4F7FB',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
+    paddingTop: 12,
+    fontSize: 14.5,
     color: '#0F172A',
-    minHeight: 90,
+    minHeight: 96,
+    textAlignVertical: 'top',
   },
   assetSummaryBox: {
     backgroundColor: '#FFFBEB',
@@ -774,12 +910,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
+    // `row` keeps the icon beside the label — without it they stacked inside the
+    // fixed 48px height and the label wrapped out of the button.
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
+    flex: 1,
+    height: 48,
   },
   modalBtnGhost: {
     backgroundColor: '#F4F7FB',
@@ -788,7 +928,7 @@ const styles = StyleSheet.create({
   },
   modalBtnGhostText: {
     color: '#64748B',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
   modalBtnGreen: {
@@ -796,7 +936,7 @@ const styles = StyleSheet.create({
   },
   modalBtnGreenText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
 });

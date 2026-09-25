@@ -19,7 +19,10 @@ import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../lib/supabase";
 import { getStoredUser } from "../lib/userService";
+import { normalizeDisposalReason } from "../lib/disposalService";
+import { parseStoredTimestamp } from "../lib/time";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { headerTopPadding } from '@/lib/theme';
 
 type DisposalLogRow = {
   id: string | number;
@@ -178,7 +181,7 @@ export default function DisposalScreen() {
       if (query && !haystack.includes(query)) return false;
 
       if (fromD || toD) {
-        const created = row.created_at ? new Date(String(row.created_at)) : null;
+        const created = parseStoredTimestamp(row.created_at);
         if (!created || Number.isNaN(created.getTime())) return false;
         if (fromD) {
           const start = new Date(fromD);
@@ -295,7 +298,10 @@ export default function DisposalScreen() {
           Approve_by: approver,
           Description: "Disposal",
           disposal_date: dateOnly,
-          disposal_reason: note,
+          // `disposal_reason` is a fixed enum on the DB side (Beyond Repair /
+          // Replace / Obsolete / Lost / Damage) — the admin's own wording stays
+          // in `notes`, the column gets the closest allowed value.
+          disposal_reason: normalizeDisposalReason(note),
           created_at: now,
           updated_at: now,
         },
@@ -379,12 +385,10 @@ export default function DisposalScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Record Disposal</Text>
-        <TouchableOpacity
-          style={styles.notificationButton}
-          activeOpacity={0.8}
-        >
-          <NotificationBell />
-        </TouchableOpacity>
+        {/* Rendered bare: the bell cluster brings its own 42px tap targets. It
+            used to sit inside a TouchableOpacity with no `onPress`, which
+            swallowed every tap on the bell, the wrench and the clock. */}
+        <NotificationBell />
       </View>
 
       <ScrollView
@@ -530,14 +534,14 @@ export default function DisposalScreen() {
                 value={(pickerMode === "from" ? fromDate : toDate) ?? new Date()}
                 mode="date"
                 display={Platform.OS === "ios" ? "inline" : "default"}
-                onChange={(_, selectedDate) => {
+                onValueChange={(_, selectedDate) => {
                   if (Platform.OS !== "ios") {
                     setPickerMode(null);
                   }
-                  if (!selectedDate) return;
                   if (pickerMode === "from") setFromDate(selectedDate);
                   if (pickerMode === "to") setToDate(selectedDate);
                 }}
+                onDismiss={() => setPickerMode(null)}
               />
             )}
 
@@ -650,7 +654,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#0C134F',
     paddingHorizontal: 16,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
   },
   backButton: {
@@ -670,6 +674,11 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     position: "relative",
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationBadge: {
     position: "absolute",
@@ -689,7 +698,8 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    // Clearance for the floating tab bar (this screen is also a tab).
+    paddingBottom: 112,
   },
   statsCard: {
     borderRadius: 18,
@@ -728,26 +738,24 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     paddingHorizontal: 14,
-    height: 52,
-    shadowColor: "#000",
-    shadowOpacity: 0.03,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    height: 50,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 10,
-    fontSize: 14,
+    paddingVertical: 0,
+    fontSize: 14.5,
     color: "#0F172A",
   },
   calendarButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 50,
+    height: 50,
+    borderRadius: 14,
     backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
@@ -764,8 +772,8 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    height: 52,
-    borderRadius: 16,
+    height: 48,
+    borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -777,7 +785,7 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: "#FFFFFF",
-    fontWeight: "700",
+    fontWeight: '800',
     fontSize: 14,
   },
   disposalCard: {
@@ -879,15 +887,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 14,
   },
+  // A multiline reason box, not a 48px one-liner: it used to be pinned to the
+  // single-line field height, so the typed text sat in a cramped strip.
   modalInput: {
     backgroundColor: "#F4F7FB",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#E2E8F0",
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
+    minHeight: 88,
+    fontSize: 14.5,
     color: "#0F172A",
+    textAlignVertical: "top",
     marginBottom: 12,
   },
   dateRow: {
@@ -905,7 +918,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 14,
     backgroundColor: "#F4F7FB",
@@ -913,6 +925,7 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
     minWidth: 160,
     justifyContent: "center",
+    height: 50,
   },
   dateValue: {
     color: "#0F172A",
@@ -926,7 +939,7 @@ const styles = StyleSheet.create({
   },
   modalBtn: {
     flex: 1,
-    height: 46,
+    height: 48,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
@@ -935,13 +948,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#F1F5F9",
   },
   modalBtnGhostText: {
+    fontSize: 14,
     color: "#0F172A",
-    fontWeight: "700",
+    fontWeight: '800',
   },
   modalBtnPrimary: {
     backgroundColor: "#DC2626",
   },
   modalBtnPrimaryText: {
+    fontSize: 14,
     color: "#FFFFFF",
     fontWeight: "800",
   },

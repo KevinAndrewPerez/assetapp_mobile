@@ -4,6 +4,19 @@
  * surfaces, radii, shadows and type so every screen feels like one product.
  */
 import { TextStyle, ViewStyle } from 'react-native';
+import { initialWindowMetrics } from 'react-native-safe-area-context';
+
+/**
+ * Status-bar height, captured once at start-up. The hand-rolled navy screen
+ * headers used to hard-code `paddingTop: 48`, which put the title under the
+ * clock on phones with a taller inset and left a dead strip on shorter ones.
+ * `initialWindowMetrics` is the safe-area framework's hook-free equivalent —
+ * the same value `useSafeAreaInsets()` returns on first render.
+ */
+export const statusBarHeight = initialWindowMetrics?.insets.top ?? 24;
+
+/** Top padding that keeps every screen header the same distance below the clock. */
+export const headerTopPadding = statusBarHeight + 12;
 
 export const colors = {
   // Brand
@@ -76,6 +89,129 @@ export function tintForStatus(status: string | null | undefined): { bg: string; 
 }
 
 export const radius = { xs: 8, sm: 10, md: 14, lg: 18, xl: 24, pill: 999 } as const;
+
+/**
+ * One text-field look for the whole app — same height, radius, border and text
+ * size on every screen. `base` is a field on its own; `bare` is the input that
+ * sits *inside* a bordered wrapper (search rows, date/currency fields) so the
+ * field never renders two stacked borders; `wrap` is that wrapper.
+ */
+export const field = {
+  /** Standalone input: draws its own border and background. */
+  base: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    height: 50,
+    fontSize: 14.5,
+    color: colors.ink,
+  } as const,
+  /** Input inside a `wrap` container — no border/background of its own. */
+  bare: {
+    flex: 1,
+    paddingVertical: 0,
+    fontSize: 14.5,
+    color: colors.ink,
+  } as const,
+  /** Bordered container for inputs paired with an icon/prefix/suffix. */
+  wrap: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    height: 50,
+  } as const,
+  /** Multiline text area based on the same look. */
+  area: {
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
+    minHeight: 96,
+    fontSize: 14.5,
+    color: colors.ink,
+    textAlignVertical: 'top' as const,
+  } as const,
+} as const;
+
+/**
+ * One button scale for the whole app. Every tappable action is one of these —
+ * a 48px action, a 40px compact action, a 40px pill/chip, an 11px badge or a
+ * 42px icon button. Anything else (a 32px button here, a 52px one there) is what
+ * made the same control look like a different app on every screen.
+ */
+export const button = {
+  /** Primary / secondary / danger action button. */
+  base: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 7,
+    height: 48,
+    borderRadius: radius.md,
+    paddingHorizontal: 16,
+  } as const,
+  label: { fontSize: 14, fontWeight: '800' } as TextStyle,
+  iconSize: 18,
+  /** Compact action inside a card (retry, view details, clear, edit). */
+  compact: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 6,
+    height: 40,
+    borderRadius: radius.sm,
+    paddingHorizontal: 14,
+  } as const,
+  compactLabel: { fontSize: 13, fontWeight: '700' } as TextStyle,
+  compactIconSize: 16,
+  /** Pill button, filter chip or segmented toggle. */
+  chip: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 6,
+    height: 40,
+    borderRadius: radius.pill,
+    paddingHorizontal: 14,
+  } as const,
+  chipLabel: { fontSize: 12.5, fontWeight: '700' } as TextStyle,
+  /** Field-style trigger (date picker, filter button) — matches `field.wrap`. */
+  fieldTrigger: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 8,
+    height: 50,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+  } as const,
+  /** Status badge. */
+  badge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    alignSelf: 'flex-start' as const,
+  } as const,
+  badgeLabel: { fontSize: 11, fontWeight: '700' } as TextStyle,
+  /** Square icon-only button (headers, modal close). */
+  icon: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.md,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  } as const,
+} as const;
 
 export const shadow = {
   /** Default card elevation — subtle, border-assisted. */

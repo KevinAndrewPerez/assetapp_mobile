@@ -2,7 +2,9 @@ import { supabase } from './supabase';
 import { writeAudit } from './auditService';
 import { createNotification, notifyAdmins } from './notificationService';
 import { NOTE_SEP, readNote, upsertNotes } from './noteUtils';
-import { repairCameFromPullout } from './pulloutService';
+import { clampRequestStatus } from './requestStatus';
+import { repairCameFromPullout } from './pulloutMarker';
+import { normalizeDisposalReason } from './disposalService';
 
 /**
  * Repair Management (NU TRACE mobile spec).
@@ -42,6 +44,37 @@ export type RepairAdminFields = {
   cancellationReason?: string;
 };
 
+/**
+ * Servicing & evaluation record — the `repair_evaluations` table keeps one row
+ * per repair (the repair itself is the history entry, so a later repair of the
+ * same asset is a new repair row with its own evaluation).
+ */
+export type RepairEvaluation = {
+  evaluationId: string;
+  technicianProvider: string;
+  repairCost: number | null;
+  repairResult: RepairResult | null;
+  expectedCompletion: string;
+  partsReplaced: string;
+  inspectionFindings: string;
+  adminRemarks: string;
+  recordedById: string | number | null;
+  recordedByName: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/** What an admin can record/update on the servicing record. */
+export type RepairEvaluationFields = {
+  technicianProvider?: string | null;
+  repairCost?: number | string | null;
+  repairResult?: RepairResult | null;
+  expectedCompletion?: string | null;
+  partsReplaced?: string | null;
+  inspectionFindings?: string | null;
+  adminRemarks?: string | null;
+};
+
 export type RepairRecord = {
   repairId: string;
   requestId: string;
@@ -76,6 +109,11 @@ export type RepairRecord = {
   partsReplaced: string;
   inspectionFindings: string;
   adminRemarks: string;
+  /** Servicing record metadata (`repair_evaluations`). */
+  evaluationId: string | null;
+  evaluationUpdatedAt?: string;
+  recordedById: string | number | null;
+  recordedByName: string;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -119,10 +157,11 @@ export type SubmitRepairResult = {
 };
 
 // ─────────────────────────────── notes helpers ───────────────────────────────
-// The `repairs` table has no technician/parts/priority columns, so structured
-// admin information is appended to `notes` in a human-readable, pipe-separated
-// form (see lib/noteUtils.ts). The web app renders `notes` verbatim, so it
-// stays readable there. Re-exported for callers that import them from here.
+// Servicing & evaluation now lives in the `repair_evaluations` table (see the
+// helpers above). `notes` still carries the request-level metadata the web
+// reads verbatim (`Priority`, `Reported Problem`, workflow markers such as
+// `Cancelled` / `Sent to Replacement`) — and doubles as the fallback mirror if
+// the evaluations table is ever unreachable. Re-exported for the screens.
 
 export { NOTE_SEP, readNote, upsertNotes };
 
@@ -154,6 +193,180 @@ export const normalizeRepairPriority = (raw: unknown): RepairPriority => {
 };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+
+const textOf = (value: unknown): string =>
+  value === null || value === undefined ? '' : String(value).trim();
+
+// ──────────────────────── servicing & evaluation records ─────────────────────
+
+/**
+ * Load the servicing/evaluation rows for the given repairs, newest first per
+ * repair. Tolerant by design: if the table is missing or unreadable the caller
+ * simply falls back to the legacy `repairs.notes` mirror.
+ */
+export async function fetchRepairEvaluations(
+  repairIds: (string | number)[],
+): Promise<Map<string, RepairEvaluation>> {
+  const out = new Map<string, RepairEvaluation>();
+  const ids: number[] = [];
+  for (const raw of repairIds ?? []) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0 && !ids.includes(n)) ids.push(n);
+  }
+  if (ids.length === 0) return out;
+
+  let rows: any[] = [];
+  try {
+    const { data, error } = await supabase
+      .from('repair_evaluations')
+      .select('*')
+      .in('repair_id', ids as any);
+    if (error) throw error;
+    rows = (data ?? []) as any[];
+  } catch (error) {
+    console.warn('repair_evaluations is unavailable — using the repair notes fallback:', error);
+    return out;
+  }
+  if (rows.length === 0) return out;
+
+  // One record per repair: keep the most recent row (by created_at, then id).
+  const newest = new Map<string, any>();
+  for (const row of rows) {
+    const key = String(row?.repair_id ?? '');
+    if (!key) continue;
+    const previous = newest.get(key);
+    if (!previous) {
+      newest.set(key, row);
+      continue;
+    }
+    const a = Date.parse(String(row?.created_at ?? '')) || 0;
+    const b = Date.parse(String(previous?.created_at ?? '')) || 0;
+    if (a > b || (a === b && Number(row?.evaluation_id ?? 0) > Number(previous?.evaluation_id ?? 0))) {
+      newest.set(key, row);
+    }
+  }
+
+  // Resolve the administrators who documented each record (recorded_by → name).
+  const recorderIds: number[] = [];
+  for (const row of newest.values()) {
+    const n = Number(row?.recorded_by);
+    if (Number.isFinite(n) && n > 0 && !recorderIds.includes(n)) recorderIds.push(n);
+  }
+  const recorderNames = new Map<string, string>();
+  if (recorderIds.length) {
+    try {
+      const { data } = await supabase
+        .from('users')
+        .select('id, email, employee_numbers (Full_Name)')
+        .in('id', recorderIds as any);
+      for (const user of ((data ?? []) as any[])) {
+        const employee = Array.isArray(user.employee_numbers)
+          ? user.employee_numbers[0]
+          : user.employee_numbers;
+        const name = textOf(employee?.Full_Name) || textOf(user.email);
+        if (name) recorderNames.set(String(user.id), name);
+      }
+    } catch (error) {
+      console.warn('Failed to resolve evaluation recorders:', error);
+    }
+  }
+
+  for (const [repairId, row] of newest) {
+    const cost = row?.repair_cost === null || row?.repair_cost === undefined ? null : Number(row.repair_cost);
+    out.set(repairId, {
+      evaluationId: String(row.evaluation_id ?? ''),
+      technicianProvider: textOf(row.technician_provider),
+      repairCost: Number.isFinite(cost as number) ? (cost as number) : null,
+      repairResult: normalizeRepairResult(row.repair_result),
+      expectedCompletion: textOf(row.expected_completion),
+      partsReplaced: textOf(row.parts_replaced),
+      inspectionFindings: textOf(row.inspection_findings),
+      adminRemarks: textOf(row.admin_remarks),
+      recordedById: row.recorded_by ?? null,
+      recordedByName: recorderNames.get(String(row.recorded_by)) ?? '',
+      createdAt: row.created_at ? String(row.created_at) : undefined,
+      updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Create or update the servicing/evaluation record of one repair. Only the
+ * fields that were actually provided are written, and `recorded_by` is always
+ * the logged-in administrator — never a typed name (system logic §7).
+ * Returns false when the table could not be written (caller falls back to
+ * notes) so the admin is never told a record was stored when it wasn't.
+ */
+export async function saveRepairEvaluation(options: {
+  repairId: string | number;
+  actorId?: string | number | null;
+  fields: RepairEvaluationFields;
+}): Promise<boolean> {
+  const { repairId, actorId, fields } = options;
+  const now = new Date().toISOString();
+
+  const patch: Record<string, any> = {};
+  if (fields.technicianProvider !== undefined) patch.technician_provider = textOf(fields.technicianProvider) || null;
+  if (fields.repairCost !== undefined) {
+    const raw = textOf(fields.repairCost);
+    if (raw === '') patch.repair_cost = null;
+    else {
+      const value = Number(raw.replace(/[^0-9.\-]/g, ''));
+      if (Number.isFinite(value)) patch.repair_cost = value;
+    }
+  }
+  if (fields.repairResult !== undefined) patch.repair_result = fields.repairResult ?? null;
+  if (fields.expectedCompletion !== undefined) {
+    patch.expected_completion = textOf(fields.expectedCompletion) || null;
+  }
+  if (fields.partsReplaced !== undefined) patch.parts_replaced = textOf(fields.partsReplaced) || null;
+  if (fields.inspectionFindings !== undefined) patch.inspection_findings = textOf(fields.inspectionFindings) || null;
+  if (fields.adminRemarks !== undefined) patch.admin_remarks = textOf(fields.adminRemarks) || null;
+
+  // Nothing to record and no existing row to touch — the admin only moved the
+  // repair forward (e.g. Start Repair with no servicing details yet).
+  if (Object.keys(patch).length === 0) return true;
+
+  const stamped = { ...patch, ...(actorId != null ? { recorded_by: actorId } : {}), updated_at: now };
+
+  try {
+    const { data: existing, error: findError } = await supabase
+      .from('repair_evaluations')
+      .select('evaluation_id')
+      .eq('repair_id', Number(repairId))
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (findError) throw findError;
+
+    if ((existing as any)?.evaluation_id != null) {
+      const { error } = await supabase
+        .from('repair_evaluations')
+        .update(stamped)
+        .eq('evaluation_id', (existing as any).evaluation_id);
+      if (error) throw error;
+      return true;
+    }
+
+    const { error: insertError } = await supabase.from('repair_evaluations').insert([
+      { repair_id: Number(repairId), ...stamped, created_at: now },
+    ]);
+    if (!insertError) return true;
+
+    // A concurrent write may have created the row first — retry as an update.
+    const { error: retryError } = await supabase
+      .from('repair_evaluations')
+      .update(stamped)
+      .eq('repair_id', Number(repairId));
+    if (retryError) throw insertError;
+    return true;
+  } catch (error) {
+    console.warn('Failed to store the repair evaluation:', error);
+    return false;
+  }
+}
 
 // ─────────────────────────────── read side ───────────────────────────────────
 
@@ -225,6 +438,9 @@ export async function fetchRepairRecords(options?: {
     for (const u of (userRows ?? []) as any[]) usersById.set(String(u.id), u);
   }
 
+  // Servicing & evaluation lives in its own table now (repair_evaluations).
+  const evaluations = await fetchRepairEvaluations(rows.map((r) => r.Repair_id));
+
   return rows.map((row: any) => {
     const asset = assetsById.get(String(row.Assets_id)) ?? {};
     const request = requestsById.get(String(row.Request_id)) ?? {};
@@ -238,6 +454,7 @@ export async function fetchRepairRecords(options?: {
 
     const notes = String(row.notes ?? '');
     const cost = row.Repair_Cost === null || row.Repair_Cost === undefined ? null : Number(row.Repair_Cost);
+    const evaluation = evaluations.get(String(row.Repair_id));
 
     return {
       repairId: String(row.Repair_id ?? ''),
@@ -268,15 +485,20 @@ export async function fetchRepairRecords(options?: {
       reportedDate: String(row.Repair_Date ?? row.created_at ?? ''),
       approvedBy: String(row.Approve_by ?? ''),
       status: normalizeRepairStatus(row.status),
-      result: normalizeRepairResult(row.Repair_result),
+      result: normalizeRepairResult(evaluation?.repairResult ?? row.Repair_result),
       priority: normalizeRepairPriority(readNote(notes, 'Priority')),
-      repairCost: Number.isFinite(cost as number) ? (cost as number) : null,
+      repairCost: evaluation?.repairCost ?? (Number.isFinite(cost as number) ? (cost as number) : null),
       notes,
-      technician: readNote(notes, 'Technician'),
-      expectedCompletion: readNote(notes, 'Expected Completion'),
-      partsReplaced: readNote(notes, 'Parts Replaced'),
-      inspectionFindings: readNote(notes, 'Inspection Findings'),
-      adminRemarks: readNote(notes, 'Admin Remarks'),
+      // Table first, legacy notes only for records written before the split.
+      technician: evaluation?.technicianProvider || readNote(notes, 'Technician'),
+      expectedCompletion: evaluation?.expectedCompletion || readNote(notes, 'Expected Completion'),
+      partsReplaced: evaluation?.partsReplaced || readNote(notes, 'Parts Replaced'),
+      inspectionFindings: evaluation?.inspectionFindings || readNote(notes, 'Inspection Findings'),
+      adminRemarks: evaluation?.adminRemarks || readNote(notes, 'Admin Remarks'),
+      evaluationId: evaluation?.evaluationId || null,
+      evaluationUpdatedAt: evaluation?.updatedAt,
+      recordedById: evaluation?.recordedById ?? null,
+      recordedByName: evaluation?.recordedByName ?? '',
       createdAt: row.created_at ? String(row.created_at) : undefined,
       updatedAt: row.updated_at ? String(row.updated_at) : undefined,
     };
@@ -312,10 +534,10 @@ export function repairStatusMessage(status: RepairStatus, result?: RepairResult 
  * disposed, and one open repair per asset is enough.
  */
 export async function validateAssetsForRepair(assetIds: (string | number)[]): Promise<{
-  ok: Array<{ id: string; name: string; code: string; status: string; userId: string | number | null }>;
+  ok: { id: string; name: string; code: string; status: string; userId: string | number | null }[];
   blocked: BlockedAsset[];
 }> {
-  const ok: Array<{ id: string; name: string; code: string; status: string; userId: string | number | null }> = [];
+  const ok: { id: string; name: string; code: string; status: string; userId: string | number | null }[] = [];
   const blocked: BlockedAsset[] = [];
   if (assetIds.length === 0) return { ok, blocked };
 
@@ -566,7 +788,7 @@ export async function updateRepairStatus(options: {
   actorId?: string | number | null;
   actorLabel?: string;
   fields?: RepairAdminFields;
-}): Promise<{ status: RepairStatus; assetStatus: string | null }> {
+}): Promise<{ status: RepairStatus; assetStatus: string | null; evaluationSaved: boolean }> {
   const { repairId, status, actorId } = options;
   const fields = options.fields ?? {};
   const now = new Date().toISOString();
@@ -596,22 +818,39 @@ export async function updateRepairStatus(options: {
   const actorLabel = String(options.actorLabel ?? 'Admin');
 
   let notes = previousNotes;
-  if (fields.inspectionFindings) notes = upsertNotes(notes, { 'Inspection Findings': fields.inspectionFindings });
-  if (fields.repairDescription) notes = upsertNotes(notes, { 'Repair Description': fields.repairDescription });
-  if (fields.technician) notes = upsertNotes(notes, { Technician: fields.technician });
-  if (fields.partsReplaced) notes = upsertNotes(notes, { 'Parts Replaced': fields.partsReplaced });
-  if (fields.expectedCompletion) notes = upsertNotes(notes, { 'Expected Completion': fields.expectedCompletion });
-  if (fields.adminRemarks) notes = upsertNotes(notes, { 'Admin Remarks': fields.adminRemarks });
-  if (status === 'Cancelled') {
-    notes = upsertNotes(notes, {
-      Cancelled: String(fields.cancellationReason ?? fields.adminRemarks ?? '').trim() || 'Cancelled by Asset Management Office',
-    });
-  }
 
   const result: RepairResult | null =
     status === 'Completed'
       ? (fields.repairResult ?? normalizeRepairResult((repair as any).Repair_result) ?? 'Repairable')
       : normalizeRepairResult((repair as any).Repair_result);
+
+  const evaluationFields: RepairEvaluationFields = {
+    technicianProvider: fields.technician,
+    repairCost: fields.repairCost,
+    expectedCompletion: fields.expectedCompletion,
+    partsReplaced: fields.partsReplaced,
+    inspectionFindings: fields.inspectionFindings,
+    adminRemarks: fields.adminRemarks,
+  };
+  if (status === 'Completed') evaluationFields.repairResult = result;
+  else if (fields.repairResult != null) evaluationFields.repairResult = fields.repairResult;
+
+  // The servicing record is its own row, stamped with the logged-in admin
+  // (system logic §7). Only if that write is impossible do we keep the old
+  // notes mirror, so nothing an admin typed is ever silently dropped.
+  const evaluationSaved = await saveRepairEvaluation({ repairId, actorId, fields: evaluationFields });
+  if (!evaluationSaved) {
+    if (fields.inspectionFindings) notes = upsertNotes(notes, { 'Inspection Findings': fields.inspectionFindings });
+    if (fields.technician) notes = upsertNotes(notes, { Technician: fields.technician });
+    if (fields.partsReplaced) notes = upsertNotes(notes, { 'Parts Replaced': fields.partsReplaced });
+    if (fields.expectedCompletion) notes = upsertNotes(notes, { 'Expected Completion': fields.expectedCompletion });
+    if (fields.adminRemarks) notes = upsertNotes(notes, { 'Admin Remarks': fields.adminRemarks });
+  }
+  if (status === 'Cancelled') {
+    notes = upsertNotes(notes, {
+      Cancelled: String(fields.cancellationReason ?? fields.adminRemarks ?? '').trim() || 'Cancelled by Asset Management Office',
+    });
+  }
 
   const costRaw = fields.repairCost;
   const costNumber =
@@ -627,6 +866,8 @@ export async function updateRepairStatus(options: {
     Repair_result: result,
     updated_at: now,
   };
+  // The reported/repair description belongs to the repair row itself.
+  if (fields.repairDescription) update.Repair_Description = fields.repairDescription;
 
   const { error: updateError } = await supabase
     .from('repairs')
@@ -673,12 +914,22 @@ export async function updateRepairStatus(options: {
     }
   }
 
+  // The audit trail documents who/what/when for every step (spec §2, §3, §9).
+  const auditDescription =
+    status === 'In Progress' && fields.technician
+      ? `Repair servicing started for ${assetLabel} — assigned to ${fields.technician}`
+      : status === 'Completed'
+        ? `Repair ${status.toLowerCase()} for ${assetLabel} — result: ${result ?? 'Repairable'}${
+            fields.technician ? ` (technician: ${fields.technician})` : ''
+          }`
+        : `Repair status updated to ${status} for ${assetLabel}`;
+
   await writeAudit({
     actorId,
     assetId,
     requestId,
     actionType: 'REPAIR',
-    description: `Repair status updated to ${status} for ${assetLabel}`,
+    description: auditDescription,
     notes: fields.adminRemarks || notes || `Repair status: ${status}`,
   });
 
@@ -735,7 +986,7 @@ export async function updateRepairStatus(options: {
 
   await syncRequestStatusFromRepairs(requestId);
 
-  return { status, assetStatus };
+  return { status, assetStatus, evaluationSaved };
 }
 
 async function resolveRequesterId(
@@ -774,13 +1025,15 @@ export async function syncRequestStatusFromRepairs(
   else if (cancelled === statuses.length) derived = 'Cancelled';
   else if (completed > 0 || inProgress > 0) derived = 'Approved';
   else derived = 'Pending';
-  // NB: "In Progress" is deliberately never written to `requests` — the table's
-  // check constraint only allows Pending/Approved/Rejected, and writing it used
-  // to fail with `requests_status_check` (the ERROR seen in the repair screen).
 
+  // NB: `requests.status` only allows Pending/Approved/Rejected — its
+  // `requests_status_check` constraint rejects "Completed"/"Cancelled"/"In
+  // Progress" with SQLSTATE 23514. The derived value is clamped for the column
+  // (the per-asset repair rows keep the real progress) while the un-clamped
+  // value is still returned to callers.
   const { error } = await supabase
     .from('requests')
-    .update({ status: derived, updated_at: new Date().toISOString() })
+    .update({ status: clampRequestStatus(derived), updated_at: new Date().toISOString() })
     .eq('id', requestId as any);
   if (error) throw error;
   return derived;
@@ -878,6 +1131,13 @@ export async function sendRepairToReplacement(options: {
   actorLabel?: string;
   reason: string;
   replacementReason?: string;
+  /**
+   * True when the admin completed the repair with "For Replacement" as its
+   * result (rather than sending an open repair away). The repair row is then
+   * closed as **Completed** with that result instead of Cancelled, so the asset's
+   * history reads "repaired → for replacement" and the record is final.
+   */
+  markCompleted?: boolean;
 }): Promise<{ replacementId: string | null }> {
   const reason = String(options.reason ?? '').trim();
   if (!reason) throw new Error('A reason is required so the user knows why the asset is being replaced.');
@@ -932,14 +1192,29 @@ export async function sendRepairToReplacement(options: {
   // asset's repair history stays accurate, but always append the decision.
   const repairStatus = normalizeRepairStatus((repair as any).status);
   const notes = upsertNotes((repair as any).notes, { 'Sent to Replacement': reason });
+  // A repair that already closed keeps its documented result; one that is still
+  // open is closed here with the outcome the admin selected.
+  const closed = repairStatus === 'Completed';
+  const outcome: RepairResult = normalizeRepairResult(options.replacementReason) ?? 'For Replacement';
   await supabase
     .from('repairs')
     .update({
       notes,
-      ...(repairStatus === 'Completed' ? {} : { status: 'Cancelled' }),
+      ...(closed
+        ? {}
+        : { status: options.markCompleted ? 'Completed' : 'Cancelled', Repair_result: outcome }),
       updated_at: now,
     })
     .eq('Repair_id', options.repairId as any);
+
+  await saveRepairEvaluation({
+    repairId: options.repairId,
+    actorId: options.actorId,
+    fields: {
+      repairResult: closed ? undefined : outcome,
+      adminRemarks: reason,
+    },
+  });
 
   await writeAudit({
     actorId: options.actorId,
@@ -976,6 +1251,8 @@ export async function sendRepairToDisposal(options: {
   actorLabel?: string;
   reason: string;
   disposalReason?: string;
+  /** See `sendRepairToReplacement` — completes instead of cancelling the repair. */
+  markCompleted?: boolean;
 }): Promise<{ disposalId: string | null }> {
   const reason = String(options.reason ?? '').trim();
   if (!reason) throw new Error('A reason is required so the user knows why the asset is being disposed.');
@@ -1013,7 +1290,10 @@ export async function sendRepairToDisposal(options: {
         Asset_id: assetId,
         Approve_by: actorLabel,
         Description: reason,
-        disposal_reason: options.disposalReason ?? 'Beyond Repair',
+        // The repair screen sends its repair result ('For Replacement',
+        // 'Repairable', …) as the reason; the column only accepts the disposal
+        // enum, so map it and keep the chosen result in the repair's notes.
+        disposal_reason: normalizeDisposalReason(options.disposalReason ?? 'Beyond Repair'),
         disposal_date: now.slice(0, 10),
         notes: `Created from repair request. Reason: ${reason}`,
         created_at: now,
@@ -1031,14 +1311,27 @@ export async function sendRepairToDisposal(options: {
 
   const repairStatus = normalizeRepairStatus((repair as any).status);
   const notes = upsertNotes((repair as any).notes, { 'Sent to Disposal': reason });
+  const closed = repairStatus === 'Completed';
+  const outcome: RepairResult = normalizeRepairResult(options.disposalReason) ?? 'Beyond Repair';
   await supabase
     .from('repairs')
     .update({
       notes,
-      ...(repairStatus === 'Completed' ? {} : { status: 'Cancelled' }),
+      ...(closed
+        ? {}
+        : { status: options.markCompleted ? 'Completed' : 'Cancelled', Repair_result: outcome }),
       updated_at: now,
     })
     .eq('Repair_id', options.repairId as any);
+
+  await saveRepairEvaluation({
+    repairId: options.repairId,
+    actorId: options.actorId,
+    fields: {
+      repairResult: closed ? undefined : outcome,
+      adminRemarks: reason,
+    },
+  });
 
   await writeAudit({
     actorId: options.actorId,

@@ -60,15 +60,18 @@ export function QuickLink({
 }
 
 const styles = StyleSheet.create({
+  // `alignItems: 'stretch'` on the grid makes both cards in a row the same
+  // height (a two-line title used to leave its neighbour short).
   touchable: {
     width: '48%',
-    marginBottom: 12,
+    minHeight: 124,
   },
   container: {
+    flex: 1,
     width: '100%',
     padding: 14,
     borderRadius: 16,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     alignItems: 'center',
     minHeight: 124,
     shadowColor: '#0F172A',

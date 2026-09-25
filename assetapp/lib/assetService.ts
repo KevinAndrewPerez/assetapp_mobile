@@ -1,7 +1,9 @@
 import { supabase } from './supabase';
 import { resolveAssetImageUrl } from './mediaUrl';
-import bcrypt from 'bcryptjs';
+import { formatStoredDate, normalizeStoredTimestamp } from './time';
+import { auditSessionNotice, stripNetworkIdentifiers } from './auditService';
 import * as FileSystem from 'expo-file-system/legacy';
+import { hashPasswordForDatabase } from './passwordHash';
 import { decode } from 'base64-arraybuffer';
 import { recordMaintenance } from './maintenanceService';
 import { createNotification } from './notificationService';
@@ -51,11 +53,7 @@ export type LifecycleEvent = {
   raw: any;
 };
 
-const normalizeTimestamp = (value: unknown) => {
-  if (!value) return '';
-  const date = new Date(String(value));
-  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
-};
+const normalizeTimestamp = (value: unknown) => normalizeStoredTimestamp(value);
 
 const normalizeLifecycleStatus = (value: unknown) => {
   const status = String(value ?? '').trim();
@@ -115,14 +113,22 @@ const normalizeLifecycleRow = (row: any, eventType: LifecycleEvent['eventType'],
   const assetCode = asset.Asset_code || row.Assets_id || row.asset_id || '';
   const userName = resolveUserName(user) || row.performed_by || row.Approve_by || 'Admin';
 
+  // Sign-in / sign-out rows are turned into a privacy-safe notice (the web's
+  // login middleware stores the client IP in `notes`), and every other row has
+  // any IP address scrubbed out before it reaches the screen.
+  const sessionNotice = eventType === 'audit' ? auditSessionNotice(row) : null;
+  const cleanNotes = stripNetworkIdentifiers(row.notes ?? row.action_description ?? '');
+
   let title = '';
   if (eventType === 'audit') {
-    if (request.id) {
-      title = `${row.notes || 'Action'} request (${request.request_type}) by ${userName}`;
+    if (sessionNotice) {
+      title = sessionNotice;
+    } else if (request.id) {
+      title = `${cleanNotes || 'Action'} request (${request.request_type}) by ${userName}`;
     } else if (assetCode) {
-      title = `${row.notes || 'Activity'} for ${assetCode} - ${assetName}`;
+      title = `${cleanNotes || 'Activity'} for ${assetCode} - ${assetName}`;
     } else {
-      title = row.notes || 'System activity';
+      title = cleanNotes || 'System activity';
     }
   } else if (eventType === 'repair') {
     title = `Repair activity for ${assetCode}`;
@@ -132,28 +138,30 @@ const normalizeLifecycleRow = (row: any, eventType: LifecycleEvent['eventType'],
     title = `Disposal activity for ${assetCode}`;
   }
 
+  // Privacy-safe wording for the row: a session notice, or the row's own text
+  // with any IP address removed.
+  const rawDescription =
+    row.description ?? row.Note ?? row.notes ?? row.reason ?? row.Repair_Description ?? '';
+  const description = sessionNotice
+    ? sessionNotice
+    : eventType === 'audit'
+      ? stripNetworkIdentifiers(row.action_description ?? rawDescription)
+      : String(rawDescription);
+
   return {
     // Primary keys differ per table (Repair_id, Replacement_id, Disposal_ID, id).
     id: String(row.id ?? row.Repair_id ?? row.Replacement_id ?? row.Disposal_ID ?? `${eventType}-${row.Assets_id ?? row.asset_id ?? ''}-${row.created_at ?? ''}-${index ?? 0}`),
     eventType,
     title,
-    description:
-      String(
-        row.description ??
-          row.Note ??
-          row.notes ??
-          row.reason ??
-          row.Repair_Description ??
-          '',
-      ),
+    description,
     timestamp: normalizeTimestamp(row.created_at ?? row.updated_at ?? row.Repair_Date ?? row.disposal_date ?? row.pullout_date ?? ''),
     assetId: assetCode,
     department: String(row.department ?? asset.department ?? ''),
     performedBy: userName,
-    reason: String(row.reason ?? row.Note ?? row.notes ?? ''),
+    reason: stripNetworkIdentifiers(row.reason ?? row.Note ?? row.notes ?? ''),
     status: String(row.status ?? ''),
     requestId: String(row.request_id ?? ''),
-    note: String(row.Note ?? row.notes ?? row.description ?? ''),
+    note: stripNetworkIdentifiers(row.Note ?? row.notes ?? row.description ?? ''),
     assetName: assetName,
     barcode: assetCode,
     date: normalizeTimestamp(row.created_at ?? row.updated_at ?? ''),
@@ -372,7 +380,7 @@ export async function updateDepartmentHead(
     .single();
   if (empError) throw empError;
 
-  const passwordHash = await bcrypt.hash('password123', 12);
+  const passwordHash = await hashPasswordForDatabase('password123');
   const { error: insertError } = await supabase
     .from('users')
     .insert([{
@@ -605,6 +613,41 @@ export async function registerAsset(payload: {
   return asset;
 }
 
+/**
+ * Which of these asset codes are already in use?
+ *
+ * Used by the Asset Registry before it accepts a *custom* code, so two assets can
+ * never share a code (a shared code would mean a shared QR and two assets would
+ * answer to the same scan). The comparison is case-insensitive because the
+ * database column is a plain string and `ast-001` / `AST-001` must collide.
+ *
+ * `%` and `_` are LIKE wildcards, so they are escaped before they reach the
+ * `ilike` filter.
+ */
+export async function findExistingAssetCodes(codes: string[]): Promise<string[]> {
+  const wanted = Array.from(
+    new Set(codes.map((code) => String(code ?? '').trim().toUpperCase()).filter(Boolean)),
+  );
+  if (wanted.length === 0) return [];
+
+  const escapeForLike = (value: string) => value.replace(/[%_\\]/g, (char) => `\\${char}`);
+  const found = new Set<string>();
+  const chunkSize = 20;
+
+  for (let index = 0; index < wanted.length; index += chunkSize) {
+    const chunk = wanted.slice(index, index + chunkSize);
+    const filter = chunk.map((code) => `Asset_code.ilike.${escapeForLike(code)}`).join(',');
+    const { data, error } = await supabase.from('assets').select('Asset_code').or(filter);
+    if (error) throw error;
+    (data ?? []).forEach((row: any) => {
+      const value = String(row?.Asset_code ?? '').trim().toUpperCase();
+      if (value) found.add(value);
+    });
+  }
+
+  return wanted.filter((code) => found.has(code));
+}
+
 export async function insertAuditLog(payload: Record<string, any>) {
   return insertRecord('audit_logs', payload);
 }
@@ -691,6 +734,18 @@ export type MaintenanceAlert = {
   daysOverdue: number;
 };
 
+/**
+ * Lifecycle states a maintenance schedule no longer applies to.
+ *
+ * A disposed (or replaced) asset is gone / superseded, so it must never appear
+ * in the maintenance queue or in the overdue badge count — the schedule is
+ * closed for it. The comparison is case-insensitive because the column is a
+ * plain string.
+ */
+const CLOSED_MAINTENANCE_STATUSES = ['disposal', 'disposed', 'replaced', 'lost'];
+const isClosedForMaintenance = (status: unknown): boolean =>
+  CLOSED_MAINTENANCE_STATUSES.includes(String(status ?? '').trim().toLowerCase());
+
 const unwrapCustodian = (user: any): string => {
   const emp = Array.isArray(user?.employee_numbers)
     ? user?.employee_numbers[0]
@@ -716,7 +771,12 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
   if (error) throw error;
 
   const todayMs = new Date(today).getTime();
-  return (data ?? []).map((row: any) => ({
+  return (
+    (data ?? [])
+      // A disposed / replaced asset keeps its old maintenance dates, but its
+      // upkeep is over — it must not sit in the maintenance queue at all.
+      .filter((row: any) => !isClosedForMaintenance(row.Lifecycle_Status))
+      .map((row: any) => ({
     id: row.id,
     assetId: String(row.Asset_code ?? ''),
     name: String(row.Asset_name ?? 'Asset'),
@@ -734,7 +794,8 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
     daysOverdue: row.next_maintenance_date
       ? Math.max(0, Math.floor((todayMs - new Date(row.next_maintenance_date).getTime()) / 86400000))
       : 0,
-  }));
+      }))
+  );
 }
 
 export type EvaluationAlert = {
@@ -777,7 +838,10 @@ export async function fetchAlertCounts(): Promise<AlertCounts> {
       .from('assets')
       .select('id', { count: 'exact', head: true })
       .not('next_maintenance_date', 'is', null)
-      .lte('next_maintenance_date', today),
+      .lte('next_maintenance_date', today)
+      // Keep the badge in step with `fetchMaintenanceAlerts`, which hides the
+      // closed out (disposed / replaced / lost) assets from the queue.
+      .not('Lifecycle_Status', 'in', '("Disposal","Disposed","Replaced","Lost")'),
     supabase
       .from('assets')
       .select('id', { count: 'exact', head: true })
@@ -981,7 +1045,7 @@ export async function fetchReplacementRecords(): Promise<ReplacementRecord[]> {
       requestedBy: requestedByMap.get(String(row.Request_id ?? '')) ?? 'Unknown',
       reason: String(row.reason ?? row.notes ?? 'Approved replacement request'),
       status: String(row.status ?? 'Approved') === 'Received' ? 'Received' : 'Approved',
-      createdAt: new Date(row.created_at ?? row.Replacement_Date ?? '').toLocaleDateString(),
+      createdAt: formatStoredDate(row.created_at ?? row.Replacement_Date),
     });
   });
 
@@ -999,7 +1063,7 @@ export async function fetchReplacementRecords(): Promise<ReplacementRecord[]> {
       requestedBy: requestedByMap.get(String(r.id)) ?? 'Unknown',
       reason: String(r.Note ?? 'Approved replacement request'),
       status: String(r.status ?? 'Approved') === 'Received' ? 'Received' : 'Approved',
-      createdAt: new Date(r.created_at ?? '').toLocaleDateString(),
+      createdAt: formatStoredDate(r.created_at),
     });
   });
 

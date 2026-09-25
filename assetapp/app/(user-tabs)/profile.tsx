@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -9,41 +9,50 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getStoredUser, fetchLiveUser, StoredUser } from '@/lib/userService';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Avatar } from '@/components/avatar';
+import { getStoredUser, fetchLiveUser, signOutMobile, StoredUser } from '@/lib/userService';
+import { headerTopPadding } from '@/lib/theme';
 
 export default function UserProfile() {
   const router = useRouter();
   const [user, setUser] = useState<StoredUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const loadProfile = async () => {
-      setLoading(true);
-      try {
-        const stored = await getStoredUser();
-        if (!stored) {
-          router.replace('/login');
-          return;
+  // Reload on focus so a photo saved in Edit Profile shows up immediately.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const loadProfile = async () => {
+        setLoading(true);
+        try {
+          const stored = await getStoredUser();
+          if (!stored) {
+            router.replace('/login');
+            return;
+          }
+          const liveUser = await fetchLiveUser(stored.id ?? stored.user_id ?? '');
+          if (active) setUser(liveUser ?? stored);
+        } catch (error) {
+          console.error('Failed to load profile:', error);
+          const stored = await getStoredUser();
+          if (active) setUser(stored);
+        } finally {
+          if (active) setLoading(false);
         }
-        const liveUser = await fetchLiveUser(stored.id ?? stored.user_id ?? '');
-        setUser(liveUser ?? stored);
-      } catch (error) {
-        console.error('Failed to load profile:', error);
-        const stored = await getStoredUser();
-        setUser(stored);
-      } finally {
-        setLoading(false);
-      }
-    };
+      };
 
-    loadProfile();
-  }, [router]);
+      loadProfile();
+      return () => {
+        active = false;
+      };
+    }, [router]),
+  );
 
+  // Records the sign-out in the audit trail, then clears the stored session.
   const handleLogout = async () => {
     try {
-      await AsyncStorage.removeItem('user');
+      await signOutMobile();
       router.replace('/login');
     } catch (error) {
       console.error('Logout Error:', error);
@@ -74,9 +83,7 @@ export default function UserProfile() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
-            <Text style={styles.avatarText}>
-              {user?.full_name?.split(' ').map((part) => part[0]).join('') ?? 'NA'}
-            </Text>
+            <Avatar name={user?.full_name} photo={(user as any)?.profile_photo} size={88} ring />
           </View>
           <Text style={styles.userName}>{user?.full_name ?? 'Unknown User'}</Text>
           <Text style={styles.userRole}>{user?.role ?? 'User'}</Text>
@@ -88,17 +95,17 @@ export default function UserProfile() {
           <Text style={styles.sectionTitle}>Settings</Text>
           <View style={styles.settingsContainer}>
             {[
-              { title: 'Edit Profile', icon: 'account-outline', color: '#FDB833' },
-              { title: 'Change Password', icon: 'lock-outline', color: '#FDB833' },
+              { title: 'Edit Profile', icon: 'account-edit-outline', color: '#FDB833' },
               { title: 'Notifications', icon: 'bell-outline', color: '#FDB833' },
-            ].map((item, index) => (
+            ].map((item, index, list) => (
               <TouchableOpacity
                 key={item.title}
                 style={[
                   styles.settingsItem,
-                  index < 2 && styles.settingsDivider,
+                  index < list.length - 1 && styles.settingsDivider,
                 ]}
                 onPress={() => {
+                  if (item.title === 'Edit Profile') router.push('/edit-profile' as any);
                   if (item.title === 'Notifications') router.push('/notifications');
                 }}
               >
@@ -144,7 +151,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 18,
     paddingVertical: 0,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
   },
   headerTitle: {
@@ -171,20 +178,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   avatarContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FDB833',
-    justifyContent: 'center',
-    alignItems: 'center',
     marginBottom: 16,
-    borderWidth: 4,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  avatarText: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1E3A5F',
   },
   userName: {
     fontSize: 22,
@@ -257,17 +251,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 15,
-    borderRadius: 16,
+    borderRadius: 14,
     marginBottom: 32,
+    height: 48,
   },
   logoutIcon: {
     marginRight: 8,
   },
   logoutButtonText: {
     color: '#B91C1C',
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
   },
   footer: {
     alignItems: 'center',

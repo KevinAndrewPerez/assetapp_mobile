@@ -1,21 +1,26 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useSegments } from 'expo-router';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fetchAssets, AssetSummary } from '@/lib/assetService';
 import { resolveActingUserLabel } from '@/lib/actorService';
 import {
+  addMonthsToDate,
   EvaluationAction,
   runAssetEvaluation,
   runAssetEvaluationCheck,
@@ -48,10 +53,20 @@ const SERVICE_ACTION: Record<LifespanAction, EvaluationAction> = {
  */
 const EVALUABLE_STATUSES = ['active', 'for checking', 'pullout', 'pulled out'];
 
+/** One-tap month presets — the office almost always extends by these amounts. */
+const MONTH_PRESETS = [3, 6, 12, 24];
+
 const isPulloutStatusKey = (key: string) => key === 'pullout' || key === 'pulled out';
 
 export default function LifespanScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  // This screen is reachable both as a tab and as a pushed stack route; inside
+  // the tab navigator the 74pt floating tab bar is drawn *over* the screen, so
+  // the list and the action sheet have to keep clear of it.
+  const segments = useSegments() as string[];
+  const bottomClearance = (segments.includes('(tabs)') ? 74 : 0) + Math.max(insets.bottom, 12);
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -151,6 +166,67 @@ export default function LifespanScreen() {
   };
 
   /**
+   * What the expiration date becomes after the extension. The service counts the
+   * added months from the asset's current expiration date, so an expired asset
+   * that gets +6 months lands 6 months past the old date rather than today.
+   */
+  const extendMonthsNumber = Number(extendMonths) || 0;
+  const previewBase = String(selectedAsset?.expirationDate ?? '').slice(0, 10);
+  const newExpirationPreview =
+    extendMonthsNumber > 0 && /^\d{4}-\d{2}-\d{2}$/.test(previewBase)
+      ? addMonthsToDate(previewBase, extendMonthsNumber)
+      : '';
+
+  /**
+   * The month picker shared by "Return to Active + extend" and the Pullout
+   * "Extend Lifespan" sheet: tap a preset or type an exact number, with the
+   * resulting expiration date shown as you choose.
+   */
+  const renderMonthsField = (label: string) => (
+    <View style={styles.formGroup}>
+      <Text style={styles.formLabel}>{label}</Text>
+      <View style={styles.monthChips}>
+        {MONTH_PRESETS.map((preset) => {
+          const active = extendMonthsNumber === preset;
+          return (
+            <TouchableOpacity
+              key={preset}
+              style={[styles.monthChip, active ? styles.monthChipActive : null]}
+              activeOpacity={0.75}
+              onPress={() => setExtendMonths(String(preset))}
+            >
+              <Text style={[styles.monthChipText, active ? styles.monthChipTextActive : null]}>
+                +{preset}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={styles.extendInputRow}>
+        <TextInput
+          style={styles.extendInput}
+          placeholder="Or type the number of months"
+          placeholderTextColor="#94A3B8"
+          value={extendMonths}
+          onChangeText={setExtendMonths}
+          keyboardType="numeric"
+          maxLength={3}
+        />
+        <Text style={styles.extendUnit}>months</Text>
+      </View>
+      {newExpirationPreview ? (
+        <View style={styles.previewBox}>
+          <MaterialCommunityIcons name="calendar-check-outline" size={16} color="#0369A1" />
+          <Text style={styles.previewText}>
+            New expiration date:{' '}
+            <Text style={styles.previewStrong}>{formatDate(newExpirationPreview)}</Text>
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  /**
    * Every decision on this screen runs through the shared evaluation service, so
    * the mobile follows exactly the same rules as the web admin's evaluate
    * endpoint: a pulled-out asset keeps Pullout and can only have its lifespan
@@ -161,7 +237,7 @@ export default function LifespanScreen() {
     if (!selectedAsset || processing) return;
 
     const months = decision === 'return' || decision === 'extend' ? Number(extendMonths) || 0 : 0;
-    if (decision === 'extend' && months < 1) {
+    if ((decision === 'extend' || (decision === 'return' && extending)) && months < 1) {
       Alert.alert('Months required', 'Enter at least 1 month to extend the lifespan by.');
       return;
     }
@@ -347,251 +423,296 @@ export default function LifespanScreen() {
     if (!actionModal || !selectedAsset) return null;
 
     return (
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalCard}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              {actionModal === 'return' && 'Return Asset to Active'}
-              {actionModal === 'repair' && 'Send Asset for Repair'}
-              {actionModal === 'replacement' && 'Recommend Replacement'}
-              {actionModal === 'disposal' && 'Proceed with Disposal'}
-              {actionModal === 'extend' && 'Extend Asset Lifespan'}
-            </Text>
-            <TouchableOpacity onPress={() => setActionModal(null)} activeOpacity={0.7}>
-              <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
+      <Modal transparent animationType="fade" visible onRequestClose={() => setActionModal(null)}>
+        <View style={[styles.modalOverlay, { paddingBottom: bottomClearance + 4 }]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalCardWrap}
+          >
+            {/* Height from the real window, not a percentage: inside a `Modal` a
+                percentage is measured against the keyboard-avoiding wrapper, which
+                shrank the sheet and cut the footer off on short screens. */}
+            <View style={[styles.modalCard, { maxHeight: Math.round(windowHeight * 0.84) }]}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>
+                  {actionModal === 'return' && 'Return Asset to Active'}
+                  {actionModal === 'repair' && 'Send Asset for Repair'}
+                  {actionModal === 'replacement' && 'Recommend Replacement'}
+                  {actionModal === 'disposal' && 'Proceed with Disposal'}
+                  {actionModal === 'extend' && 'Extend Asset Lifespan'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setActionModal(null)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <MaterialCommunityIcons name="close" size={22} color={NAVY} />
+                </TouchableOpacity>
+              </View>
 
-          <View style={styles.modalBody}>
-            {actionModal === 'return' && (
-              <>
-                <View style={styles.infoBoxGreen}>
-                  <Text style={styles.infoBoxText}>
-                    Asset will be returned to <Text style={styles.boldGreen}>Active</Text> status and can resume operational use.
-                  </Text>
-                </View>
-                <View style={styles.checkboxRow}>
-                  <View style={[styles.checkbox, { borderColor: extending ? '#10B981' : '#CBD5E1' }]}>
-                    {extending && <MaterialCommunityIcons name="checkbox-marked" size={16} color="#10B981" />}
-                  </View>
-                  <View style={styles.checkboxLabel}>
-                    <Text style={styles.checkboxLabelText}>Extend asset lifespan</Text>
-                    <Text style={styles.checkboxSubtext}>Optional: Add additional months to operational lifespan</Text>
-                  </View>
-                </View>
-                {extending && (
-                  <View style={styles.extendInputRow}>
-                    <TextInput
-                      style={styles.extendInput}
-                      placeholder="Enter months"
-                      placeholderTextColor="#94A3B8"
-                      value={extendMonths}
-                      onChangeText={setExtendMonths}
-                      keyboardType="numeric"
-                    />
-                    <Text style={styles.extendUnit}>months</Text>
-                  </View>
-                )}
-              </>
-            )}
-
-            {actionModal === 'repair' && (
-              <>
-                <View style={styles.infoBoxGold}>
-                  <Text style={styles.infoBoxText}>
-                    Asset will transition to <Text style={styles.boldGold}>For Repair</Text> status. Maintenance evaluation and servicing will be scheduled.
-                  </Text>
-                </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>ISSUES OR DETERIORATION IDENTIFIED</Text>
-                  <TextInput
-                    style={styles.textArea}
-                    placeholder="e.g., Display flickering, keyboard unresponsive, battery not charging, performance degradation"
-                    placeholderTextColor="#94A3B8"
-                    value={evalNotes}
-                    onChangeText={setEvalNotes}
-                    multiline
-                    numberOfLines={4}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </>
-            )}
-
-            {actionModal === 'replacement' && (
-              <>
-                <View style={styles.infoBoxBlue}>
-                  <Text style={styles.infoBoxText}>
-                    Asset will transition to <Text style={styles.boldBlue}>For Replacement</Text> status. A replacement request will be initiated and requires approval.
-                  </Text>
-                </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>REASON FOR REPLACEMENT</Text>
-                  <TextInput
-                    style={styles.textArea}
-                    placeholder="e.g., Beyond economical repair, frequent failures, obsolete technology, does not meet operational requirements"
-                    placeholderTextColor="#94A3B8"
-                    value={evalNotes}
-                    onChangeText={setEvalNotes}
-                    multiline
-                    numberOfLines={4}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </>
-            )}
-
-            {actionModal === 'disposal' && (
-              <>
-                <View style={styles.infoBoxRed}>
-                  <MaterialCommunityIcons name="alert-circle" size={20} color="#EF4444" />
-                  <View style={styles.warningContent}>
-                    <Text style={styles.warningTitle}>Warning: Asset will transition to disposal process.</Text>
-                    <Text style={styles.warningText}>This action marks the end of the asset&apos;s operational lifespan.</Text>
-                  </View>
-                </View>
-                <View style={styles.checkboxRow}>
-                  <View style={[styles.checkbox, { borderColor: disposalChecked ? '#EF4444' : '#CBD5E1' }]}>
-                    {disposalChecked && <MaterialCommunityIcons name="checkbox-marked" size={16} color="#EF4444" />}
-                  </View>
-                  <Text style={styles.checkboxLabelText}>I confirm this asset should be disposed</Text>
-                </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>DISPOSAL NOTES (OPTIONAL)</Text>
-                  <TextInput
-                    style={styles.textArea}
-                    placeholder="Reason for disposal..."
-                    placeholderTextColor="#94A3B8"
-                    value={evalNotes}
-                    onChangeText={setEvalNotes}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </>
-            )}
-
-            {actionModal === 'extend' && (
-              <>
-                <View style={styles.infoBoxBlue}>
-                  <Text style={styles.infoBoxText}>
-                    The asset was pulled out, so it stays in <Text style={styles.boldBlue}>Pullout</Text> status. Only the
-                    expiration date moves forward, and it can never return to Active from here.
-                  </Text>
-                </View>
-                {selectedAsset.expirationDate ? (
-                  <Text style={styles.currentExpiry}>
-                    Current expiration date: {formatDate(selectedAsset.expirationDate)}
-                  </Text>
-                ) : null}
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>ADDITIONAL LIFESPAN MONTHS *</Text>
-                  <View style={styles.extendInputRow}>
-                    <TextInput
-                      style={styles.extendInput}
-                      placeholder="Enter months"
-                      placeholderTextColor="#94A3B8"
-                      value={extendMonths}
-                      onChangeText={setExtendMonths}
-                      keyboardType="numeric"
-                    />
-                    <Text style={styles.extendUnit}>months</Text>
-                  </View>
-                </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>NOTES (OPTIONAL)</Text>
-                  <TextInput
-                    style={styles.textArea}
-                    placeholder="Why is the lifespan being extended?"
-                    placeholderTextColor="#94A3B8"
-                    value={evalNotes}
-                    onChangeText={setEvalNotes}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </>
-            )}
-          </View>
-
-          <View style={styles.modalFooter}>
-            <TouchableOpacity
-              style={[styles.modalBtn, styles.modalBtnGhost]}
-              onPress={() => setActionModal(null)}
-              disabled={processing}
-            >
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </TouchableOpacity>
-            {actionModal === 'return' && (
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnGreen]}
-                onPress={() => runDecision('return')}
-                disabled={processing}
+              <ScrollView
+                style={styles.modalBody}
+                contentContainerStyle={styles.modalBodyContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
               >
-                {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
-                  <MaterialCommunityIcons name="check-circle" size={20} color="#FFFFFF" />
+                {actionModal === 'return' && (
+                  <>
+                    <View style={styles.infoBoxGreen}>
+                      <Text style={styles.infoBoxText}>
+                        Asset will be returned to <Text style={styles.boldGreen}>Active</Text> status and can resume operational use.
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.checkboxRow, extending ? styles.checkboxRowActive : null]}
+                      activeOpacity={0.85}
+                      onPress={() => setExtending((prev) => !prev)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: extending }}
+                      accessibilityLabel="Extend asset lifespan"
+                    >
+                      <View
+                        style={[
+                          styles.checkbox,
+                          extending ? styles.checkboxOn : null,
+                        ]}
+                      >
+                        {extending && <MaterialCommunityIcons name="check-bold" size={13} color="#FFFFFF" />}
+                      </View>
+                      <View style={styles.checkboxLabel}>
+                        <Text style={styles.checkboxLabelText}>Extend asset lifespan</Text>
+                        <Text style={styles.checkboxSubtext}>
+                          Optional: choose how many months before it expires again
+                        </Text>
+                      </View>
+                      {extending ? (
+                        <MaterialCommunityIcons name="chevron-up" size={20} color="#047857" />
+                      ) : (
+                        <MaterialCommunityIcons name="chevron-down" size={20} color="#94A3B8" />
+                      )}
+                    </TouchableOpacity>
+                    {extending ? (
+                      <View style={styles.extendPanel}>
+                        {renderMonthsField('ADDITIONAL LIFESPAN MONTHS *')}
+                        {!newExpirationPreview ? (
+                          <Text style={styles.extendHint}>
+                            Pick or type the months to add and the new expiration date appears here.
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </>
                 )}
-                <Text style={styles.modalBtnGreenText}>Return to Active</Text>
-              </TouchableOpacity>
-            )}
-            {actionModal === 'repair' && (
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnGold]}
-                onPress={() => runDecision('repair')}
-                disabled={processing}
-              >
-                {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
-                  <MaterialCommunityIcons name="wrench" size={20} color="#FFFFFF" />
+
+                {actionModal === 'repair' && (
+                  <>
+                    <View style={styles.infoBoxGold}>
+                      <Text style={styles.infoBoxText}>
+                        Asset will transition to <Text style={styles.boldGold}>For Repair</Text> status. Maintenance evaluation and servicing will be scheduled.
+                      </Text>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.formLabel}>ISSUES OR DETERIORATION IDENTIFIED</Text>
+                      <TextInput
+                        style={styles.textArea}
+                        placeholder="e.g., Display flickering, keyboard unresponsive, battery not charging, performance degradation"
+                        placeholderTextColor="#94A3B8"
+                        value={evalNotes}
+                        onChangeText={setEvalNotes}
+                        multiline
+                        numberOfLines={4}
+                        textAlignVertical="top"
+                      />
+                    </View>
+                  </>
                 )}
-                <Text style={styles.modalBtnGoldText}>Send for Repair</Text>
-              </TouchableOpacity>
-            )}
-            {actionModal === 'replacement' && (
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnBlue]}
-                onPress={() => runDecision('replacement')}
-                disabled={processing}
-              >
-                {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
-                  <MaterialCommunityIcons name="sync" size={20} color="#FFFFFF" />
+
+                {actionModal === 'replacement' && (
+                  <>
+                    <View style={styles.infoBoxBlue}>
+                      <Text style={styles.infoBoxText}>
+                        Asset will transition to <Text style={styles.boldBlue}>For Replacement</Text> status. A replacement request will be initiated and requires approval.
+                      </Text>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.formLabel}>REASON FOR REPLACEMENT</Text>
+                      <TextInput
+                        style={styles.textArea}
+                        placeholder="e.g., Beyond economical repair, frequent failures, obsolete technology, does not meet operational requirements"
+                        placeholderTextColor="#94A3B8"
+                        value={evalNotes}
+                        onChangeText={setEvalNotes}
+                        multiline
+                        numberOfLines={4}
+                        textAlignVertical="top"
+                      />
+                    </View>
+                  </>
                 )}
-                <Text style={styles.modalBtnBlueText}>Recommend Replacement</Text>
-              </TouchableOpacity>
-            )}
-            {actionModal === 'disposal' && (
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnRed]}
-                onPress={() => runDecision('disposal')}
-                disabled={processing}
-              >
-                {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
-                  <MaterialCommunityIcons name="trash-can" size={20} color="#FFFFFF" />
+
+                {actionModal === 'disposal' && (
+                  <>
+                    <View style={styles.infoBoxRed}>
+                      <MaterialCommunityIcons name="alert-circle" size={20} color="#EF4444" />
+                      <View style={styles.warningContent}>
+                        <Text style={styles.warningTitle}>Warning: Asset will transition to disposal process.</Text>
+                        <Text style={styles.warningText}>This action marks the end of the asset&apos;s operational lifespan.</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.checkboxRow, disposalChecked ? styles.checkboxRowDanger : null]}
+                      activeOpacity={0.85}
+                      onPress={() => setDisposalChecked((prev) => !prev)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: disposalChecked }}
+                      accessibilityLabel="I confirm this asset should be disposed"
+                    >
+                      <View style={[styles.checkbox, disposalChecked ? styles.checkboxDanger : null]}>
+                        {disposalChecked && <MaterialCommunityIcons name="check-bold" size={13} color="#FFFFFF" />}
+                      </View>
+                      <Text style={styles.checkboxLabelText}>I confirm this asset should be disposed</Text>
+                    </TouchableOpacity>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.formLabel}>DISPOSAL NOTES (OPTIONAL)</Text>
+                      <TextInput
+                        style={styles.textArea}
+                        placeholder="Reason for disposal..."
+                        placeholderTextColor="#94A3B8"
+                        value={evalNotes}
+                        onChangeText={setEvalNotes}
+                        multiline
+                        numberOfLines={3}
+                        textAlignVertical="top"
+                      />
+                    </View>
+                  </>
                 )}
-                <Text style={styles.modalBtnRedText}>Proceed with Disposal</Text>
-              </TouchableOpacity>
-            )}
-            {actionModal === 'extend' && (
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnBlue]}
-                onPress={() => runDecision('extend')}
-                disabled={processing}
-              >
-                {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
-                  <MaterialCommunityIcons name="calendar-plus" size={20} color="#FFFFFF" />
+
+                {actionModal === 'extend' && (
+                  <>
+                    <View style={styles.infoBoxBlue}>
+                      <Text style={styles.infoBoxText}>
+                        The asset was pulled out, so it stays in <Text style={styles.boldBlue}>Pullout</Text> status. Only the
+                        expiration date moves forward, and it can never return to Active from here.
+                      </Text>
+                    </View>
+                    {selectedAsset.expirationDate ? (
+                      <Text style={styles.currentExpiry}>
+                        Current expiration date: {formatDate(selectedAsset.expirationDate)}
+                      </Text>
+                    ) : null}
+                    {renderMonthsField('ADDITIONAL LIFESPAN MONTHS *')}
+                    <View style={styles.formGroup}>
+                      <Text style={styles.formLabel}>NOTES (OPTIONAL)</Text>
+                      <TextInput
+                        style={styles.textArea}
+                        placeholder="Why is the lifespan being extended?"
+                        placeholderTextColor="#94A3B8"
+                        value={evalNotes}
+                        onChangeText={setEvalNotes}
+                        multiline
+                        numberOfLines={3}
+                        textAlignVertical="top"
+                      />
+                    </View>
+                  </>
                 )}
-                <Text style={styles.modalBtnBlueText}>Extend Lifespan</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+              </ScrollView>
+
+              {/* Stacked, full-width footer. The actions used to sit side by side at
+                  half width, so a long label ("Recommend Replacement", "Proceed with
+                  Disposal", "Extend Lifespan") wrapped or was truncated inside the
+                  fixed 48px height. Full-width buttons can hold any of them. */}
+              <View style={styles.modalFooter}>
+                {actionModal === 'return' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.modalBtnGreen]}
+                    onPress={() => runDecision('return')}
+                    disabled={processing}
+                  >
+                    {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#FFFFFF" />
+                    )}
+                    <Text style={styles.modalBtnGreenText} numberOfLines={1}>
+                      {extending ? 'Return & Extend Lifespan' : 'Return to Active'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {actionModal === 'repair' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.modalBtnGold]}
+                    onPress={() => runDecision('repair')}
+                    disabled={processing}
+                  >
+                    {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+                      <MaterialCommunityIcons name="wrench" size={20} color="#FFFFFF" />
+                    )}
+                    <Text style={styles.modalBtnGoldText} numberOfLines={1} adjustsFontSizeToFit>
+                      Send for Repair
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {actionModal === 'replacement' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.modalBtnBlue]}
+                    onPress={() => runDecision('replacement')}
+                    disabled={processing}
+                  >
+                    {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+                      <MaterialCommunityIcons name="sync" size={20} color="#FFFFFF" />
+                    )}
+                    <Text style={styles.modalBtnBlueText} numberOfLines={1} adjustsFontSizeToFit>
+                      Recommend Replacement
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {actionModal === 'disposal' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.modalBtnRed]}
+                    onPress={() => runDecision('disposal')}
+                    disabled={processing}
+                  >
+                    {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+                      <MaterialCommunityIcons name="trash-can" size={20} color="#FFFFFF" />
+                    )}
+                    <Text style={styles.modalBtnRedText} numberOfLines={1} adjustsFontSizeToFit>
+                      Proceed with Disposal
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {actionModal === 'extend' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.modalBtnBlue]}
+                    onPress={() => runDecision('extend')}
+                    disabled={processing}
+                  >
+                    {processing ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+                      <MaterialCommunityIcons name="calendar-plus" size={20} color="#FFFFFF" />
+                    )}
+                    <Text style={styles.modalBtnBlueText} numberOfLines={1}>
+                      Extend Lifespan
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnGhost]}
+                  onPress={() => setActionModal(null)}
+                  disabled={processing}
+                >
+                  <Text style={styles.modalBtnGhostText} numberOfLines={1}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
         </View>
-      </View>
+      </Modal>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.8}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -601,7 +722,8 @@ export default function LifespanScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        style={styles.screenBody}
+        contentContainerStyle={[styles.content, { paddingBottom: bottomClearance + 24 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
@@ -678,6 +800,10 @@ export default function LifespanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#0C134F',
+  },
+  screenBody: {
+    flex: 1,
     backgroundColor: '#F4F7FB',
   },
   header: {
@@ -731,11 +857,13 @@ const styles = StyleSheet.create({
     maxWidth: 270,
   },
   retryButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 6,
-    paddingVertical: 10,
     paddingHorizontal: 22,
     borderRadius: 12,
     backgroundColor: NAVY,
+    height: 40,
   },
   retryText: {
     color: '#FFFFFF',
@@ -919,10 +1047,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 11,
     paddingHorizontal: 8,
     borderRadius: 12,
     borderWidth: 1,
+    height: 40,
   },
   returnChip: {
     backgroundColor: '#ECFDF5',
@@ -986,18 +1114,29 @@ const styles = StyleSheet.create({
     color: '#0369A1',
     lineHeight: 16,
   },
+  // Rendered inside a real `Modal`, so it sits above the floating tab bar and
+  // the footer buttons are always reachable.
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  // `flex: 1` matters: the card's `maxHeight` is a percentage, and a percentage
+  // only resolves against a parent with a definite height — without it the card
+  // grew past the screen and `overflow: hidden` cut the footer buttons off.
+  modalCardWrap: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'flex-end',
   },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 20,
-    maxHeight: '85%',
     overflow: 'hidden',
+    flexShrink: 1,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1012,7 +1151,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalBody: {
-    marginBottom: 16,
+    flexShrink: 1,
+  },
+  modalBodyContent: {
+    paddingBottom: 16,
   },
   infoBoxGreen: {
     backgroundColor: '#EBF5ED',
@@ -1086,15 +1228,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     marginBottom: 14,
+    // Transparent border everywhere so switching to the tinted "on" panel
+    // below cannot shift the row by a pixel.
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  checkboxRowActive: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  checkboxRowDanger: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
   },
   checkbox: {
     width: 22,
     height: 22,
-    borderRadius: 4,
+    borderRadius: 6,
     borderWidth: 2,
     borderColor: '#CBD5E1',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  // Filled when on — a tick that reads at a glance instead of a thin outline.
+  checkboxOn: { borderColor: '#10B981', backgroundColor: '#10B981' },
+  checkboxDanger: { borderColor: '#EF4444', backgroundColor: '#EF4444' },
+  /** The month picker that the checkbox reveals. */
+  extendPanel: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 14,
+    marginTop: -4,
+    marginBottom: 14,
+  },
+  extendHint: {
+    fontSize: 12,
+    color: '#94A3B8',
+    lineHeight: 17,
   },
   checkboxLabel: {
     flex: 1,
@@ -1113,17 +1288,60 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 14,
   },
+  monthChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  monthChip: {
+    minWidth: 54,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthChipActive: {
+    backgroundColor: '#0C134F',
+    borderColor: '#0C134F',
+  },
+  monthChipText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  monthChipTextActive: { color: '#FDB833' },
+  previewBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  previewText: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#1E3A5F',
+  },
+  previewStrong: { fontWeight: '800', color: '#0369A1' },
   extendInput: {
     flex: 1,
-    backgroundColor: '#F4F7FB',
-    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
+    height: 50,
+    fontSize: 14.5,
     color: '#0F172A',
   },
   extendUnit: {
@@ -1150,28 +1368,32 @@ const styles = StyleSheet.create({
   },
   textArea: {
     backgroundColor: '#F4F7FB',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
+    paddingTop: 12,
+    fontSize: 14.5,
     color: '#0F172A',
-    minHeight: 80,
+    minHeight: 96,
+    textAlignVertical: 'top',
   },
+  // One action per row: every label in this sheet is long enough that a
+  // half-width button clipped it.
   modalFooter: {
-    flexDirection: 'row',
     gap: 10,
-    alignItems: 'center',
   },
   modalBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    // `row` keeps the icon beside the label — without it they stacked inside the
+    // fixed 48px height and the label wrapped out of the button.
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
-    flex: 1,
+    height: 48,
+    alignSelf: 'stretch',
   },
   modalBtnGhost: {
     backgroundColor: '#F4F7FB',
@@ -1180,7 +1402,7 @@ const styles = StyleSheet.create({
   },
   modalBtnGhostText: {
     color: '#64748B',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
   modalBtnGreen: {
@@ -1188,7 +1410,7 @@ const styles = StyleSheet.create({
   },
   modalBtnGreenText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
   modalBtnGold: {
@@ -1196,7 +1418,7 @@ const styles = StyleSheet.create({
   },
   modalBtnGoldText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
   modalBtnBlue: {
@@ -1204,7 +1426,7 @@ const styles = StyleSheet.create({
   },
   modalBtnBlueText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
   modalBtnRed: {
@@ -1212,7 +1434,7 @@ const styles = StyleSheet.create({
   },
   modalBtnRedText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
   },
 });

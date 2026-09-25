@@ -1,5 +1,9 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
-import { Stack, useRouter, useSegments } from "expo-router";
+// NOTE: as of SDK 56 expo-router no longer supports react-navigation. Importing
+// `@react-navigation/native` here (even just for theming) makes the production
+// bundle fail with "expo-router is no longer compatible with react-navigation".
+// expo-router re-exports its own vendored DarkTheme/DefaultTheme/ThemeProvider,
+// so the theming behaviour is identical.
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
@@ -65,6 +69,7 @@ export default function RootLayout() {
         <Stack.Screen name="request-detail" />
         <Stack.Screen name="modal" options={{ presentation: "modal", title: "Modal" }} />
         <Stack.Screen name="asset-registry" />
+        <Stack.Screen name="transfer" />
         <Stack.Screen name="activity-log" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="maintenance" />

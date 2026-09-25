@@ -144,9 +144,9 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   editButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
@@ -212,14 +212,14 @@ const styles = StyleSheet.create({
   viewButton: {
     marginTop: 8,
     backgroundColor: '#0F172A',
-    paddingVertical: 14,
-    borderRadius: 16,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
+    height: 48,
   },
   viewButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
 });

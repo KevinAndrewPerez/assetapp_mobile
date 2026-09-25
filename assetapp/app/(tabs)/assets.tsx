@@ -9,15 +9,16 @@ import {
   Alert,
   Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { fetchAssetsWithDepartments, AssetSummary, updateDepartmentHead } from '../../lib/assetService';
 import { getStoredUser } from '../../lib/userService';
 import { supabase } from '../../lib/supabase';
 import NotificationBell from '@/components/notification-bell';
+import { AssetScanButton } from '@/components/asset-scanner';
 import QRCode from 'react-native-qrcode-svg';
 import QRViewModal from '../../components/QRViewModal';
+import { headerTopPadding } from '@/lib/theme';
 
 export default function AssetsScreen() {
   const router = useRouter();
@@ -144,9 +145,14 @@ export default function AssetsScreen() {
     <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Assets & Custodianship</Text>
-        <NotificationBell />
+        <View style={styles.headerActions}>
+          <AssetScanButton />
+          <NotificationBell />
+        </View>
       </View>
-      <SafeAreaView style={styles.container}>
+      {/* Plain body: the navy header already clears the status bar, so a
+          SafeAreaView here would only add a dead strip under it. */}
+      <View style={styles.container}>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {visibleDepartments.map((dept) => {
@@ -305,7 +311,7 @@ export default function AssetsScreen() {
         value={selectedQrValue} 
         title={selectedQrTitle} 
       />
-      </SafeAreaView>
+      </View>
     </View>
   );
 }
@@ -339,7 +345,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 18,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 16,
     backgroundColor: '#0C134F',
   },
@@ -350,8 +356,18 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
   notificationButton: {
     position: 'relative',
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationBadge: {
     position: 'absolute',
@@ -369,7 +385,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1E3A5F',
   },
-  scrollContent: { padding: 16, paddingTop: 12 },
+  scrollContent: { padding: 16, paddingTop: 12, paddingBottom: 112 },
   deptCard: { backgroundColor: '#FFF', borderRadius: 18, borderWidth: 1, borderColor: '#EDF1F7', marginBottom: 14, overflow: 'hidden', elevation: 2, shadowColor: '#0F172A', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
   deptHeader: { padding: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   deptName: { fontSize: 18, fontWeight: '700', color: '#1E3A5F', marginBottom: 4 },

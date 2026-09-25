@@ -119,29 +119,44 @@ export default function NotificationBell({ color = '#FFFFFF', showAlerts }: Prop
 }
 
 const styles = StyleSheet.create({
+  // The header icons form one cluster with the scanner button: every icon sits in
+  // the same 42×42 tap target, so the row reads as evenly spaced buttons instead
+  // of icons at whatever width their glyph happens to be.
   cluster: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 4,
   },
   button: {
     position: 'relative',
+    flexDirection: 'row',
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  // Kept inside the tap target (a -6 offset used to hang the badge over the
+  // screen edge on the last icon of the row).
   badge: {
     position: 'absolute',
-    top: -6,
-    right: -6,
+    top: -1,
+    right: -1,
     backgroundColor: '#FDB833',
     borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    minWidth: 18,
+    height: 18,
     paddingHorizontal: 4,
     justifyContent: 'center',
     alignItems: 'center',
+    // A light ring so the badge stays readable against the icon behind it on
+    // both the navy and the white headers.
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.9)',
   },
   badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 10.5,
+    fontWeight: '800',
     color: '#1E3A5F',
   },
 });

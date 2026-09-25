@@ -19,7 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors, radius, shadow, type, gradient, tintForStatus } from '@/lib/theme';
+import { button, colors, field, radius, shadow, type, gradient, tintForStatus } from '@/lib/theme';
 
 /* ------------------------------------------------------------------ */
 /* ScreenHeader — navy gradient bar with back button, title, subtitle  */
@@ -161,7 +161,11 @@ export function Button({
       {loading ? (
         <ActivityIndicator size="small" color={v.fg} />
       ) : icon ? (
-        <MaterialCommunityIcons name={icon} size={small ? 15 : 17} color={v.fg} />
+        <MaterialCommunityIcons
+          name={icon}
+          size={small ? button.compactIconSize : button.iconSize}
+          color={v.fg}
+        />
       ) : null}
       <Text style={[styles.buttonText, small && styles.buttonTextSmall, { color: v.fg }]}>{label}</Text>
     </TouchableOpacity>
@@ -331,9 +335,9 @@ const styles = StyleSheet.create({
     minHeight: 64,
   },
   headerBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 13,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -354,55 +358,40 @@ const styles = StyleSheet.create({
   },
 
   // Pill
-  pill: { borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 3.5, alignSelf: 'flex-start' },
-  pillText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.2 },
+  pill: { ...button.badge },
+  pillText: { ...button.badgeLabel, letterSpacing: 0.2 },
 
   // Chip
   chip: {
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    borderRadius: radius.pill,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
     paddingHorizontal: 13,
-    paddingVertical: 7.5,
+    height: 40,
   },
   chipActive: { backgroundColor: colors.navy800, borderColor: colors.navy800 },
-  chipText: { fontSize: 12.5, fontWeight: '600', color: colors.inkMuted },
+  chipText: { ...button.chipLabel, color: colors.inkMuted },
   chipTextActive: { color: '#FFFFFF' },
   chipCount: { fontSize: 11, fontWeight: '700', color: colors.inkFaint, backgroundColor: colors.surfaceSunken, borderRadius: radius.pill, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden' },
   chipCountActive: { color: colors.gold500, backgroundColor: 'rgba(255,255,255,0.16)' },
 
   // Button
-  button: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    borderRadius: radius.md,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  buttonSmall: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: radius.sm },
+  button: { ...button.base },
+  buttonSmall: { ...button.compact, paddingHorizontal: 12 },
   buttonDisabled: { opacity: 0.55 },
-  buttonText: { fontSize: 13.5, fontWeight: '700' },
-  buttonTextSmall: { fontSize: 12.5 },
+  buttonText: { ...button.label },
+  buttonTextSmall: { ...button.compactLabel },
+  buttonIconSmall: { width: button.compactIconSize, height: button.compactIconSize },
 
   // Search
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: 12,
-    height: 44,
-  },
-  searchInput: { flex: 1, fontSize: 14, color: colors.ink, paddingVertical: 0 },
+  // Search shares the field height so it lines up with the filter buttons.
+  searchWrap: { ...field.wrap, paddingHorizontal: 12 },
+  searchInput: { ...field.bare, fontSize: 14.5 },
 
   // Empty state
   empty: { alignItems: 'center', paddingVertical: 40, paddingHorizontal: 28 },

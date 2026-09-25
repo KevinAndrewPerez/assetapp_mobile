@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import bcrypt from 'bcryptjs';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
-import { supabase, SUPABASE_URL } from './supabase';
+import { supabase } from './supabase';
+import { hashPasswordForDatabase } from './passwordHash';
 import { resolveMediaUrl } from './mediaUrl';
-import { writeAudit } from './auditService';
+import { writeAudit, writeSessionAudit } from './auditService';
 import {
   ApprovalReport,
   approveRequestWithEvaluation,
@@ -13,6 +13,13 @@ import {
 import { applyRequestStatusToRepairs } from './repairService';
 import { applyRequestStatusToDisposals } from './disposalService';
 import { createNotification, notifyAdmins } from './notificationService';
+import { clampRequestStatus } from './requestStatus';
+import {
+  isRequestableAsset,
+  isVisibleToUser,
+  NOT_YOUR_ASSET_MESSAGE,
+  notRequestableReason,
+} from './lifecycle';
 
 export type StoredUser = {
   id?: number | string;
@@ -131,6 +138,10 @@ const normalizeUserAsset = (row: any): UserAsset => {
       ? '#10B981'
       : status === 'For Repair'
       ? '#F59E0B'
+      : status === 'For Replacement'
+      ? '#7C3AED'
+      : status === 'For Checking'
+      ? '#2563EB'
       : status === 'Disposal'
       ? '#EF4444'
       : '#64748B';
@@ -139,6 +150,10 @@ const normalizeUserAsset = (row: any): UserAsset => {
       ? '#ECFDF5'
       : status === 'For Repair'
       ? '#FFFBEB'
+      : status === 'For Replacement'
+      ? '#F5F3FF'
+      : status === 'For Checking'
+      ? '#EFF6FF'
       : status === 'Disposal'
       ? '#FEF2F2'
       : '#F4F7FB';
@@ -330,6 +345,23 @@ export async function fetchRequestDetail(
 
   const attachedFileUrl = data.url ? resolveStorageUrl(data.url, 'request_files') : '';
 
+  // Transfers store the receiving custodian's id — show their name, not a number.
+  let assignToName: string | undefined;
+  if (data.assign_to_user_id != null) {
+    try {
+      const { data: assignee } = await supabase
+        .from('users')
+        .select('email, employee_numbers(Full_Name)')
+        .eq('id', data.assign_to_user_id as any)
+        .maybeSingle();
+      const assigneeEmp = firstOf((assignee as any)?.employee_numbers);
+      assignToName =
+        String(assigneeEmp?.Full_Name ?? (assignee as any)?.email ?? '') || undefined;
+    } catch {
+      assignToName = String(data.assign_to_user_id);
+    }
+  }
+
   return {
     id: String(data.id ?? ''),
     requestId: `REQ-${String(data.id ?? '')}`,
@@ -339,7 +371,7 @@ export async function fetchRequestDetail(
     dateSubmitted: new Date(String(data.created_at ?? '')).toLocaleDateString(),
     submittedBy: String(emp?.Full_Name ?? 'Unknown'),
     department: String(dept?.Name ?? user?.department_id ?? ''),
-    assignTo: data.assign_to_user_id != null ? String(data.assign_to_user_id) : undefined,
+    assignTo: assignToName,
     linkedAssets: linkedAssets.filter((a) => a.code || a.name),
     attachedFileName: String(data.file_name ?? ''),
     attachedFileUrl,
@@ -354,6 +386,31 @@ export async function getStoredUser(): Promise<StoredUser | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Sign the mobile user out.
+ *
+ * Every mobile session is now part of the shared audit trail: the sign-out is
+ * written (with a plain "this user account has logged out" notice — never an IP
+ * or device detail) *before* the stored session is cleared, so the actor is
+ * still known. Best-effort: a logging failure must never trap the user in the
+ * app, so the session is cleared either way.
+ */
+export async function signOutMobile(): Promise<void> {
+  try {
+    const user = await getStoredUser();
+    if (user) {
+      await writeSessionAudit({
+        actorId: user.id ?? null,
+        actorName: user.full_name ?? user.email ?? null,
+        event: 'logout',
+      });
+    }
+  } catch (error) {
+    console.warn('Could not record the mobile sign-out:', error);
+  }
+  await AsyncStorage.removeItem('user');
 }
 
 export async function fetchLiveUser(userId: number | string): Promise<StoredUser | null> {
@@ -511,6 +568,11 @@ export async function fetchUserAssets(
     console.error('Failed to fetch user assets:', err?.message);
     throw err;
   }
+
+  // Requesters only ever see the assets still in their care. Disposal and
+  // Pullout are office-side lifecycle states, so those records never reach a
+  // user screen (dashboard, My Assets, Report Repair).
+  rows = rows.filter((row) => isVisibleToUser(row.Lifecycle_Status ?? row.status));
 
   const assetIds = rows
     .map((r) => (r.id === null || r.id === undefined ? null : Number(r.id)))
@@ -699,6 +761,10 @@ export async function submitUserRequest(
   assetIds: (string | number)[],
   note: string,
   file?: RequestFile | null,
+  options?: {
+    /** Transfer requests: the custodian the asset is handed over to. */
+    assignToUserId?: string | number | null;
+  },
 ) {
   const userId = user.id ?? null;
   if (!userId) {
@@ -739,6 +805,29 @@ export async function submitUserRequest(
     throw new Error('No valid assets selected.');
   }
 
+  // Same guard rails the web enforces server-side: the asset has to be yours
+  // and it has to be Active — an asset already inside another workflow cannot
+  // be pulled into a second one.
+  const { data: assetRows, error: assetCheckErr } = await supabase
+    .from('assets')
+    .select('id, Asset_code, Asset_name, Lifecycle_Status, user_id')
+    .in('id', resolvedIds as any);
+  if (assetCheckErr) throw assetCheckErr;
+
+  for (const raw of resolvedIds) {
+    const asset = ((assetRows ?? []) as any[]).find((a) => String(a.id) === String(raw));
+    const label = asset ? `${asset.Asset_name ?? 'Asset'}${asset.Asset_code ? ` (${asset.Asset_code})` : ''}` : `Asset ${raw}`;
+    if (!asset) {
+      throw new Error(`${label} — no matching asset record was found.`);
+    }
+    if (asset.user_id == null || String(asset.user_id) !== String(userId)) {
+      throw new Error(`${label} — ${NOT_YOUR_ASSET_MESSAGE}`);
+    }
+    if (!isRequestableAsset(asset.Lifecycle_Status)) {
+      throw new Error(`${label} — ${notRequestableReason(asset.Lifecycle_Status)}`);
+    }
+  }
+
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('requests')
@@ -748,6 +837,7 @@ export async function submitUserRequest(
       request_type: requestType,
       Note: note,
       status: 'Pending',
+      assign_to_user_id: options?.assignToUserId ?? null,
       file_name: file?.file_name ?? null,
       file_path: file?.file_path ?? null,
       file_size: file?.file_size ?? null,
@@ -847,88 +937,366 @@ export async function uploadRequestPhoto(uri: string): Promise<RequestFile> {
   };
 }
 
-export async function registerUser(payload: {
+/** An `employee_numbers` row resolved from the number the applicant typed. */
+export type EmployeeLookup = {
+  id: number;
+  employeeNumber: string;
   fullName: string;
-  email: string;
-  departmentId: number | string;
-  unitHeadsNumber: string;
-  password: string;
-  role?: string;
-}) {
-  const now = new Date().toISOString();
+  departmentId: number | string | null;
+  departmentName: string;
+  status: string;
+};
 
-  // The live `users` table has no `full_name` / `unit_heads_number` columns:
-  // the display name lives on `employee_numbers.Full_Name` and is linked via
-  // `users.employee_numbers_id`. Create (or reuse) that record first.
-  const employeeNumber = String(payload.unitHeadsNumber ?? '').trim();
-  let employeeNumbersId: number | null = null;
+/** Same wording the web register form returns for these two cases. */
+export const EMPLOYEE_NOT_FOUND_MESSAGE =
+  'Employee number not found in the system. Please contact the administrator.';
+export const EMPLOYEE_TAKEN_MESSAGE =
+  'This employee number is already registered. Please use a different employee number or contact the administrator.';
 
-  if (employeeNumber) {
-    const { data: existingEmp, error: findEmpErr } = await supabase
-      .from('employee_numbers')
-      .select('id')
-      .eq('Employee_number', employeeNumber)
-      .maybeSingle();
-    if (findEmpErr) {
-      console.error('Failed to look up employee number:', findEmpErr.message);
-      throw findEmpErr;
-    }
+export const EMAIL_TAKEN_MESSAGE =
+  'This email is already registered. Please sign in instead.';
 
-    if (existingEmp?.id != null) {
-      employeeNumbersId = Number(existingEmp.id);
-      const { error: updateEmpErr } = await supabase
-        .from('employee_numbers')
-        .update({
-          Full_Name: payload.fullName,
-          Department_id: payload.departmentId,
-          updated_at: now,
-        })
-        .eq('id', employeeNumbersId);
-      if (updateEmpErr) {
-        console.error('Failed to update employee record:', updateEmpErr.message);
-        throw updateEmpErr;
-      }
-    } else {
-      const { data: createdEmp, error: createEmpErr } = await supabase
-        .from('employee_numbers')
-        .insert([{
-          Department_id: payload.departmentId,
-          Full_Name: payload.fullName,
-          Employee_number: employeeNumber,
-          status: 'Active',
-          created_at: now,
-          updated_at: now,
-        }])
-        .select('id')
-        .single();
-      if (createEmpErr) {
-        console.error('Failed to create employee record:', createEmpErr.message);
-        throw createEmpErr;
-      }
-      employeeNumbersId = Number((createdEmp as any)?.id);
-    }
+/**
+ * Only NU Lipa staff whose `employee_numbers` record is still active may open an
+ * account — the whole point of the employee-number gate is that no account is
+ * ever created for someone who is not on file. A row with no status at all is
+ * treated as active (the column is enum-defaulted to 'Active'); only an explicit
+ * non-'Active' value, such as 'Inactive', blocks. The web register form does not
+ * check this yet, so the mobile build is the stricter of the two.
+ */
+export const EMPLOYEE_INACTIVE_MESSAGE =
+  'This employee number is no longer active. Please contact the administrator.';
+
+export function isEmployeeEligible(employee: EmployeeLookup | null | undefined): boolean {
+  if (!employee) return false;
+  const status = String(employee.status ?? '').trim();
+  return status === '' || status.toLowerCase() === 'active';
+}
+
+const EMPLOYEE_SELECT =
+  'id, Full_Name, Employee_number, Department_id, status, departments:Department_id(Name)';
+
+const digitsOf = (value: unknown) => String(value ?? '').replace(/\D/g, '');
+
+function normalizeEmployee(row: any): EmployeeLookup {
+  const department = firstOf(row?.departments) ?? {};
+  return {
+    id: Number(row?.id),
+    employeeNumber: String(row?.Employee_number ?? ''),
+    fullName: String(row?.Full_Name ?? ''),
+    departmentId: row?.Department_id ?? department?.id ?? null,
+    departmentName: String(department?.Name ?? ''),
+    status: String(row?.status ?? ''),
+  };
+}
+
+/**
+ * Resolve an employee number the way the web register form does: the number is
+ * looked up in `employee_numbers` and the name + department come from that row
+ * (the applicant never types them).
+ *
+ * Matching is forgiving about the spacing/dashes the live data mixes
+ * (`23-0850` vs `2023 - 181569`), but a partial number only resolves when it is
+ * unambiguous — guessing between two employees would hand out the wrong
+ * account.
+ */
+export async function lookupEmployeeByNumber(rawNumber: string): Promise<EmployeeLookup | null> {
+  const input = String(rawNumber ?? '').trim();
+  if (!input) return null;
+
+  const query = (match: string) =>
+    supabase.from('employee_numbers').select(EMPLOYEE_SELECT).ilike('Employee_number', match).limit(25);
+
+  // `ilike` with no wildcards is a case-insensitive equality match.
+  const { data: exact, error: exactError } = await query(input);
+  if (exactError) {
+    console.error('Failed to look up employee number:', exactError.message);
+    throw exactError;
+  }
+  const sameNumber = (exact ?? []).find(
+    (row: any) => String(row.Employee_number ?? '').trim().toLowerCase() === input.toLowerCase(),
+  );
+  if (sameNumber) return normalizeEmployee(sameNumber);
+
+  // Fall back on the digits only: the stored number may be written with spaces
+  // or dashes (`2023 - 181569`), so a contiguous `%digits%` search would miss it.
+  // Splitting the pattern lets SQL match the digits in order, and the exact
+  // digit comparison below keeps the result precise.
+  const digits = digitsOf(input);
+  if (digits.length < 4) return null;
+
+  const { data: loose, error: looseError } = await query(`%${digits.split('').join('%')}%`);
+  if (looseError) {
+    console.error('Failed to look up employee number:', looseError.message);
+    throw looseError;
   }
 
-  // Passwords in this database are stored as bcrypt hashes (e.g. `$2y$12$...`).
-  // bcryptjs emits `$2a$`, which Postgres `crypt()` verifies the same way.
-  const passwordHash = await bcrypt.hash(payload.password, 12);
+  const matches = (loose ?? []).filter((row: any) => digitsOf(row.Employee_number).endsWith(digits));
+  const exactDigits = matches.filter((row: any) => digitsOf(row.Employee_number) === digits);
+  const candidates = exactDigits.length > 0 ? exactDigits : matches;
+  return candidates.length === 1 ? normalizeEmployee(candidates[0]) : null;
+}
 
-  const { data, error } = await supabase.from('users').insert([{
-    department_id: payload.departmentId,
-    employee_numbers_id: employeeNumbersId,
-    email: payload.email,
-    password: passwordHash,
-    role: payload.role ?? 'Employee',
-    status: 'Active',
-    created_at: now,
-    updated_at: now,
-  }]).select().single();
+/** True when this `employee_numbers` row already owns a `users` account. */
+export async function isEmployeeNumberRegistered(employeeNumbersId: number | string | null): Promise<boolean> {
+  if (employeeNumbersId == null) return false;
+  const { data, error } = await supabase
+    .from('users')
+    .select('id')
+    .eq('employee_numbers_id', employeeNumbersId)
+    .limit(1);
+  if (error) {
+    console.error('Failed to check existing account:', error.message);
+    throw error;
+  }
+  return (data ?? []).length > 0;
+}
+
+/**
+ * Upload a profile photo into the `assets` bucket under `profile_photos/` —
+ * exactly where the web register form puts them, so `users.profile_photo`
+ * keeps holding a public URL rather than a local Laravel path.
+ */
+export async function uploadProfilePhoto(uri: string): Promise<string> {
+  const cleanedUri = String(uri ?? '').split('?')[0]?.split('#')[0] ?? '';
+  const rawExt = cleanedUri.includes('.') ? cleanedUri.split('.').pop() : '';
+  const fileExt = String(rawExt || 'jpg').toLowerCase();
+  const fileName = `profile_photos/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${fileExt}`;
+
+  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+  const arrayBuffer = decode(base64);
+
+  const contentType =
+    fileExt === 'png'
+      ? 'image/png'
+      : fileExt === 'webp'
+        ? 'image/webp'
+        : fileExt === 'heic'
+          ? 'image/heic'
+          : fileExt === 'heif'
+            ? 'image/heif'
+            : 'image/jpeg';
+
+  const { error } = await supabase.storage.from('assets').upload(fileName, arrayBuffer, {
+    contentType,
+    cacheControl: '3600',
+    upsert: false,
+  });
+  if (error) {
+    if (error.message.includes('Bucket not found')) {
+      throw new Error('Supabase Storage bucket "assets" not found. Please create it in your Supabase dashboard.');
+    }
+    if (error.message.toLowerCase().includes('row-level security')) {
+      throw new Error('Profile photo upload was blocked by Row Level Security on the "assets" bucket.');
+    }
+    throw error;
+  }
+
+  const { data } = supabase.storage.from('assets').getPublicUrl(fileName);
+  return data.publicUrl;
+}
+
+/**
+ * Persist the session user after a profile change. Every screen reads the user
+ * from this key, so a photo change has to be written back here or the rest of
+ * the app keeps showing the old avatar until the next sign-in.
+ */
+export async function saveStoredUser(user: StoredUser): Promise<void> {
+  await AsyncStorage.setItem('user', JSON.stringify(user));
+}
+
+/**
+ * Replace the signed-in user's profile photo.
+ *
+ * The picked image goes into the `assets` bucket under `profile_photos/` — the
+ * same place the web register form puts them, so `users.profile_photo` keeps
+ * holding one public URL shape for both apps — then the row is repointed at the
+ * new file. Returns the new URL so the caller can refresh the stored session
+ * without a second round-trip.
+ */
+export async function updateProfilePhoto(
+  userId: number | string | null | undefined,
+  uri: string,
+): Promise<string> {
+  if (userId === null || userId === undefined || String(userId) === '') {
+    throw new Error('Current user is missing ID');
+  }
+
+  const publicUrl = await uploadProfilePhoto(uri);
+  const now = new Date().toISOString();
+
+  const { error } = await supabase
+    .from('users')
+    .update({ profile_photo: publicUrl, updated_at: now })
+    .eq('id', userId as any);
+
+  if (error) {
+    console.error('Failed to update profile photo:', error.message);
+    throw error;
+  }
+
+  // Best-effort, exactly like the other account writes.
+  await writeAudit({
+    actorId: userId,
+    actionType: 'UPDATE',
+    description: `Profile photo updated for user #${userId}`,
+    notes: 'User changed their profile photo from the mobile app',
+  });
+
+  return publicUrl;
+}
+
+export type RegisterResult = {
+  userId: number | string;
+  employeeNumbersId: number | null;
+  email: string;
+  role: string;
+  fullName: string;
+};
+
+/**
+ * Register an account with the same rules as the web's `POST /register`:
+ *
+ *   1. the employee number must already exist in `employee_numbers` — the
+ *      name and department are read from that row, never typed by the user;
+ *   2. neither that employee number nor the email may already have an account;
+ *   3. the very first account becomes an Admin, otherwise the first person in a
+ *      department becomes its Department Head and everyone else an Employee;
+ *   4. `users.profile_photo` stores the uploaded public URL;
+ *   5. the password is stored as a bcrypt hash tagged `$2y$` so the login
+ *      screen's `verify_user_password` RPC keeps verifying it (see
+ *      lib/passwordHash.ts — a `$2b$` digest is invisible to pgcrypto).
+ */
+export async function registerUser(payload: {
+  employeeNumber: string;
+  email: string;
+  password: string;
+  profilePhotoUrl?: string | null;
+}): Promise<RegisterResult> {
+  const now = new Date().toISOString();
+  const email = String(payload.email ?? '').trim();
+
+  const employee = await lookupEmployeeByNumber(payload.employeeNumber);
+  if (!employee) throw new Error(EMPLOYEE_NOT_FOUND_MESSAGE);
+  if (!isEmployeeEligible(employee)) throw new Error(EMPLOYEE_INACTIVE_MESSAGE);
+
+  if (await isEmployeeNumberRegistered(employee.id)) throw new Error(EMPLOYEE_TAKEN_MESSAGE);
+
+  const { data: emailRows, error: emailError } = await supabase
+    .from('users')
+    .select('id')
+    .ilike('email', email)
+    .limit(1);
+  if (emailError) {
+    console.error('Failed to check email:', emailError.message);
+    throw emailError;
+  }
+  if ((emailRows ?? []).length > 0) throw new Error(EMAIL_TAKEN_MESSAGE);
+
+  // Role: first account ever -> Admin; first account in a department ->
+  // Department Head; otherwise Employee.
+  const { count: userCount, error: countError } = await supabase
+    .from('users')
+    .select('id', { count: 'exact', head: true });
+  if (countError) {
+    console.error('Failed to count users:', countError.message);
+    throw countError;
+  }
+
+  let role = 'Employee';
+  if (!userCount) {
+    role = 'Admin';
+  } else if (employee.departmentId != null) {
+    const { data: heads, error: headError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('department_id', employee.departmentId)
+      .eq('role', 'Department Head')
+      .limit(1);
+    if (headError) {
+      console.error('Failed to check department head:', headError.message);
+      throw headError;
+    }
+    if ((heads ?? []).length === 0) role = 'Department Head';
+  }
+
+  const passwordHash = await hashPasswordForDatabase(payload.password);
+
+  const { data, error } = await supabase
+    .from('users')
+    .insert([{
+      department_id: employee.departmentId,
+      employee_numbers_id: employee.id,
+      email,
+      password: passwordHash,
+      profile_photo: payload.profilePhotoUrl ?? null,
+      role,
+      status: 'Active',
+      created_at: now,
+      updated_at: now,
+    }])
+    .select('id, email, role')
+    .single();
 
   if (error) {
     console.error('Failed to register user:', error.message);
+    if (/duplicate key|unique/i.test(error.message)) {
+      throw new Error('This employee number or email is already registered.');
+    }
     throw error;
   }
-  return data;
+
+  // Mirrors the audit entry the web controller writes (best-effort: a logging
+  // failure must never undo a successful registration).
+  await writeAudit({
+    actorId: (data as any)?.id ?? null,
+    actionType: 'CREATE',
+    description: `New user account created with email: ${email}`,
+    notes: `User registered: ${employee.fullName || email}`,
+  });
+
+  return {
+    userId: (data as any)?.id,
+    employeeNumbersId: employee.id,
+    email,
+    role,
+    fullName: employee.fullName,
+  };
+}
+
+export type TransferRecipient = {
+  id: string | number;
+  fullName: string;
+  email: string;
+  department: string;
+};
+
+/**
+ * Everyone an asset can be handed over to (transfer requests). Admin accounts
+ * are excluded, exactly like the web's assign-to list, and the list is small
+ * enough to search client-side.
+ */
+export async function fetchTransferRecipients(): Promise<TransferRecipient[]> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, email, role, employee_numbers(Full_Name), departments(Name)')
+    .order('id', { ascending: true });
+
+  if (error) {
+    console.error('Failed to load transfer recipients:', error.message);
+    throw error;
+  }
+
+  return (data ?? [])
+    .filter((u: any) => String(u.role ?? '').trim().toLowerCase() !== 'admin')
+    .map((u: any) => ({
+      id: u.id,
+      fullName: String(firstOf(u.employee_numbers)?.Full_Name ?? ''),
+      email: String(u.email ?? ''),
+      department: String(firstOf(u.departments)?.Name ?? 'No Department'),
+    }))
+    .filter((u) => u.fullName || u.email)
+    .sort((a, b) => a.fullName.localeCompare(b.fullName));
 }
 
 export async function searchUsers(query: string) {
@@ -996,10 +1364,14 @@ export async function updateRequestStatus(
 
   const now = new Date().toISOString();
 
+  // `requests.status` only stores Pending/Approved/Rejected (check constraint
+  // `requests_status_check`), so an admin decision like Completed, Cancelled or
+  // In Progress is clamped for the column — the per-asset rows below carry the
+  // real progress. The un-clamped `status` still drives the workflow logic.
   const { error: updateError } = await supabase
     .from('requests')
     .update({
-      status,
+      status: clampRequestStatus(status),
       updated_at: now,
     })
     .eq('id', requestId);

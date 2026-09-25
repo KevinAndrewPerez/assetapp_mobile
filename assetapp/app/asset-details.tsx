@@ -24,6 +24,7 @@ import {
   todayIso,
 } from '../lib/maintenanceService';
 import { resolveActingUserLabel } from '../lib/actorService';
+import { canCompleteMaintenanceStatus, maintenanceBlockedReason } from '../lib/lifecycle';
 import { getStoredUser } from '../lib/userService';
 import QRViewModal from '../components/QRViewModal';
 
@@ -202,7 +203,7 @@ export default function AssetDetailsScreen() {
 
   if (!asset) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView edges={['top']} style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -230,8 +231,12 @@ export default function AssetDetailsScreen() {
   const showUpkeep = asset.maintenanceInterval !== null || !!asset.nextMaintenanceDate;
   // Same rule as the web: a pulled-out asset whose lifespan expired is handled
   // by the "extend lifespan / dispose" panel, not by the maintenance button.
+  // On top of that, upkeep can only be completed while the asset is serviceable
+  // (Active / For Checking / For Repair / For Replacement / Pullout) — never once
+  // it has been disposed of, or before it has been issued.
+  const maintenanceEligible = canCompleteMaintenanceStatus(asset.rawStatus);
   const canCompleteMaintenance =
-    !!asset.nextMaintenanceDate && !(isExpired && isPullout);
+    !!asset.nextMaintenanceDate && maintenanceEligible && !(isExpired && isPullout);
 
   const statusTone =
     asset.rawStatus.trim().toLowerCase() === 'active'
@@ -264,7 +269,7 @@ export default function AssetDetailsScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -273,7 +278,7 @@ export default function AssetDetailsScreen() {
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView style={styles.screenBody} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         {/* Registry header band */}
         <View style={styles.headerBand}>
           <Text style={styles.eyebrowGold}>ASSET RECORD</Text>
@@ -442,6 +447,13 @@ export default function AssetDetailsScreen() {
                   <MaterialCommunityIcons name="checkbox-marked-circle-outline" size={18} color="#FFFFFF" />
                   <Text style={styles.primaryButtonText}>Mark Maintenance Complete</Text>
                 </TouchableOpacity>
+              ) : !maintenanceEligible ? (
+                <View style={styles.maintenanceBlockedNotice}>
+                  <MaterialCommunityIcons name="lock-outline" size={16} color={BRICK} />
+                  <Text style={styles.maintenanceBlockedText}>
+                    {maintenanceBlockedReason(asset.rawStatus)}
+                  </Text>
+                </View>
               ) : null}
             </View>
           ) : null}
@@ -679,6 +691,10 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: NAVY,
+  },
+  screenBody: {
+    flex: 1,
     backgroundColor: '#F4F7FB',
   },
   loadingContainer: {
@@ -698,6 +714,11 @@ const styles = StyleSheet.create({
   backButton: {
     padding: 6,
     marginLeft: -6,
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     fontSize: 19,
@@ -745,13 +766,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: 999,
   },
   statusPillText: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     textTransform: 'uppercase',
   },
   assignedTo: {
@@ -879,12 +900,12 @@ const styles = StyleSheet.create({
   duePill: {
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 4,
   },
   duePillText: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '700',
     letterSpacing: 0.6,
   },
   primaryButton: {
@@ -893,14 +914,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginTop: 14,
-    paddingVertical: 13,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: FOREST,
+    height: 48,
   },
   primaryButtonText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 14,
+  },
+  maintenanceBlockedNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  maintenanceBlockedText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: BRICK,
   },
   evalPanel: {
     marginTop: 20,
@@ -1058,14 +1097,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     backgroundColor: '#F4F7FB',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 50,
+    fontSize: 14.5,
     color: NAVY,
   },
   textArea: {
-    minHeight: 76,
+    height: 110,
+    paddingTop: 12,
+    textAlignVertical: 'top',
   },
   inputHint: {
     fontSize: 11,
@@ -1079,17 +1120,17 @@ const styles = StyleSheet.create({
   },
   modalBtn: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    height: 48,
   },
   modalBtnGhost: {
     backgroundColor: '#F1F5F9',
   },
   modalBtnGhostText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#64748B',
   },
   modalBtnPrimary: {
@@ -1097,7 +1138,7 @@ const styles = StyleSheet.create({
   },
   modalBtnPrimaryText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#FFFFFF',
   },
   emptyState: {
@@ -1114,13 +1155,16 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   goBackButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: NAVY_MID,
     paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 14,
+    height: 48,
   },
   goBackText: {
+    fontSize: 14,
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
   },
 });

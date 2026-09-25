@@ -2,11 +2,15 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import { Avatar } from '@/components/avatar';
+
 interface UserCardProps {
   name: string;
   role: string;
   organization: string;
   avatarInitials?: string;
+  /** The user's uploaded `profile_photo` reference, when they have one. */
+  photo?: string | null;
 }
 
 export function UserCard({
@@ -14,6 +18,7 @@ export function UserCard({
   role,
   organization,
   avatarInitials = 'AD',
+  photo,
 }: UserCardProps) {
   return (
     <LinearGradient
@@ -29,9 +34,13 @@ export function UserCard({
             {role} • {organization}
           </Text>
         </View>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{avatarInitials}</Text>
-        </View>
+        {photo ? (
+          <Avatar name={name} photo={photo} size={54} borderRadius={18} style={styles.avatar} />
+        ) : (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{avatarInitials}</Text>
+          </View>
+        )}
       </View>
     </LinearGradient>
   );

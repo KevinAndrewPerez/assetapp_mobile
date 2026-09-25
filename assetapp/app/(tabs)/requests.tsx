@@ -9,15 +9,17 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { RequestCard, RequestItem, RequestStatus } from '@/components/requests/request-card';
 import { updateRequestStatus } from '@/lib/userService';
 import { summarizeApproval } from '@/lib/requestService';
+import { formatStoredDate } from '@/lib/time';
 import NotificationBell from '@/components/notification-bell';
+import { AssetScanButton } from '@/components/asset-scanner';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { headerTopPadding } from '@/lib/theme';
 
 const tabs = ['All', 'Pending', 'Completed'] as const;
 type RequestTab = typeof tabs[number];
@@ -177,7 +179,7 @@ export default function RequestsScreen() {
         requestType: req.request_type,
         department: user?.department_id || 'N/A',
         submittedBy: fullName,
-        dateSubmitted: new Date(req.created_at).toLocaleDateString(),
+        dateSubmitted: formatStoredDate(req.created_at),
         reason: req.Note || '',
         status: req.status,
         statusLabel: req.status as RequestStatus,
@@ -231,13 +233,17 @@ export default function RequestsScreen() {
       <View style={styles.screenContainer}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Requests</Text>
-          <NotificationBell />
+          <View style={styles.headerActions}>
+            <AssetScanButton />
+            <NotificationBell />
+          </View>
         </View>
-        <SafeAreaView style={styles.container}>
+        {/* Plain body: the navy header already clears the status bar. */}
+        <View style={styles.container}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#0F172A" />
           </View>
-        </SafeAreaView>
+        </View>
       </View>
     );
   }
@@ -296,9 +302,13 @@ export default function RequestsScreen() {
     <View style={styles.screenContainer}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Requests</Text>
-        <NotificationBell />
+        <View style={styles.headerActions}>
+          <AssetScanButton />
+          <NotificationBell />
+        </View>
       </View>
-      <SafeAreaView style={styles.container}>
+      {/* Plain body: the navy header already clears the status bar. */}
+      <View style={styles.container}>
       <View style={styles.tabRow}>
         {tabs.map((tab) => {
           const active = tab === activeTab;
@@ -334,7 +344,7 @@ export default function RequestsScreen() {
           </View>
         )}
       </ScrollView>
-      </SafeAreaView>
+      </View>
     </View>
   );
 }
@@ -359,9 +369,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 18,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 16,
     backgroundColor: '#0C134F',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
   },
   headerTitle: {
     fontSize: 21,
@@ -372,6 +387,11 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     position: 'relative',
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationBadge: {
     position: 'absolute',
@@ -397,12 +417,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
+  // The active underline is reserved on every tab (transparent when inactive),
+  // so switching tabs changes the colour only — adding a 3px border on the
+  // active tab used to nudge its label 3px out of line with the others.
   tabButton: {
-    paddingVertical: 12,
+    height: 44,
+    justifyContent: 'center',
     paddingHorizontal: 10,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
   },
   tabButtonActive: {
-    borderBottomWidth: 3,
     borderBottomColor: '#1D4ED8',
   },
   tabLabel: {
@@ -415,7 +440,8 @@ const styles = StyleSheet.create({
   },
   list: {
     padding: 16,
-    paddingBottom: 40,
+    // Clearance for the floating tab bar.
+    paddingBottom: 112,
   },
   emptyState: {
     marginTop: 24,

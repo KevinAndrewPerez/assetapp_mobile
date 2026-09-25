@@ -7,17 +7,23 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { fetchUserRequests, getStoredUser } from '@/lib/userService';
+import { requestTypeMeta } from '@/lib/lifecycle';
 import NotificationBell from '@/components/notification-bell';
+import { headerTopPadding } from '@/lib/theme';
 
-const tabs = ['All', 'Pending', 'Completed'] as const;
-type RequestTab = typeof tabs[number];
+const tabs = ['All', 'Pending', 'Approved', 'Rejected'] as const;
+type RequestTab = (typeof tabs)[number];
+
+const statusTone = (status: string) => {
+  if (status === 'Approved') return { bg: '#ECFDF5', fg: '#047857', icon: 'check-circle-outline' };
+  if (status === 'Rejected') return { bg: '#FEF2F2', fg: '#B91C1C', icon: 'close-circle-outline' };
+  return { bg: '#FFFBEB', fg: '#92400E', icon: 'clock-outline' };
+};
 
 export default function MyRequests() {
   const router = useRouter();
@@ -52,15 +58,27 @@ export default function MyRequests() {
     setRefreshing(false);
   };
 
-  const filteredRequests = useMemo(() => {
-    if (activeTab === 'Pending') {
-      return requests.filter((item) => item.status === 'Pending');
-    }
-    if (activeTab === 'Completed') {
-      return requests.filter((item) => item.status !== 'Pending');
-    }
-    return requests;
-  }, [activeTab, requests]);
+  const counts = useMemo(
+    () => ({
+      All: requests.length,
+      Pending: requests.filter((r) => r.status === 'Pending').length,
+      Approved: requests.filter((r) => r.status === 'Approved').length,
+      Rejected: requests.filter((r) => r.status === 'Rejected').length,
+    }),
+    [requests],
+  );
+
+  const filteredRequests = useMemo(
+    () => (activeTab === 'All' ? requests : requests.filter((item) => item.status === activeTab)),
+    [activeTab, requests],
+  );
+
+  const emptyCopy: Record<RequestTab, string> = {
+    All: 'You have not submitted any request yet.',
+    Pending: 'No request is waiting for the office.',
+    Approved: 'No approved request yet.',
+    Rejected: 'No rejected request.',
+  };
 
   if (loading && requests.length === 0) {
     return (
@@ -104,75 +122,141 @@ export default function MyRequests() {
           <NotificationBell />
         </View>
       </View>
+
       <View style={styles.container}>
-
-      {/* Tabs */}
-      <View style={styles.tabContainer}>
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.activeTab]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-              {tab}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {filteredRequests.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>No requests found.</Text>
-          </View>
-        ) : (
-          filteredRequests.map((request) => (
-            <TouchableOpacity
-              key={request.id}
-              style={styles.requestCard}
-              activeOpacity={0.85}
-              onPress={() => router.push({ pathname: '/request-detail', params: { id: request.id } })}
-            >
-              <View style={styles.cardHeader}>
-                <View style={styles.titleContainer}>
-                  <Text style={styles.requestTitle}>{request.title}</Text>
-                  <View style={styles.badgeContainer}>
-                    <View style={[styles.badge, { backgroundColor: '#F1F5F9' }]}> 
-                      <Text style={[styles.badgeText, { color: '#334155' }]}>{request.requestType}</Text>
-                    </View>
-                    <View style={[styles.badge, { backgroundColor: request.statusBg }]}> 
-                      <Text style={[styles.badgeText, { color: request.statusColor }]}>{request.status}</Text>
-                    </View>
-                  </View>
+        {/* Tabs */}
+        <View style={styles.tabContainer}>
+          {tabs.map((tab) => {
+            const active = activeTab === tab;
+            return (
+              <TouchableOpacity
+                key={tab}
+                style={[styles.tab, active && styles.activeTab]}
+                onPress={() => setActiveTab(tab)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabText, active && styles.activeTabText]}>{tab}</Text>
+                <View style={[styles.tabCount, active && styles.tabCountActive]}>
+                  <Text style={[styles.tabCountText, active && styles.tabCountTextActive]}>
+                    {counts[tab]}
+                  </Text>
                 </View>
-                {request.imageUrl ? (
-                  <Image source={{ uri: request.imageUrl }} style={styles.assetPhoto} resizeMode="cover" />
-                ) : (
-                  <View style={styles.qrPlaceholder}>
-                    <MaterialCommunityIcons name="qrcode" size={40} color="#FDB833" />
-                    <Text style={styles.barcodeText}>{request.barcode || 'REQ'}</Text>
-                  </View>
-                )}
-              </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-              <View style={styles.cardFooter}>
-                <Text style={styles.reasonLabel}>
-                  Reason: <Text style={styles.reasonText}>{request.reason}</Text>
-                </Text>
-                <Text style={styles.dateLabel}>
-                  Date: <Text style={styles.dateText}>{request.dateSubmitted}</Text>
-                </Text>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {filteredRequests.length === 0 ? (
+            <View style={styles.emptyState}>
+              <View style={styles.emptyIconWrap}>
+                <MaterialCommunityIcons name="file-document-outline" size={34} color="#94A3B8" />
               </View>
-            </TouchableOpacity>
-          ))
-        )}
-        <View style={styles.spacer} />
-      </ScrollView>
+              <Text style={styles.emptyStateText}>{emptyCopy[activeTab]}</Text>
+              <TouchableOpacity
+                style={styles.emptyAction}
+                activeOpacity={0.85}
+                onPress={() => router.push('/submit-request' as any)}
+              >
+                <MaterialCommunityIcons name="plus" size={16} color="#1E3A5F" />
+                <Text style={styles.emptyActionText}>Submit a request</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            filteredRequests.map((request) => {
+              const type = requestTypeMeta(request.requestType);
+              const status = statusTone(request.status);
+              const assetCount = Array.isArray(request.linkedAssets)
+                ? request.linkedAssets.length
+                : 1;
+              return (
+                <TouchableOpacity
+                  key={request.id}
+                  style={styles.requestCard}
+                  activeOpacity={0.85}
+                  onPress={() =>
+                    router.push({ pathname: '/request-detail', params: { id: request.id } })
+                  }
+                >
+                  <View style={[styles.cardAccent, { backgroundColor: type.tone.fg }]} />
+
+                  <View style={styles.cardBody}>
+                    <View style={styles.cardTopRow}>
+                      <View style={[styles.typeIcon, { backgroundColor: type.tone.bg }]}>
+                        <MaterialCommunityIcons
+                          name={type.icon as any}
+                          size={18}
+                          color={type.tone.fg}
+                        />
+                      </View>
+                      <View style={styles.titleWrap}>
+                        <Text style={styles.requestTitle} numberOfLines={1}>
+                          {request.title}
+                        </Text>
+                        <Text style={styles.requestMeta} numberOfLines={1}>
+                          {type.label} Request • REQ-{request.id}
+                          {assetCount > 1 ? ` • ${assetCount} assets` : ''}
+                        </Text>
+                      </View>
+                      {request.imageUrl ? (
+                        <Image
+                          source={{ uri: request.imageUrl }}
+                          style={styles.assetPhoto}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={styles.assetPhotoPlaceholder}>
+                          <MaterialCommunityIcons name="cube-outline" size={22} color="#94A3B8" />
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={[styles.statusRow, { backgroundColor: status.bg }]}>
+                      <MaterialCommunityIcons
+                        name={status.icon as any}
+                        size={14}
+                        color={status.fg}
+                      />
+                      <Text style={[styles.statusText, { color: status.fg }]}>{request.status}</Text>
+                    </View>
+
+                    {request.reason ? (
+                      <Text style={styles.reasonText} numberOfLines={2}>
+                        {request.reason}
+                      </Text>
+                    ) : null}
+
+                    <View style={styles.cardFooter}>
+                      <View style={styles.footerMeta}>
+                        <MaterialCommunityIcons name="calendar-blank-outline" size={14} color="#94A3B8" />
+                        <Text style={styles.footerMetaText}>{request.dateSubmitted}</Text>
+                        {request.barcode ? (
+                          <>
+                            <MaterialCommunityIcons
+                              name="qrcode"
+                              size={14}
+                              color="#94A3B8"
+                              style={{ marginLeft: 10 }}
+                            />
+                            <Text style={styles.footerMetaText} numberOfLines={1}>
+                              {request.barcode}
+                            </Text>
+                          </>
+                        ) : null}
+                      </View>
+                      <MaterialCommunityIcons name="chevron-right" size={20} color="#CBD5E1" />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
+          <View style={styles.spacer} />
+        </ScrollView>
       </View>
     </View>
   );
@@ -192,8 +276,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 0,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 12,
     backgroundColor: '#0C134F',
   },
@@ -204,161 +287,213 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  notificationButton: {
-    position: 'relative',
-    marginLeft: 4,
-  },
-  notificationBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#FDB833',
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1E3A5F',
-  },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
   newRequestButton: {
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     backgroundColor: '#FDB833',
     paddingHorizontal: 12,
-    height: 32,
+    height: 40,
     borderRadius: 999,
   },
   newRequestText: {
     color: '#1E3A5F',
-    fontWeight: '800',
-    fontSize: 12,
+    fontWeight: '700',
+    fontSize: 12.5,
   },
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingHorizontal: 10,
+    paddingTop: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#EDF1F7',
   },
   tab: {
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    marginRight: 8,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
   },
   activeTab: {
-    borderBottomWidth: 2,
     borderBottomColor: '#FDB833',
   },
   tabText: {
-    fontSize: 15,
+    fontSize: 13.5,
     color: '#64748B',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   activeTabText: {
-    color: '#FDB833',
-    fontWeight: '700',
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  tabCount: {
+    minWidth: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+  },
+  tabCountActive: {
+    backgroundColor: '#FEF3C7',
+  },
+  tabCountText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  tabCountTextActive: {
+    color: '#92400E',
   },
   scrollContent: {
     padding: 16,
     paddingBottom: 112,
   },
   requestCard: {
+    flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 16,
+    borderRadius: 18,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
-    shadowColor: '#000',
+    borderColor: '#EDF1F7',
+    overflow: 'hidden',
+    shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  cardAccent: {
+    width: 5,
   },
-  titleContainer: {
+  cardBody: {
     flex: 1,
-    marginRight: 12,
+    padding: 14,
   },
-  requestTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1e293b',
-    marginBottom: 8,
-  },
-  badgeContainer: {
+  cardTopRow: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    gap: 10,
   },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  qrPlaceholder: {
+  typeIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 8,
-    width: 90,
+  },
+  titleWrap: {
+    flex: 1,
+    gap: 3,
+  },
+  requestTitle: {
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  requestMeta: {
+    fontSize: 11.5,
+    color: '#64748B',
   },
   assetPhoto: {
-    width: 82,
-    height: 82,
+    width: 46,
+    height: 46,
     borderRadius: 12,
     backgroundColor: '#E2E8F0',
   },
-  barcodeText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#1e293b',
-    marginTop: 4,
+  assetPhotoPlaceholder: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  cardFooter: {
-    gap: 4,
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginTop: 10,
   },
-  reasonLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
+  statusText: {
+    fontSize: 11.5,
+    fontWeight: '800',
   },
   reasonText: {
-    fontWeight: '400',
-    color: '#334155',
-  },
-  dateLabel: {
+    marginTop: 9,
     fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
+    color: '#475569',
+    lineHeight: 18,
   },
-  dateText: {
-    fontWeight: '400',
-    color: '#334155',
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 11,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  footerMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flex: 1,
+  },
+  footerMetaText: {
+    fontSize: 11.5,
+    color: '#94A3B8',
+    fontWeight: '600',
+    flexShrink: 1,
   },
   emptyState: {
-    padding: 24,
+    paddingVertical: 60,
     alignItems: 'center',
+    gap: 12,
+  },
+  emptyIconWrap: {
+    width: 68,
+    height: 68,
+    borderRadius: 22,
+    backgroundColor: '#EEF2F7',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyStateText: {
     color: '#64748B',
-    fontSize: 15,
+    fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 30,
+  },
+  emptyAction: {
+    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FDB833',
+    paddingHorizontal: 16,
+    height: 40,
+    borderRadius: 999,
+  },
+  emptyActionText: {
+    color: '#1E3A5F',
+    fontWeight: '700',
+    fontSize: 12.5,
   },
   loadingContainer: {
     flex: 1,

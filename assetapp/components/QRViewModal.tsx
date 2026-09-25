@@ -223,10 +223,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
     borderRadius: 14,
     gap: 8,
     width: '100%',
+    height: 48,
   },
   saveButton: {
     backgroundColor: '#3B82F6',
@@ -235,8 +235,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
   },
   actionButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
 });

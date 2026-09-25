@@ -12,7 +12,10 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { fetchUserAssets, fetchUserRequests, getStoredUser, StoredUser, UserAsset, UserRequest, enrichUserWithEmployeeData } from '@/lib/userService';
+import { matchUserVisibleStatus } from '@/lib/lifecycle';
 import NotificationBell from '@/components/notification-bell';
+import { Avatar } from '@/components/avatar';
+import { headerTopPadding } from '@/lib/theme';
 
 export default function UserDashboard() {
   const router = useRouter();
@@ -111,36 +114,32 @@ export default function UserDashboard() {
     );
   };
 
+  // A requester only ever sees the states that concern them. Disposal and
+  // Pullout belong to the Asset Management Office, so they are neither counted
+  // nor listed here (see lib/lifecycle.ts).
   const lifecycleStatus = useMemo(() => {
     const counts: Record<string, number> = {
-      Acquired: 0,
       Active: 0,
       'For Repair': 0,
-      'Pulled Out': 0,
-      Disposed: 0,
+      'For Replacement': 0,
+      'For Checking': 0,
     };
 
     assets.forEach((asset) => {
-      const rawStatus = String(asset.status || '').trim();
-      let mappedStatus = rawStatus;
-      if (rawStatus === 'Pullout' || rawStatus === 'Pulled Out' || rawStatus === 'Pull-Out') mappedStatus = 'Pulled Out';
-      else if (rawStatus === 'Disposal' || rawStatus === 'Disposed') mappedStatus = 'Disposed';
-      else if (rawStatus === 'Acquisition' || rawStatus === 'Acquired' || rawStatus === 'New') mappedStatus = 'Acquired';
-      else if (rawStatus === 'Repair' || rawStatus === 'For Repair' || rawStatus === 'Needs Repair') mappedStatus = 'For Repair';
-      else if (rawStatus === 'Active' || rawStatus === 'Deployed') mappedStatus = 'Active';
-      if (mappedStatus in counts) {
-        counts[mappedStatus] = (counts[mappedStatus] ?? 0) + 1;
-      } else {
-        counts.Acquired = (counts.Acquired ?? 0) + 1;
-      }
+      const visible = matchUserVisibleStatus(asset.status);
+      if (visible) counts[visible] = (counts[visible] ?? 0) + 1;
     });
 
     return [
-      { label: 'Acquired', count: counts.Acquired, color: '#3B82F6', lightColor: '#EFF6FF' },
       { label: 'Active', count: counts.Active, color: '#10B981', lightColor: '#ECFDF5' },
       { label: 'For Repair', count: counts['For Repair'], color: '#F59E0B', lightColor: '#FFFBEB' },
-      { label: 'Pulled Out', count: counts['Pulled Out'], color: '#6366F1', lightColor: '#EEF2FF' },
-      { label: 'Disposed', count: counts.Disposed, color: '#EF4444', lightColor: '#FEF2F2' },
+      {
+        label: 'For Replacement',
+        count: counts['For Replacement'],
+        color: '#7C3AED',
+        lightColor: '#F5F3FF',
+      },
+      { label: 'For Checking', count: counts['For Checking'], color: '#2563EB', lightColor: '#EFF6FF' },
     ];
   }, [assets]);
 
@@ -190,12 +189,24 @@ export default function UserDashboard() {
           end={{ x: 1, y: 1 }}
           style={styles.welcomeCard}
         >
-          <Text style={styles.nameText}>{userName || 'User'}</Text>
-          <Text style={styles.roleText}>
-            {userDept || 'No Department'}
-            {' | '}
-            {isDepartmentHead(user) ? 'Department Head' : 'Employee'}
-          </Text>
+          <View style={styles.welcomeRow}>
+            <View style={styles.welcomeIntro}>
+              <Text style={styles.nameText} numberOfLines={2}>
+                {userName || 'User'}
+              </Text>
+              <Text style={styles.roleText}>
+                {userDept || 'No Department'}
+                {' | '}
+                {isDepartmentHead(user) ? 'Department Head' : 'Employee'}
+              </Text>
+            </View>
+            <Avatar
+              name={userName}
+              photo={(user as any)?.profile_photo}
+              size={54}
+              borderRadius={18}
+            />
+          </View>
         </LinearGradient>
 
         {/* Asset Summary Card */}
@@ -379,7 +390,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 18,
     paddingVertical: 0,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
   },
   headerIntro: {
@@ -399,6 +410,11 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     position: 'relative',
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationBadge: {
     position: 'absolute',
@@ -417,7 +433,7 @@ const styles = StyleSheet.create({
     color: '#1E3A5F',
   },
   scrollContent: {
-    paddingBottom: 100,
+    paddingBottom: 112,
   },
   contentWrapper: {
     paddingHorizontal: 16,
@@ -432,6 +448,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 5,
+  },
+  welcomeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  welcomeIntro: {
+    flex: 1,
   },
   nameText: {
     fontSize: 26,
@@ -490,15 +514,16 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   scopeToggleBtn: {
+    justifyContent: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: '#FFFBEB',
     borderWidth: 1,
     borderColor: 'rgba(253, 184, 51, 0.35)',
+    height: 40,
   },
   scopeToggleBtnLoading: {
     opacity: 0.85,
@@ -567,10 +592,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: 80,
   },
+  // Shared status-badge token (11/700 pill, 9×4 padding) so the status chips
+  // here match the ones on every other screen.
   statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
     marginBottom: 8,
   },
   statusLabel: {
@@ -609,7 +636,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   submitButton: {
-    borderRadius: 16,
+    borderRadius: 14,
     overflow: 'hidden',
     shadowColor: '#FDB833',
     shadowOffset: { width: 0, height: 4 },
@@ -621,7 +648,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    height: 52,
     gap: 12,
   },
   submitButtonText: {
@@ -656,13 +683,13 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   statusTag: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 999,
   },
   statusTagText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
   },
   spacer: {
     height: 20,

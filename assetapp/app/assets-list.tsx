@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
 import QRViewModal from '../components/QRViewModal';
 import NotificationBell from '@/components/notification-bell';
+import { parseStoredTimestamp } from '@/lib/time';
 
 export default function AssetsListScreen() {
   const router = useRouter();
@@ -97,7 +98,8 @@ export default function AssetsListScreen() {
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'N/A';
     try {
-      const date = new Date(dateStr);
+      const date = parseStoredTimestamp(dateStr);
+      if (!date) return dateStr;
       return date.toLocaleDateString('en-US', {
         month: 'long',
         day: 'numeric',
@@ -109,7 +111,7 @@ export default function AssetsListScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -120,7 +122,7 @@ export default function AssetsListScreen() {
         <NotificationBell />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.screenBody} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.searchRow}>
           <View style={styles.searchInputContainer}>
             <MaterialCommunityIcons name="magnify" size={24} color="#94A3B8" />
@@ -289,6 +291,10 @@ function DetailItem({ icon, label, value }: { icon: string, label: string, value
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#1E3A5F',
+  },
+  screenBody: {
+    flex: 1,
     backgroundColor: '#F4F7FB',
   },
   header: {
@@ -342,14 +348,13 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    height: 52,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
+    height: 50,
   },
   searchInput: {
     flex: 1,
@@ -359,16 +364,14 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   filterButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 50,
+    height: 50,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
   },
   tagScroll: {
     paddingVertical: 8,
@@ -424,9 +427,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 10,
+    gap: 5,
+    paddingHorizontal: 9,
     paddingVertical: 4,
-    borderRadius: 20,
+    borderRadius: 999,
   },
   statusDot: {
     width: 6,

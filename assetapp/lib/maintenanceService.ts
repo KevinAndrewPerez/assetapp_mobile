@@ -3,6 +3,7 @@ import { writeAudit } from './auditService';
 import { createNotification } from './notificationService';
 import { submitRepairRequest } from './repairService';
 import { initiateDisposal } from './disposalService';
+import { canCompleteMaintenanceStatus, maintenanceBlockedReason } from './lifecycle';
 
 /**
  * Maintenance & Lifespan management (NU TRACE mobile spec).
@@ -304,6 +305,13 @@ export async function recordMaintenance(options: RecordMaintenanceOptions): Prom
   if (fetchError) throw fetchError;
   if (!asset) throw new Error('Asset not found');
 
+  // Only a serviceable asset has upkeep to complete: Disposal is final and an
+  // Acquired asset has not been issued yet. Enforced here as well as in the UI
+  // so no screen can record maintenance for an asset that is already gone.
+  if (!canCompleteMaintenanceStatus((asset as any).Lifecycle_Status)) {
+    throw new Error(maintenanceBlockedReason((asset as any).Lifecycle_Status));
+  }
+
   const nextDate = computeNextMaintenanceDate(performedDate, (asset as any).maintenance_interval);
   const currentStatus = String((asset as any).Lifecycle_Status ?? 'Active');
   // Web parity (`/admin/api/assets/{id}/maintenance-complete`): a completed
@@ -441,7 +449,7 @@ export async function runAssetEvaluation(options: {
 
   const { data: asset, error } = await supabase
     .from('assets')
-    .select('id, Assets_id:id, Asset_code, Asset_name, Lifecycle_Status, expiration_date, lifespan_months, repair_counts')
+    .select('id, Assets_id:id, Asset_code, Asset_name, Lifecycle_Status, expiration_date, lifespan_months, repair_counts, user_id')
     .eq('id', assetId as any)
     .maybeSingle();
   if (error) throw error;
@@ -451,6 +459,38 @@ export async function runAssetEvaluation(options: {
   const status = String(row.Lifecycle_Status ?? '');
   const statusKey = status.trim().toLowerCase();
   const actorLabel = String(options.actorLabel ?? 'Admin');
+
+  /**
+   * `repairs` and `replacements` both require a parent request (NOT NULL FK),
+   * so a lifespan decision creates one first — exactly like the app's repair
+   * and pullout flows do. Without it the insert is rejected and the decision
+   * silently disappears from the record.
+   */
+  const createEvaluationRequest = async (requestType: 'Repair' | 'Replacement', note: string): Promise<string> => {
+    const { data, error: requestError } = await supabase
+      .from('requests')
+      .insert([
+        {
+          user_id: options.actorId ?? row.user_id ?? null,
+          asset_id: Number(assetId),
+          request_type: requestType,
+          // requests.status only stores Pending/Approved/Rejected, and the
+          // office has already decided this by hand.
+          status: 'Approved',
+          Note: note,
+          created_at: now,
+          updated_at: now,
+        },
+      ])
+      .select('id')
+      .single();
+    if (requestError) throw requestError;
+    const created = (data as any)?.id;
+    if (created === undefined || created === null) {
+      throw new Error('Could not create the request record for this evaluation decision.');
+    }
+    return String(created);
+  };
 
   if (statusKey === 'pullout') {
     if (!PULLOUT_ONLY_ACTIONS.includes(action)) {
@@ -484,58 +524,61 @@ export async function runAssetEvaluation(options: {
   }
 
   if (action === 'send_repair') {
-    const { error: updateError } = await supabase
-      .from('assets')
-      .update({ Lifecycle_Status: 'For Repair', updated_at: now })
-      .eq('id', assetId as any);
-    if (updateError) throw updateError;
+    const description = notes || 'Maintenance required';
+    const requestId = await createEvaluationRequest('Repair', description);
 
-    // Same rows the repair screens read: one pending repair, no request yet.
+    // Same rows the repair screens read: one pending repair, tracked by its
+    // request, ready for the servicing/evaluation workflow.
     const { error: repairError } = await supabase.from('repairs').insert([
       {
         Assets_id: Number(assetId),
-        Request_id: null,
-        Repair_Description: notes || 'Maintenance required',
+        Request_id: requestId,
+        Repair_Description: description,
         Repair_Date: now,
         Approve_by: actorLabel,
+        Repair_Cost: 0,
         status: 'Pending',
+        Repair_result: null,
         notes: 'Repair initiated from lifespan evaluation',
         created_at: now,
         updated_at: now,
       },
     ]);
-    if (repairError) console.warn('Repair row insert failed:', repairError.message);
+    if (repairError) throw repairError;
 
     const counted = Number(row.repair_counts ?? 0) || 0;
-    await supabase
+    const { error: updateError } = await supabase
       .from('assets')
-      .update({ repair_counts: counted + 1, updated_at: now })
+      .update({ Lifecycle_Status: 'For Repair', repair_counts: counted + 1, updated_at: now })
       .eq('id', assetId as any);
+    if (updateError) throw updateError;
 
     await writeAudit({
       actorId: options.actorId,
       assetId,
+      requestId,
       actionType: 'REPAIR',
       description: 'Asset sent for repair after lifespan evaluation',
-      notes: `Lifespan Evaluation Decision: SEND FOR REPAIR\nIssues: ${notes || 'Maintenance required'}`,
+      notes: `Lifespan Evaluation Decision: SEND FOR REPAIR\nIssues: ${description}`,
     });
 
     return { status: 'For Repair' };
   }
 
   if (action === 'recommend_replacement') {
-    const { error: updateError } = await supabase
-      .from('assets')
-      .update({ Lifecycle_Status: 'For Replacement', updated_at: now })
-      .eq('id', assetId as any);
-    if (updateError) throw updateError;
+    const reason = notes || 'Beyond economical repair';
+    const requestId = await createEvaluationRequest('Replacement', reason);
 
     const { error: replacementError } = await supabase.from('replacements').insert([
       {
+        Request_id: requestId,
         old_assets_id: Number(assetId),
-        new_assets_id: null,
+        // `new_assets_id` is NOT NULL, so it starts as a placeholder pointing at
+        // the old asset (the same trick the web uses) and is replaced with the
+        // real one when the new asset is registered/linked.
+        new_assets_id: Number(assetId),
         Replacement_Date: now,
-        reason: notes || 'Beyond economical repair',
+        reason,
         replacement_reason: 'Obsolete',
         Approve_by: actorLabel,
         status: 'Pending',
@@ -544,11 +587,18 @@ export async function runAssetEvaluation(options: {
         updated_at: now,
       },
     ]);
-    if (replacementError) console.warn('Replacement row insert failed:', replacementError.message);
+    if (replacementError) throw replacementError;
+
+    const { error: updateError } = await supabase
+      .from('assets')
+      .update({ Lifecycle_Status: 'For Replacement', updated_at: now })
+      .eq('id', assetId as any);
+    if (updateError) throw updateError;
 
     await writeAudit({
       actorId: options.actorId,
       assetId,
+      requestId,
       actionType: 'REPLACEMENT',
       description: 'Asset recommended for replacement after lifespan evaluation',
       notes: `Lifespan Evaluation Decision: RECOMMEND REPLACEMENT\nReason: ${notes || 'Beyond economical repair'}`,

@@ -36,6 +36,22 @@ const KNOWN_STORAGE_BUCKETS = ['assets', 'qr_codes', 'photos', 'request_files', 
 const LARAVEL_STORAGE_PREFIXES = ['public/storage/', 'storage/app/public/', 'wwwroot/storage/', 'storage/'];
 /** `php artisan serve` runs here unless told otherwise. */
 const DEFAULT_WEB_PORT = '8000';
+/**
+ * Where the deployed NUTrace web app lives, e.g. `https://nutrace.up.railway.app`.
+ *
+ * Web-uploaded files (Laravel's `public` disk) only carry a path like
+ * `/storage/assets/x.jpg`, so their origin has to come from somewhere. In Expo Go the
+ * Metro host was a good guess, but a real build has no dev server — set
+ * `EXPO_PUBLIC_WEB_URL` in `.env` (or hard-code it here) before shipping.
+ */
+/**
+ * The deployed NUTrace web app. Used both for Laravel-uploaded files and by the
+ * forgot-password flow, which asks the site to mail the verification code.
+ * `EXPO_PUBLIC_WEB_URL` still wins when it is set.
+ */
+const PRODUCTION_WEB_URL = 'https://nutrace-production.up.railway.app';
+
+const isProductionBuild = typeof __DEV__ !== 'undefined' && __DEV__ === false;
 
 const expoExtra = (): ExpoExtra =>
   ((Constants.expoConfig as { extra?: ExpoExtra } | null)?.extra ?? {}) as ExpoExtra;
@@ -83,8 +99,18 @@ const devServerHost = (): string => {
 
 /** Origin that serves Laravel's `/storage/...` files (photos uploaded from the web). */
 export const webOrigin = (): string => {
-  const base = configuredWebBaseUrl();
+  const base = configuredWebBaseUrl() || PRODUCTION_WEB_URL;
   if (base) return /^https?:\/\//i.test(base) ? base : `http://${base}`;
+
+  if (isProductionBuild) {
+    // There is no Metro host to fall back on once the app is installed, so this must be
+    // configured for web-uploaded photos to render outside Expo Go.
+    warnOnce(
+      'no-web-origin',
+      '[mediaUrl] No NUTrace web origin configured. Files uploaded from the web cannot be '
+        + 'resolved in a release build — set EXPO_PUBLIC_WEB_URL in .env (or PRODUCTION_WEB_URL in lib/mediaUrl.ts).',
+    );
+  }
   return `http://${devServerHost()}:${configuredWebPort() || DEFAULT_WEB_PORT}`;
 };
 

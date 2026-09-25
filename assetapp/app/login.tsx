@@ -6,7 +6,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { colors } from '../lib/theme';
 import { enrichUserWithEmployeeData, StoredUser } from '../lib/userService';
+import { writeSessionAudit } from '../lib/auditService';
+import { BrandLogo } from '../components/brand-logo';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -56,6 +59,15 @@ export default function LoginScreen() {
       const enrichedUser = await enrichUserWithEmployeeData(user);
       await AsyncStorage.setItem('user', JSON.stringify(enrichedUser));
 
+      // Record the sign-in in the shared audit trail. The web middleware only
+      // logs logins on the Laravel side, so a mobile session used to be
+      // invisible to the admin. No device or network detail is stored.
+      void writeSessionAudit({
+        actorId: enrichedUser.id ?? (enrichedUser as any).user_id ?? null,
+        actorName: enrichedUser.full_name ?? enrichedUser.email ?? null,
+        event: 'login',
+      });
+
       if (enrichedUser.role === 'Admin' || enrichedUser.role === 'AssetOfficer') {
         router.replace('/(tabs)');
       } else if (enrichedUser.role === 'Employee' || enrichedUser.role === 'Department Head') {
@@ -78,16 +90,8 @@ export default function LoginScreen() {
       >
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.headerContainer}>
-            <LinearGradient
-              colors={['#1E3A5F', '#16324F']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.logoContainer}
-            >
-              <View style={styles.logoBorder}>
-                <MaterialIcons name="qr-code-scanner" size={20} color="#FDB833" />
-              </View>
-            </LinearGradient>
+            {/* The real NUTrace logo — the same artwork as the app icon. */}
+            <BrandLogo size={64} style={styles.brandMark} />
             <Text style={styles.title}>Welcome to NU TRACE</Text>
             <Text style={styles.subtitle}>Sign in to manage your assets</Text>
           </View>
@@ -141,6 +145,15 @@ export default function LoginScreen() {
               {passwordError ? <Text style={styles.fieldErrorText}>{passwordError}</Text> : null}
             </View>
 
+            <View style={styles.forgotContainer}>
+              <TouchableOpacity
+                onPress={() => router.push('/forgot-password' as any)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.forgotText}>Forgot Password?</Text>
+              </TouchableOpacity>
+            </View>
+
             <TouchableOpacity onPress={handleLogin} activeOpacity={0.85}>
               <LinearGradient
                 colors={['#FDB833', '#F0A925']}
@@ -190,31 +203,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 32,
   },
-  logoContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
+  brandMark: {
     marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 15,
-  },
-  logoBorder: {
-    width: 35,
-    height: 35,
-    borderRadius: 10.5,
-    borderWidth: 2.909,
-    borderColor: '#FDB833',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoContent: {
-    width: 0,
-    height: 0,
   },
   title: {
     color: '#1E3A5F',
@@ -249,7 +239,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     paddingHorizontal: 14,
-    height: 48,
+    // Matches the shared field height (the register screen's inputs are 50).
+    height: 50,
   },
   inputIcon: {
     marginRight: 10.5,
@@ -264,12 +255,13 @@ const styles = StyleSheet.create({
   },
   forgotContainer: {
     alignItems: 'flex-end',
+    marginTop: -12,
     marginBottom: 21,
   },
   forgotText: {
-    color: '#6a7282',
-    fontSize: 12.25,
-    fontWeight: '500',
+    color: colors.navy800,
+    fontSize: 12.5,
+    fontWeight: '700',
   },
   loginButton: {
     borderRadius: 14,
@@ -285,8 +277,8 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: '#3D2E00',
-    fontSize: 14.5,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
     letterSpacing: 0.2,
   },
   registerContainer: {

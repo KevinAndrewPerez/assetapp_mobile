@@ -19,6 +19,7 @@ import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../lib/supabase";
 import { getStoredUser, searchUsers } from "../lib/userService";
+import { parseStoredTimestamp } from "../lib/time";
 import {
   PulloutRecord,
   PulloutResolveAction,
@@ -29,6 +30,7 @@ import {
   submitPulloutRequest,
 } from "../lib/pulloutService";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { headerTopPadding } from '@/lib/theme';
 
 type AssetRow = {
   id?: string | number | null;
@@ -308,7 +310,7 @@ export default function PulloutScreen() {
 
       if (fromD || toD) {
         const raw = row.pulloutDate || row.createdAt;
-        const created = raw ? new Date(String(raw)) : null;
+        const created = parseStoredTimestamp(raw);
         if (!created || Number.isNaN(created.getTime())) return false;
         if (fromD) {
           const start = new Date(fromD);
@@ -433,12 +435,8 @@ export default function PulloutScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Record Pullout</Text>
-        <TouchableOpacity
-          style={styles.notificationButton}
-          activeOpacity={0.8}
-        >
-          <NotificationBell />
-        </TouchableOpacity>
+        {/* See Record Disposal: the dead wrapper swallowed taps on the bell. */}
+        <NotificationBell />
       </View>
 
       <ScrollView
@@ -701,14 +699,14 @@ export default function PulloutScreen() {
                 value={(pickerMode === "from" ? fromDate : toDate) ?? new Date()}
                 mode="date"
                 display={Platform.OS === "ios" ? "inline" : "default"}
-                onChange={(_, selectedDate) => {
+                onValueChange={(_, selectedDate) => {
                   if (Platform.OS !== "ios") {
                     setPickerMode(null);
                   }
-                  if (!selectedDate) return;
                   if (pickerMode === "from") setFromDate(selectedDate);
                   if (pickerMode === "to") setToDate(selectedDate);
                 }}
+                onDismiss={() => setPickerMode(null)}
               />
             )}
 
@@ -1022,7 +1020,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#0C134F',
     paddingHorizontal: 16,
-    paddingTop: 48,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
   },
   backButton: {
@@ -1042,6 +1040,11 @@ const styles = StyleSheet.create({
   },
   notificationButton: {
     position: "relative",
+    height: 42,
+    borderRadius: 14,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   notificationBadge: {
     position: "absolute",
@@ -1061,7 +1064,8 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    // Clearance for the floating tab bar (this screen is also a tab).
+    paddingBottom: 112,
   },
   statsCard: {
     borderRadius: 18,
@@ -1100,26 +1104,24 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     paddingHorizontal: 14,
-    height: 52,
-    shadowColor: "#000",
-    shadowOpacity: 0.03,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    height: 50,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 10,
-    fontSize: 14,
+    paddingVertical: 0,
+    fontSize: 14.5,
     color: "#0F172A",
   },
   calendarButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 50,
+    height: 50,
+    borderRadius: 14,
     backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
@@ -1136,8 +1138,8 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    height: 52,
-    borderRadius: 16,
+    height: 48,
+    borderRadius: 14,
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
@@ -1219,9 +1221,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     backgroundColor: "#D9A426",
-    borderRadius: 12,
-    paddingVertical: 13,
+    borderRadius: 14,
     marginTop: 14,
+    height: 48,
   },
   resolveButtonText: {
     color: "#FFFFFF",
@@ -1277,6 +1279,8 @@ const styles = StyleSheet.create({
     borderBottomColor: "#F1F5F9",
   },
   resolveAssetText: {
+    fontWeight: '800',
+    fontSize: 14,
     flex: 1,
   },
   resolveAssetName: {
@@ -1295,16 +1299,17 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   resolveActionOption: {
+    justifyContent: 'center',
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 11,
     marginBottom: 6,
     backgroundColor: "#FFFFFF",
+    height: 40,
   },
   resolveActionOptionActive: {
     borderColor: "#D9A426",
@@ -1432,7 +1437,7 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: "#FFFFFF",
-    fontWeight: "700",
+    fontWeight: '800',
     fontSize: 14,
   },
   disposalCard: {
@@ -1488,7 +1493,7 @@ const styles = StyleSheet.create({
   statusTextChip: {
     fontSize: 11,
     fontWeight: "700",
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 999,
     overflow: "hidden",
@@ -1569,15 +1574,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 14,
   },
+  // Multiline reason box — see the disposal screen for the same fix.
   modalInput: {
     backgroundColor: "#F4F7FB",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#E2E8F0",
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
+    minHeight: 88,
+    fontSize: 14.5,
     color: "#0F172A",
+    textAlignVertical: "top",
     marginBottom: 12,
   },
   dateRow: {
@@ -1595,7 +1604,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 14,
     backgroundColor: "#F4F7FB",
@@ -1603,6 +1611,7 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
     minWidth: 160,
     justifyContent: "center",
+    height: 50,
   },
   dateValue: {
     color: "#0F172A",
@@ -1616,7 +1625,7 @@ const styles = StyleSheet.create({
   },
   modalBtn: {
     flex: 1,
-    height: 46,
+    height: 48,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
@@ -1625,13 +1634,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#F1F5F9",
   },
   modalBtnGhostText: {
+    fontSize: 14,
     color: "#0F172A",
-    fontWeight: "700",
+    fontWeight: '800',
   },
   modalBtnPrimary: {
     backgroundColor: "#0284C7",
   },
   modalBtnPrimaryText: {
+    fontSize: 14,
     color: "#FFFFFF",
     fontWeight: "800",
   },

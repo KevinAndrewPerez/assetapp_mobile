@@ -75,7 +75,7 @@ export default function AssetsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Asset Registry</Text>
       </View>
@@ -92,10 +92,10 @@ export default function AssetsScreen() {
 
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0F172A" />
+          <ActivityIndicator size="large" color="#0C134F" />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        <ScrollView style={styles.screenBody} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           {filteredAssets.map((asset) => (
             <View key={asset.id} style={styles.assetCard}>
               <View style={styles.assetHeader}>
@@ -133,18 +133,22 @@ export default function AssetsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#0C134F',
+  },
+  screenBody: {
+    flex: 1,
     backgroundColor: '#F4F7FB',
   },
   header: {
-    backgroundColor: '#0F172A',
-    paddingTop: 16,
+    backgroundColor: '#0C134F',
+    paddingTop: 14,
     paddingBottom: 16,
     paddingHorizontal: 16,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#F4F7FB',
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   searchContainer: {
     paddingHorizontal: 16,
@@ -154,23 +158,26 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
   },
   searchInput: {
-    backgroundColor: '#F4F7FB',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    // Same height as every other search/field row in the app.
+    height: 50,
+    fontSize: 14.5,
     color: '#0F172A',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#F4F7FB',
   },
   list: {
     padding: 16,
-    paddingBottom: 40,
+    // Clearance for the floating tab bar.
+    paddingBottom: 112,
   },
   assetCard: {
     backgroundColor: '#FFFFFF',
@@ -200,10 +207,11 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '700',
   },
+  // Shared status-badge token (11/700 pill).
   statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
   },
   statusText: {
     fontSize: 11,

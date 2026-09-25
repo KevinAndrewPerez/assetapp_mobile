@@ -28,6 +28,7 @@ import {
   ReplacementRecord,
 } from '@/lib/assetService';
 import { getStoredUser } from '@/lib/userService';
+import { headerTopPadding } from '@/lib/theme';
 
 const filterTabs = ['All', 'Approved', 'Received'] as const;
 type FilterTab = typeof filterTabs[number];
@@ -330,7 +331,7 @@ export default function ReplacementModule() {
           <Text style={styles.title}>Replacement Records</Text>
           <View style={styles.headerSpacer} />
         </View>
-        <SafeAreaView style={styles.container}>
+        <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.container}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#1E3A5F" />
           </View>
@@ -349,7 +350,9 @@ export default function ReplacementModule() {
         <View style={styles.headerSpacer} />
       </View>
 
-      <SafeAreaView style={styles.container}>
+      {/* Body keeps only the side/bottom insets — the header already clears the
+          status bar, so its top inset would be a dead strip. */}
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.container}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
@@ -765,15 +768,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 44,
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
     backgroundColor: '#1E3A5F',
   },
-  backButton: { width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
-  headerSpacer: { width: 32 },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerSpacer: { width: 42 },
   title: { fontSize: 21, fontWeight: '800', color: '#FFFFFF' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  scrollContent: { paddingBottom: 24 },
+  scrollContent: { paddingVertical: 12, paddingBottom: 28 },
   searchBarWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -789,13 +799,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 12,
-    backgroundColor: '#F4F7FB',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    height: 50,
     gap: 8,
   },
-  searchInput: { flex: 1, fontSize: 14, color: '#0F172A' },
+  searchInput: { flex: 1, paddingVertical: 0, fontSize: 14.5, color: '#0F172A' },
   avatarButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EA5E9', justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#FFFFFF', fontWeight: '700' },
   filterScroll: { backgroundColor: '#F4F7FB', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
@@ -833,22 +843,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 7,
     backgroundColor: '#1E3A5F',
-    borderRadius: 12,
-    paddingVertical: 13,
+    borderRadius: 14,
+    height: 48,
   },
-  linkButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  linkButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
   receiveButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 7,
     backgroundColor: '#10B981',
-    borderRadius: 12,
-    paddingVertical: 13,
+    borderRadius: 14,
+    height: 48,
   },
-  receiveButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  receiveButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
   receivedNote: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -927,9 +937,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   regBack: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.12)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -954,9 +964,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     backgroundColor: '#FBBF24',
-    borderRadius: 12,
-    paddingVertical: 12,
+    borderRadius: 14,
     marginTop: 12,
+    height: 48,
   },
   qrButtonText: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
   codeCardHint: { fontSize: 12, color: '#A16207', textAlign: 'center', marginTop: 8 },
@@ -965,10 +975,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 11,
-    fontSize: 14,
+    height: 48,
+    fontSize: 14.5,
     color: '#0F172A',
     marginBottom: 12,
   },
@@ -977,12 +987,13 @@ const styles = StyleSheet.create({
   lockedLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   lockedInputWrap: { position: 'relative', marginBottom: 12 },
   lockedInput: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F4F7FB',
     color: '#475569',
     borderColor: '#E2E8F0',
     paddingRight: 34,
+    marginBottom: 0,
   },
-  lockedInputIcon: { position: 'absolute', right: 12, top: 14 },
+  lockedInputIcon: { position: 'absolute', right: 14, top: 16 },
   photoBox: {
     borderWidth: 2,
     borderColor: '#E2E8F0',
@@ -1013,25 +1024,29 @@ const styles = StyleSheet.create({
   },
   regNoticeText: { flex: 1, fontSize: 12, color: '#92400E', lineHeight: 17 },
   regFooter: { flexDirection: 'row', gap: 10 },
+  // Sits beside regSaveBtn, so it shares the row direction and label weight.
   regCancelBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 13,
-    borderRadius: 12,
+    gap: 7,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
+    height: 48,
   },
-  regCancelText: { fontSize: 14, fontWeight: '700', color: '#64748B' },
+  regCancelText: { fontSize: 14, fontWeight: '800', color: '#64748B' },
   regSaveBtn: {
     flex: 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 13,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: '#FBBF24',
+    height: 48,
   },
   regSaveText: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
   scannerContainer: { flex: 1, backgroundColor: '#0F172A' },

@@ -94,7 +94,7 @@ export default function NotificationsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()} activeOpacity={0.8}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
@@ -113,6 +113,7 @@ export default function NotificationsScreen() {
       </View>
 
       <ScrollView
+        style={styles.screenBody}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -181,6 +182,10 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#1E3A5F',
+  },
+  screenBody: {
+    flex: 1,
     backgroundColor: '#F4F7FB',
   },
   header: {
@@ -243,11 +248,13 @@ const styles = StyleSheet.create({
     maxWidth: 260,
   },
   retryButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 6,
-    paddingVertical: 10,
     paddingHorizontal: 22,
     borderRadius: 12,
     backgroundColor: '#1E3A5F',
+    height: 40,
   },
   retryText: {
     color: '#FFFFFF',

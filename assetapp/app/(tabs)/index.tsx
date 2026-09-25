@@ -6,21 +6,24 @@ import {
   ScrollView,
   RefreshControl,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { headerTopPadding } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { UserCard } from '@/components/dashboard/user-card';
 import { StatCard } from '@/components/dashboard/stat-card';
 import { ActivityItem } from '@/components/dashboard/activity-item';
 import { QuickLink } from '@/components/dashboard/quick-link';
 import NotificationBell from '@/components/notification-bell';
+import { AssetScanButton } from '@/components/asset-scanner';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { fetchActivityTimeline, LifecycleEvent } from '@/lib/assetService';
+import { parseStoredTimestamp } from '@/lib/time';
 
 export default function App() {
   const router = useRouter();
   const [userName, setUserName] = useState('Admin');
+  const [userPhoto, setUserPhoto] = useState('');
   const [stats, setStats] = useState([
     { title: 'Total Assets', value: '0', icon: 'database', iconColor: '#FDB833', backgroundColor: '#FEF9E7' },
     { title: 'Deployed', value: '0', icon: 'check-circle', iconColor: '#10B981', backgroundColor: '#ECFDF5' },
@@ -36,6 +39,7 @@ export default function App() {
       if (userJson) {
         const user = JSON.parse(userJson);
         setUserName(user.employee_numbers?.Full_Name || user.full_name || 'Admin');
+        setUserPhoto(user.profile_photo || '');
       }
 
       const [assetsRes, deploysRes, repairsRes, requestsRes, timelineRes] = await Promise.all([
@@ -89,6 +93,16 @@ export default function App() {
       titleColor: '#1E3A5F',
       subtitleColor: 'rgba(30, 58, 95, 0.7)',
       iconColor: '#1E3A5F',
+    },
+    {
+      title: 'Transfer',
+      subtitle: 'Employee relocation',
+      icon: 'swap-horizontal',
+      onPress: () => router.push('/transfer' as any),
+      gradientColors: ['#0EA5E9', '#0369A1'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.75)',
+      iconColor: '#FFFFFF',
     },
     {
       title: 'Maintenance',
@@ -154,7 +168,10 @@ export default function App() {
 
   const formatRelativeTime = (ts: string) => {
     try {
-      const date = new Date(ts);
+      // Database timestamps are naive UTC — `parseStoredTimestamp` reads them
+      // that way so "3h ago" is really three hours ago.
+      const date = parseStoredTimestamp(ts);
+      if (!date) return ts;
       const now = new Date();
       const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
@@ -162,7 +179,7 @@ export default function App() {
       if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
       if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
       if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
-      return date.toLocaleDateString();
+      return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
     } catch {
       return ts;
     }
@@ -175,15 +192,22 @@ export default function App() {
           <Text style={styles.headerGreeting}>Welcome back,</Text>
           <Text style={styles.headerTitle} numberOfLines={1}>{userName}</Text>
         </View>
-        <NotificationBell />
+        <View style={styles.headerActions}>
+          <AssetScanButton />
+          <NotificationBell />
+        </View>
       </View>
-      <SafeAreaView style={styles.container}>
+      {/* The header already clears the status bar, so the body is a plain view:
+          a SafeAreaView here would paint its top inset as a dead strip of page
+          background right under the navy header. */}
+      <View style={styles.container}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <UserCard
           name={userName}
           role="Administrator"
           organization="NU Lipa"
           avatarInitials={userName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() || 'AD'}
+          photo={userPhoto}
         />
 
         <View style={styles.section}>
@@ -246,9 +270,8 @@ export default function App() {
           </View>
         </View>
 
-        <View style={styles.spacer} />
       </ScrollView>
-      </SafeAreaView>
+      </View>
     </View>
   );
 }
@@ -266,14 +289,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingTop: 44,
+    paddingHorizontal: 16,
+    // Clears the real status-bar inset instead of a hard-coded 44px, which left
+    // the greeting under the clock on phones with a tall inset.
+    paddingTop: headerTopPadding,
     paddingBottom: 14,
     backgroundColor: '#0C134F',
   },
   headerIntro: {
     flex: 1,
-    paddingRight: 10,
+    minWidth: 0,
+    paddingRight: 8,
+  },
+  // The scan button and the three notification icons each carry their own 42px
+  // tap target now, so the gap only has to add a little breathing room.
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
   },
   headerGreeting: {
     fontSize: 12.5,
@@ -286,27 +320,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
-  notificationButton: {
-    position: 'relative',
-  },
-  notificationBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#FDB833',
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1E3A5F',
-  },
   scrollContent: {
-    paddingBottom: 100,
+    // Clearance for the floating tab bar (74pt bar + home indicator).
+    paddingBottom: 112,
     paddingTop: 12,
   },
   section: {
@@ -325,11 +341,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    gap: 6,
-  },
-  spacer: {
-    height: 20,
+    // Equal-height cards within each row (see QuickLink).
+    alignItems: 'stretch',
+    paddingHorizontal: 16,
+    // Even 12px gaps between rows; the leftover width (space-between) keeps the
+    // column gap visually the same.
+    rowGap: 12,
   },
   emptyText: {
     textAlign: 'center',

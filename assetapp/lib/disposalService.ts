@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { writeAudit } from './auditService';
 import { createNotification, notifyAdmins } from './notificationService';
 import { readNote, upsertNotes } from './noteUtils';
+import { clampRequestStatus } from './requestStatus';
 
 /**
  * Disposal Management (NU TRACE mobile spec).
@@ -33,6 +34,36 @@ export const DISPOSAL_REASON_CATEGORIES = [
   'End of Lifespan',
 ] as const;
 export type DisposalReasonCategory = (typeof DISPOSAL_REASON_CATEGORIES)[number];
+
+/**
+ * Values the live `disposals.disposal_reason` column actually accepts. It is a
+ * fixed enum — 'End of Lifespan' and any free text the admin types are rejected
+ * by the database, so those are mapped onto the closest storable value and the
+ * original wording is kept in `notes` ('Reason Category' / 'Remarks').
+ */
+export const STORABLE_DISPOSAL_REASONS = [
+  'Beyond Repair',
+  'Replace',
+  'Obsolete',
+  'Lost',
+  'Damage',
+] as const;
+
+/** Map any reason/category text onto a value the DB enum accepts. */
+export const normalizeDisposalReason = (raw: unknown): string => {
+  const value = String(raw ?? '').trim();
+  if (!value) return 'Beyond Repair';
+  const key = value.toLowerCase();
+  const exact = STORABLE_DISPOSAL_REASONS.find((r) => r.toLowerCase() === key);
+  if (exact) return exact;
+  if (key.includes('lifespan') || key.includes('expir') || key.includes('obsolet')) return 'Obsolete';
+  if (key.includes('lost') || key.includes('missing')) return 'Lost';
+  if (key.includes('damage')) return 'Damage';
+  if (key.includes('replace')) return 'Replace';
+  if (key.includes('beyond') || key.includes('beyond repair')) return 'Beyond Repair';
+  // Unrecognised free text: 'Beyond Repair' is the catch-all "unusable" bucket.
+  return 'Beyond Repair';
+};
 
 export const DISPOSAL_METHODS = [
   'Scrapped',
@@ -369,7 +400,9 @@ export async function initiateDisposal(options: {
   initialStatus?: DisposalStatus;
 }): Promise<{ disposalIds: string[]; initiated: number; blocked: BlockedDisposalAsset[] }> {
   const reason = String(options.reason ?? '').trim();
-  const category = String(options.reasonCategory ?? 'Beyond Repair').trim() || 'Beyond Repair';
+  // What the admin chose/typed vs. what the enum column can hold.
+  const categoryLabel = String(options.reasonCategory ?? '').trim() || 'Beyond Repair';
+  const category = normalizeDisposalReason(categoryLabel);
   const method = String(options.method ?? 'Scrapped').trim();
   const origin = options.origin ?? 'Manual';
   const status = options.initialStatus ?? 'Pending';
@@ -389,7 +422,7 @@ export async function initiateDisposal(options: {
     const notes = upsertNotes('', {
       Status: status,
       Origin: origin,
-      'Reason Category': category,
+      'Reason Category': categoryLabel,
       'Disposal Method': method,
       'Previous Status': asset.status,
       'Previous Custodian': custodian,
@@ -522,7 +555,7 @@ export async function updateDisposalStatus(options: {
     updated_at: now,
   };
   if (fields.reason) update.Description = fields.reason;
-  if (fields.reasonCategory) update.disposal_reason = fields.reasonCategory;
+  if (fields.reasonCategory) update.disposal_reason = normalizeDisposalReason(fields.reasonCategory);
   if (status === 'Completed') update.disposal_date = fields.disposalDate || today;
   else if (fields.disposalDate) update.disposal_date = fields.disposalDate;
 
@@ -630,9 +663,11 @@ export async function syncRequestStatusFromDisposals(
   else if (cancelled === statuses.length) derived = 'Cancelled';
   else if (completed > 0 || approved > 0) derived = 'Approved';
 
+  // `requests.status` only accepts Pending/Approved/Rejected — clamp before the
+  // write so the `requests_status_check` constraint can never reject it.
   const { error } = await supabase
     .from('requests')
-    .update({ status: derived, updated_at: new Date().toISOString() })
+    .update({ status: clampRequestStatus(derived), updated_at: new Date().toISOString() })
     .eq('id', requestId as any);
   if (error) throw error;
   return derived;
