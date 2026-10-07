@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { findExistingAssetCodes, registerAsset, uploadAssetPhoto } from '../lib/assetService';
+import { describeUploadError, probeStorageUpload, type MediaAsset, type UploadedMedia } from '../lib/mediaUpload';
 import QRViewModal from '../components/QRViewModal';
 import { searchUsers } from '../lib/userService';
 import * as ImagePicker from 'expo-image-picker';
@@ -103,7 +104,11 @@ export default function AssetRegistryScreen() {
   const [isSearching, setIsSearching] = useState(false);
 
   // Photo State
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  // The whole picker asset is kept, not just its URI: the picker's own base64
+  // bytes and MIME type are what make the upload survive an Android
+  // `content://` URI, so they must not be thrown away at pick time.
+  const [selectedImage, setSelectedImage] = useState<MediaAsset | null>(null);
+  const [storageCheck, setStorageCheck] = useState<'idle' | 'running'>('idle');
 
   // QR Modal State
   const [qrModalVisible, setQrModalVisible] = useState(false);
@@ -156,11 +161,12 @@ export default function AssetRegistryScreen() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.8,
+      quality: 0.7,
+      base64: true,
     });
 
     if (!result.canceled) {
-      setSelectedImage(result.assets[0].uri);
+      setSelectedImage(result.assets[0]);
     }
   };
 
@@ -175,12 +181,32 @@ export default function AssetRegistryScreen() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.8,
+      quality: 0.7,
+      base64: true,
     });
 
     if (!result.canceled) {
-      setSelectedImage(result.assets[0].uri);
+      setSelectedImage(result.assets[0]);
     }
+  };
+
+  /**
+   * Upload a 1×1 test image through the exact path asset photos take, from
+   * this phone, and report where it landed or why it could not.
+   *
+   * Exists because "the photo did not reach Storage" can only be answered on
+   * the device that failed — the same upload from a laptop proves nothing.
+   */
+  const handleStorageCheck = async () => {
+    setStorageCheck('running');
+    const result = await probeStorageUpload();
+    setStorageCheck('idle');
+    Alert.alert(
+      result.ok ? 'Storage check passed' : 'Storage check failed',
+      result.ok
+        ? `This phone uploaded a test image and read it back (${result.detail}). Asset photos will be saved.`
+        : `${result.detail}\n\nNothing was saved. Send this message to support if it repeats.`,
+    );
   };
 
   const handlePhotoPress = () => {
@@ -473,20 +499,18 @@ export default function AssetRegistryScreen() {
       // Upload the photo once; every bulk copy reuses the same picture file.
       // A photo failure must NEVER block the registration: the asset still gets
       // saved so it shows up in Supabase and on the web, and the user is told
-      // the photo was skipped.
-      let imageUrl = undefined;
+      // the photo was skipped — with the real reason, not a generic failure.
+      let photo: UploadedMedia | null = null;
       let photoWarning = '';
       if (selectedImage) {
         try {
-          imageUrl = await uploadAssetPhoto(bulkMode ? 'BULK' : codes[0], selectedImage);
-        } catch (uploadErr: any) {
+          photo = await uploadAssetPhoto(bulkMode ? 'BULK' : codes[0], selectedImage);
+        } catch (uploadErr) {
           console.warn('Image upload failed:', uploadErr);
-          const errorMsg = uploadErr.message || 'Unknown error';
-          if (errorMsg.includes('bucket "assets" not found')) {
-            photoWarning = 'The asset was registered, but the photo was not saved: the Supabase Storage bucket "assets" does not exist. Create it in your Supabase dashboard, then re-upload the photo.';
-          } else {
-            photoWarning = `The asset was registered, but the photo upload failed: ${errorMsg}`;
-          }
+          photoWarning =
+            'The asset was registered, but the photo was NOT saved: '
+            + describeUploadError(uploadErr)
+            + ' Tap "Storage check" on this screen to test the upload from this phone.';
         }
       }
 
@@ -516,7 +540,7 @@ export default function AssetRegistryScreen() {
           nextMaintenanceDate: nextMaintenanceDate || undefined,
           notes,
           status: 'Acquired',
-          imageUrl,
+          photo,
         });
       }
 
@@ -1000,7 +1024,7 @@ export default function AssetRegistryScreen() {
             >
               {selectedImage ? (
                 <View style={styles.selectedImageContainer}>
-                  <Image source={{ uri: selectedImage }} style={styles.selectedImage} />
+                  <Image source={{ uri: selectedImage.uri }} style={styles.selectedImage} />
                   <View style={styles.changePhotoOverlay}>
                     <MaterialCommunityIcons name="camera" size={24} color="#FFFFFF" />
                     <Text style={styles.changePhotoText}>Change Photo</Text>
@@ -1013,6 +1037,21 @@ export default function AssetRegistryScreen() {
                   <Text style={styles.photoUploadSubtitle}>Take a new one or pick from your gallery</Text>
                 </>
               )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.storageCheckLink}
+              onPress={handleStorageCheck}
+              disabled={storageCheck === 'running'}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons
+                name={storageCheck === 'running' ? 'timer-sand' : 'cloud-check-outline'}
+                size={16}
+                color={TEXT_MUTED}
+              />
+              <Text style={styles.storageCheckLinkText}>
+                {storageCheck === 'running' ? 'Testing Supabase Storage…' : 'Storage check'}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -1612,6 +1651,18 @@ const styles = StyleSheet.create({
     borderStyle: 'solid',
     paddingVertical: 0,
     height: 200,
+  },
+  storageCheckLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    alignSelf: 'flex-start',
+  },
+  storageCheckLinkText: {
+    fontSize: 13,
+    color: TEXT_MUTED,
+    textDecorationLine: 'underline',
   },
   selectedImageContainer: {
     width: '100%',

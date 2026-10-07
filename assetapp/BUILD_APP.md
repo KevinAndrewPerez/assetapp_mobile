@@ -106,6 +106,9 @@ npx expo start --dev-client
 
 ## Before you build a release, check
 
+- **`EXPO_PUBLIC_MAIL_API_KEY`** — the key that lets the app mail the reset code itself
+  (see the forgot-password section). Without it the app falls back to the website's mailer,
+  which never delivers on the current deployment.
 - **`EXPO_PUBLIC_WEB_URL`** — only needed for photos uploaded *through the web app*
   (Laravel `public` disk). Every file reference in the database today is a Supabase Storage
   URL, so images work as-is; if web uploads start being used, either put the deployed web
@@ -129,7 +132,13 @@ node scripts/db-audit.js          # read-only: every query the app runs, against
 node scripts/db-sequence-check.js # read-only: stale id sequences that break INSERTs
 node scripts/db-password-check.js # rolled back: a password set in the app can sign in
 node scripts/reset-handshake-check.js  # can the app drive the site's forgot-password form
+node scripts/reset-code-store-check.js # the reset-code row the app writes, as both apps read it
+node scripts/reset-mail-doctor.js      # what the website does (and does not) send
 node scripts/db-transfer-check.js # read-only: Transfer list/statuses/history + the duplicate-code lookup
+node scripts/media-upload-check.js        # the photo pipeline's pure half, compiled and run in Node
+node scripts/media-upload-check.js --live # + both HTTP upload transports, byte-for-byte
+node scripts/storage-doctor.js            # read-only: bucket names, .env wiring, storage.from() calls
+node scripts/storage-doctor.js --write    # + prove this machine can upload to every folder
 node scripts/generate-logo.js     # rebuilds the icon / adaptive layers / splash / favicon
 ```
 
@@ -185,16 +194,194 @@ sign-in / sign-out rows with the plain notices "This user account has logged in.
 "…logged out.". The app also records the mobile session itself (sign-in and sign-out) so an
 admin can see mobile activity, not just web activity.
 
-## Forgot password needs the website to be reachable
+## Forgot password: the app mails the code itself
 
-The app's Forgot Password screen mirrors the web flow, but the **email is sent by the
-NUTrace website** (it holds the mail credentials): the app posts the address to
-`/forgot-password`, the site writes a single-use 6-digit code into `password_resets` and
-mails it, and the app verifies that code and saves the new password itself. So the app
-needs the deployed site's URL — `EXPO_PUBLIC_WEB_URL` in `.env`, or the
-`EXPO_PUBLIC_WEB_URL` value in `app.json → extra` for release builds (both already point
-at the Railway deployment). If the site is down or its SMTP is not configured, no email
-arrives and the screen offers a button that opens the site in the phone's browser.
+The app generates the single-use 6-digit code, stores its bcrypt hash in
+`password_resets` — the same row the web app writes — and sends the message through an
+email API over HTTPS (`lib/resetMailer.ts`). The steps after that (code check, password
+policy, the `users` password write, the audit entry) were already done inside the app, so
+the whole reset finishes on the phone.
+
+**Why it no longer asks the website to send it.** The deployed NUTrace site has no
+`MAIL_*` configuration, so Laravel falls back to its default `log` mailer: the message is
+written into `storage/logs/laravel.log`, the site reports success, and nothing leaves the
+server. The site still writes the code row, which is why the app used to show "code sent"
+while the inbox stayed empty. `scripts/reset-mail-doctor.js` reproduces that exactly (the
+POST answers as fast as a plain GET — no SMTP conversation happened — while a fresh code
+row appears in the table).
+
+### Configure the sender
+
+| variable | meaning |
+| --- | --- |
+| `EXPO_PUBLIC_MAIL_API_KEY` | the provider's API key. **Required**; without it the app falls back to asking the website to mail the code. |
+| `EXPO_PUBLIC_MAIL_PROVIDER` | `resend` (default) or `brevo`. |
+| `EXPO_PUBLIC_MAIL_FROM` | the verified sender address. Defaults to Resend's `onboarding@resend.dev`. |
+| `EXPO_PUBLIC_MAIL_FROM_NAME` | display name, default `NU TRACE`. |
+
+Put them in `.env` for Metro runs. **A release build does not read `.env`** (it is
+gitignored and never uploaded), so for an APK the same values must also live in
+`app.json → extra` — where `EXPO_PUBLIC_SUPABASE_URL` already is — or in EAS environment
+variables. Everything prefixed `EXPO_PUBLIC_` is inlined into the JS bundle and can be
+extracted from the APK: fine for a capstone, but treat the key as burnable and rotate it
+in the provider's dashboard if it leaks; a production app would send through a small
+server instead.
+
+Resend's testing sender only delivers to the address that owns the Resend account.
+Verify a domain — or use Brevo, which verifies a single sender *address* and needs no
+domain — to mail any registered user.
+
+Only Brevo's endpoint allows browser-origin calls (`access-control-allow-origin` comes
+back on its preflight). Resend's does not, so a Resend-keyed build can only send from a
+**native** build — Expo Go or the APK — not from `expo export --platform web`. That is
+harmless for this project (the deliverable is the APK), but do not conclude the mailer is
+broken from a browser run: the console shows a CORS refusal there.
+
+With no key configured, `sendResetCode()` falls back to posting the website's
+`/forgot-password` form, which only works once that deployment gets real `MAIL_*`
+settings.
+
+### Checking it
+
+```bash
+node scripts/reset-code-store-check.js  # the row the app writes is readable and verifiable by both apps
+node scripts/reset-mail-doctor.js       # what the website does (and does not) send
+```
+
+For a real send, put the key in `.env` and run `npx expo start` — Expo Go loads `.env`,
+so the phone can be tested without an APK. `scripts/serve-web-build.js <dir> <port>`
+serves an `expo export --platform web` build when you want to drive the screens in a
+browser.
+
+`.env` in this repo is **tracked by git** (only `.env*.local` is ignored), so a key pasted
+there shows up as a diff. Either untrack it (`git rm --cached assetapp/.env` plus a
+`.env` line in `.gitignore`), pass the key through the shell
+(`EXPO_PUBLIC_MAIL_API_KEY=… npx expo start`), or set it as an EAS environment variable for
+cloud builds.
 
 Passwords written by the app are stored as bcrypt digests tagged `$2y$`, the only format
 Postgres' `crypt()` (used by the login RPC) can verify — see `lib/passwordHash.ts`.
+
+A new password must also not be built out of the person's own details (name words of
+their full name, their email address, their employee number) — the rule the web added in
+its latest update, mirrored by `passwordIsBasedOnIdentity()` in
+`lib/passwordResetService.ts` and enforced on the register screen.
+
+## Asset photos: how an upload is stored (and why it used to vanish)
+
+Every file the app stores lives in **one Supabase bucket, `assets`**, under a folder:
+`photos/` (asset photos), `profile_photos/`, `request_files/`, `assets/qr/`. A folder is
+not a bucket — calling `storage.from('photos')` fails with "Bucket not found".
+
+`lib/mediaUpload.ts` is the single upload path (`storeMedia()`), and it is deliberately
+paranoid, because a photo that fails to upload is invisible:
+
+1. **Read** the picked file — the picker's own `base64` first (no file access needed),
+   then `expo-file-system`, then `fetch(uri)`, then `XMLHttpRequest`. Android hands out
+   `content://` URIs that the file-system reader can reject, which is why the pickers now
+   request `base64: true` and keep the whole asset (uri + base64 + mimeType + fileName)
+   instead of only its URI.
+2. **Send** the bytes — the Supabase client first, then a raw Storage REST `fetch`, then
+   the same endpoint as a multipart form. Three genuinely different code paths in React
+   Native, not three retries of one.
+3. **Verify** — the object is downloaded from its public URL. An upload that cannot be
+   read back is reported as a failure instead of being written to the database.
+
+The asset code supplies the object name (`photos/AST-042_<ms>.jpg`); every character
+outside `[A-Za-z0-9._-]` is collapsed so a code with a space, `/`, `#` or `?` cannot
+produce an impossible key. `asset_files` then stores the pair the web app stores:
+`file_path` = the object key (`photos/…`), `url` = the absolute public URL.
+
+### What the `assets` bucket's policies actually allow
+
+Proven against the live project by `storage-doctor.js` and `media-upload-check.js --live`:
+
+| Operation | Result |
+| --- | --- |
+| INSERT (`x-upsert: false`) | allowed for the app's publishable key |
+| UPDATE / upsert (`x-upsert: true`) | **denied** — `400 new row violates row-level security policy` |
+| SELECT / list | the app's key gets an empty list back (dashboard hint: a bucket the client can list is a data leak) |
+| DELETE | denied |
+
+Because an upsert is refused, `storeMedia()` always uploads with `upsert: false` and, on
+a name collision, stores the photo under a fresh key instead of trying to replace it.
+Nothing in the app may depend on `list()`.
+
+### "Storage check" on the Register Asset screen
+
+The Asset Registry screen has a small **Storage check** link under the photo box. It
+uploads a 1×1 test image through the exact pipeline an asset photo uses **from that
+phone** and reports which transport worked or the real error. Run it before blaming the
+bucket: a laptop proves nothing about a handset.
+
+`node scripts/storage-doctor.js --write` leaves probe objects behind (the app key cannot
+delete them). Remove them from the dashboard when they pile up — they are
+`photos/_doctor-*`, `photos/_check-*`, `photos/_selftest-*` and the same names in the
+other folders.
+
+## Disposal archive & inventory removal (ported from the web update)
+
+The web's newest disposal workflow is now in the app. `app/archived-disposals.tsx`
+(reachable from the dashboard's **Disposal Records** card) has two shelves:
+
+- **Disposal** — records still being worked on. An admin can **archive** one; the record
+  is never deleted, it moves to the archive and its asset leaves the institution's
+  inventory, so it disappears from the Assets list, the registry, the department views
+  and the maintenance queue while its history stays readable.
+- **Archived** — the archived records, newest first, each showing whether the asset
+  actually left the inventory.
+
+Both shelves are read through `lib/disposalService.ts` (`scope: 'active' | 'archived'`).
+The inventory rule itself is `lib/inventory.ts` (`inventoryRemovedReady()`,
+`excludeRemovedFromInventory()`, `removeAssetFromInventory()`), the mobile twin of the
+web's `App\Support\Inventory`.
+
+### The migration, and the embed trap it sets
+
+`assets.inventory_removed_at / inventory_removed_by` **have been applied to the live
+database** with `node scripts/db-apply-inventory-migration.js` — the exact shape of the
+web's `2026_09_30_010000_add_inventory_removal_to_assets_table` (nullable columns, naive
+`timestamp`, same index and foreign-key names, same backfill from already-archived
+disposals), so a later `php artisan migrate` on the web finds nothing left to do. Re-run
+it any time; it is idempotent (`--dry-run` prints what it would do). Four assets whose
+disposals were already archived are marked as removed from the inventory.
+
+**That foreign key breaks naive PostgREST embeds.** `assets` now has *two* foreign keys
+to `users` (`user_id`, `inventory_removed_by`), so `assets?select=*,users(...)` fails with
+`PGRST201 — more than one relationship was found`, and the Assets list, the asset detail
+screen and the maintenance alert queries would all have gone blank. Every `assets → users`
+embed therefore names the relationship it means:
+
+```ts
+users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), …)
+```
+
+`scripts/db-audit.js` runs these query shapes against the live database, which is how the
+break was caught — keep the audit's copies in step with `lib/assetService.ts` when a
+select changes. The `audit_logs → users` embeds need no hint (that table has one FK).
+
+If the column is ever missing again (a fresh environment that has not migrated), the app
+keeps working: `lib/inventory.ts` probes for it once per run, `withInventoryColumn()`
+leaves it out of selects, and nothing is hidden. To apply it by hand instead:
+
+```bash
+php artisan migrate     # web repo, or: node scripts/db-apply-inventory-migration.js
+```
+
+or, equivalently, in the Supabase SQL editor:
+
+```sql
+-- `timestamp` (naive UTC), not `timestamptz`: every other timestamp column in this
+-- project is naive-UTC and lib/time.ts reads it that way.
+alter table assets add column if not exists inventory_removed_at timestamp;
+alter table assets add column if not exists inventory_removed_by bigint;
+create index if not exists assets_inventory_removed_at_index on assets (inventory_removed_at);
+alter table assets
+  add constraint assets_inventory_removed_by_foreign
+  foreign key (inventory_removed_by) references users(id) on delete set null;
+-- then make the archived disposals consistent with it:
+update assets a set inventory_removed_at = coalesce(d.archived_at, (now() at time zone 'utc')),
+                     inventory_removed_by = d.archived_by
+  from disposals d
+ where d."Asset_id" = a.id and d.is_archived and a.inventory_removed_at is null;
+```

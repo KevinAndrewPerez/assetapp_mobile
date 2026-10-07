@@ -3,6 +3,7 @@ import { writeAudit } from './auditService';
 import { createNotification, notifyAdmins } from './notificationService';
 import { readNote, upsertNotes } from './noteUtils';
 import { clampRequestStatus } from './requestStatus';
+import { inventoryRemovalReady, removeAssetFromInventory, withInventoryColumn } from './inventory';
 
 /**
  * Disposal Management (NU TRACE mobile spec).
@@ -106,8 +107,67 @@ export type DisposalRecord = {
   disposalDate: string;
   remarks: string;
   notes: string;
+  /** Archived records live on Archived Disposal Assets, not the Disposal page. */
+  isArchived: boolean;
+  archivedAt: string | null;
+  archivedBy: string | null;
+  /** Did the asset leave the inventory when the record was archived? */
+  inventoryRemoved: boolean;
+  inventoryRemovedAt: string | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+/** Which shelf a disposal record is read from. */
+export type DisposalScope = 'active' | 'archived' | 'all';
+
+let archiveReadyPromise: Promise<boolean> | null = null;
+/** When a *negative* answer stops being trusted (see below). */
+let archiveReadyExpiresAt = 0;
+
+/** How long "the columns are missing" is believed after a failed probe. */
+const READINESS_RETRY_MS = 10_000;
+
+/**
+ * Has `2026_09_30_000000_add_archive_fields_to_disposals_table` run?
+ *
+ * Without the columns nothing is ever archived and every record stays on the
+ * Disposal page — exactly the behaviour the web has before its migration runs.
+ *
+ * A probe that *fails* is not an answer. This used to cache the result for the
+ * whole app run, so one network blip at start-up left the screen believing the
+ * migration had never been run: the yellow notice appeared and the archive
+ * button stayed disabled for the rest of the session. Only a positive answer is
+ * kept permanently; a negative one is retried after a short pause, so the
+ * screen heals itself as soon as the server is reachable again.
+ */
+export const archiveColumnsReady = (): Promise<boolean> => {
+  if (archiveReadyPromise && Date.now() < archiveReadyExpiresAt) return archiveReadyPromise;
+
+  const probe = (async () => {
+    try {
+      const { error } = await supabase.from('disposals').select('is_archived').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  })();
+  archiveReadyPromise = probe;
+  // Trust the in-flight answer; a failure lowers this again once it lands.
+  archiveReadyExpiresAt = Number.POSITIVE_INFINITY;
+  probe.then((ready) => {
+    if (!ready) archiveReadyExpiresAt = Date.now() + READINESS_RETRY_MS;
+  });
+  return probe;
+};
+
+/** The result of archiving one disposal record. */
+export type DisposalArchiveResult = {
+  archived: boolean;
+  message: string;
+  /** True when the asset actually left the inventory in this call. */
+  assetRemoved: boolean;
+  assetCode: string | null;
 };
 
 export type BlockedDisposalAsset = {
@@ -161,6 +221,13 @@ export async function fetchDisposalRecords(options?: {
   status?: DisposalStatus | 'All';
   assetId?: string | number | null;
   requestId?: string | number | null;
+  /**
+   * `active` (default) is the Disposal page, `archived` is Archived Disposal
+   * Assets. The rows are `select('*')`, so the archive columns are already in
+   * the payload when the database has them — a database without them simply
+   * has no archived records to hide.
+   */
+  scope?: DisposalScope;
 }): Promise<DisposalRecord[]> {
   let query = supabase
     .from('disposals')
@@ -169,11 +236,20 @@ export async function fetchDisposalRecords(options?: {
     .order('created_at', { ascending: false });
   if (options?.assetId != null) query = query.eq('Asset_id', options.assetId as any);
   if (options?.requestId != null) query = query.eq('Request_id', options.requestId as any);
+  // History look-ups (one asset / one request) must never hide an archived
+  // record — the asset's past is the point of asking.
+  const scope: DisposalScope =
+    options?.scope ?? (options?.assetId != null || options?.requestId != null ? 'all' : 'active');
+  if (scope === 'archived') await archiveColumnsReady();
 
   const { data: disposalRows, error } = await query;
   if (error) throw error;
 
-  const rows = (Array.isArray(disposalRows) ? disposalRows : []) as any[];
+  const rows = ((Array.isArray(disposalRows) ? disposalRows : []) as any[]).filter((row) => {
+    if (scope === 'all') return true;
+    const archived = Boolean(row?.is_archived); // undefined (no column) → active
+    return scope === 'archived' ? archived : !archived;
+  });
   if (rows.length === 0) return [];
 
   const uniq = (values: any[]) => {
@@ -193,7 +269,9 @@ export async function fetchDisposalRecords(options?: {
       ? supabase
           .from('assets')
           .select(
-            'id, Asset_code, Asset_name, Category, Condition, serial_Number, asset_location, purchase_Price, Lifecycle_Status, user_id',
+            await withInventoryColumn(
+              'id, Asset_code, Asset_name, Category, Condition, serial_Number, asset_location, purchase_Price, Lifecycle_Status, user_id',
+            ),
           )
           .in('id', assetIds)
       : Promise.resolve({ data: [] as any[], error: null as any }),
@@ -272,15 +350,114 @@ export async function fetchDisposalRecords(options?: {
       disposalDate: String(row.disposal_date ?? ''),
       remarks: readNote(notes, 'Remarks'),
       notes,
+      isArchived: Boolean(row.is_archived),
+      archivedAt: row.archived_at ? String(row.archived_at) : null,
+      archivedBy: row.archived_by === null || row.archived_by === undefined ? null : String(row.archived_by),
+      inventoryRemoved: Boolean(asset?.['inventory_removed_at'] ?? asset?.inventory_removed ?? false),
+      inventoryRemovedAt: asset?.['inventory_removed_at'] ? String(asset['inventory_removed_at']) : null,
       createdAt: row.created_at ? String(row.created_at) : undefined,
       updatedAt: row.updated_at ? String(row.updated_at) : undefined,
     } as DisposalRecord;
   });
 
+  // Newest archive first, the way the web's Archived Disposal Assets page lists.
+  if (scope === 'archived') {
+    records.sort((a, b) => String(b.archivedAt ?? b.updatedAt ?? '').localeCompare(String(a.archivedAt ?? a.updatedAt ?? '')));
+  }
+
   if (options?.status && options.status !== 'All') {
     return records.filter((record) => record.status === options.status);
   }
   return records;
+}
+
+/** Archived Disposal Assets — records that left the Disposal page. */
+export async function fetchArchivedDisposalRecords(): Promise<DisposalRecord[]> {
+  return fetchDisposalRecords({ scope: 'archived' });
+}
+
+/**
+ * Archive one disposal record.
+ *
+ * Archiving is how an asset leaves the institution's inventory: the record is
+ * kept forever (it is the asset's disposal history) but moves to Archived
+ * Disposal Assets, and the asset disappears from the Assets list, the registry,
+ * the department views and the maintenance queue.
+ *
+ * Mirrors the web's `Disposals::archive()`: archive only, never delete, and
+ * report honestly when the asset could not be taken out of the inventory yet
+ * (a database without the inventory columns) instead of pretending it was.
+ */
+export async function archiveDisposal(options: {
+  record: DisposalRecord;
+  actorId?: string | number | null;
+  actorName?: string | null;
+}): Promise<DisposalArchiveResult> {
+  const { record, actorId, actorName } = options;
+  const nothing = (message: string): DisposalArchiveResult => ({
+    archived: false,
+    message,
+    assetRemoved: false,
+    assetCode: record.assetCode || null,
+  });
+
+  if (!record?.disposalId) return nothing('Disposal record not found.');
+  if (record.isArchived) return nothing('This disposal record is already archived.');
+  if (!(await archiveColumnsReady())) {
+    return nothing(
+      'Archiving is not available yet — the archive database migration has not been run on this server.',
+    );
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('disposals')
+    .update({ is_archived: true, archived_at: now, archived_by: actorId ?? null, updated_at: now })
+    .eq('Disposal_ID', record.disposalId as any)
+    .or('is_archived.eq.false,is_archived.is.null')
+    .select('Disposal_ID');
+  if (error) throw error;
+  if ((data ?? []).length === 0) return nothing('This disposal record is already archived.');
+
+  // Take the asset out of the inventory. Best effort by design: on a database
+  // without the inventory columns the archive still stands, it just cannot
+  // hide the asset yet, and the caller says so.
+  let assetRemoved = false;
+  if (record.assetId) {
+    try {
+      assetRemoved = await removeAssetFromInventory(record.assetId, actorId);
+    } catch (inventoryError) {
+      console.warn('Disposal archived but the asset could not be removed from the inventory:', inventoryError);
+    }
+  }
+  const inventoryReady = await inventoryRemovalReady();
+
+  await writeAudit({
+    actorId: actorId ?? null,
+    assetId: record.assetId,
+    requestId: record.requestId,
+    actionType: 'DISPOSAL',
+    description: assetRemoved
+      ? 'Disposal record archived and asset removed from the inventory'
+      : 'Disposal record archived',
+    notes:
+      `Disposal record #${record.disposalId} for asset ${record.assetCode || 'N/A'} was archived`
+      + (assetRemoved
+        ? ' and the asset was removed from the inventory.'
+        : inventoryReady
+        ? '.'
+        : ' (the inventory migration has not been run on this server yet).')
+      + (actorName ? ` Archived by ${actorName}.` : ''),
+  }).catch(() => undefined);
+
+  return {
+    archived: true,
+    message: assetRemoved
+      ? 'Disposal record archived and its asset removed from the inventory.'
+      : 'Disposal record archived.',
+    assetRemoved,
+    assetCode: record.assetCode || null,
+  };
 }
 
 // ───────────────────────────── validation ────────────────────────────────────

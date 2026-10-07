@@ -1,7 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system/legacy';
-import { decode } from 'base64-arraybuffer';
 import { supabase } from './supabase';
+import { type MediaAsset, storeMedia } from './mediaUpload';
 import { hashPasswordForDatabase } from './passwordHash';
 import { resolveMediaUrl } from './mediaUrl';
 import { writeAudit, writeSessionAudit } from './auditService';
@@ -885,55 +884,23 @@ export async function submitUserRequest(
 }
 
 /**
- * Upload a photo attached to a request into the `request_files` bucket (the
- * same bucket the web app uses) and return the fields stored on `requests`
+ * Upload a photo attached to a request into the `assets` bucket under the
+ * `request_files/` folder — the same bucket + folder the web app writes to —
+ * and return the fields stored on `requests`
  * (file_name / file_path / file_size / mime_type / url).
+ *
+ * `request_files` is a folder, not a bucket: addressing it as one made every
+ * request attachment fail with "Bucket not found".
  */
-export async function uploadRequestPhoto(uri: string): Promise<RequestFile> {
-  const cleanedUri = String(uri ?? '').split('?')[0]?.split('#')[0] ?? '';
-  const rawExt = cleanedUri.includes('.') ? cleanedUri.split('.').pop() : '';
-  const fileExt = String(rawExt || 'jpg').toLowerCase();
-  const fileName = `request_${Date.now()}.${fileExt}`;
-  const filePath = `request_files/${fileName}`;
-
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-  const arrayBuffer = decode(base64);
-
-  const contentType =
-    fileExt === 'png'
-      ? 'image/png'
-      : fileExt === 'webp'
-        ? 'image/webp'
-        : fileExt === 'heic'
-          ? 'image/heic'
-          : fileExt === 'heif'
-            ? 'image/heif'
-            : 'image/jpeg';
-
-  const { error } = await supabase.storage.from('request_files').upload(filePath, arrayBuffer, {
-    contentType,
-    cacheControl: '3600',
-    upsert: false,
-  });
-  if (error) {
-    if (error.message.includes('Bucket not found')) {
-      throw new Error('Supabase Storage bucket "request_files" not found. Please create it in your Supabase dashboard.');
-    }
-    if (error.message.toLowerCase().includes('row-level security')) {
-      throw new Error('Photo upload blocked by Row Level Security on the "request_files" bucket.');
-    }
-    throw error;
-  }
-
-  const { data: publicUrl } = supabase.storage.from('request_files').getPublicUrl(filePath);
-  const url = publicUrl?.publicUrl ?? '';
+export async function uploadRequestPhoto(photo: string | MediaAsset): Promise<RequestFile> {
+  const stored = await storeMedia({ folder: 'request_files', prefix: 'request', media: photo });
 
   return {
-    file_name: fileName,
-    file_path: filePath,
-    file_size: arrayBuffer.byteLength,
-    mime_type: contentType,
-    url,
+    file_name: stored.fileName,
+    file_path: stored.objectKey,
+    file_size: stored.size,
+    mime_type: stored.contentType,
+    url: stored.publicUrl,
   };
 }
 
@@ -1057,43 +1024,9 @@ export async function isEmployeeNumberRegistered(employeeNumbersId: number | str
  * exactly where the web register form puts them, so `users.profile_photo`
  * keeps holding a public URL rather than a local Laravel path.
  */
-export async function uploadProfilePhoto(uri: string): Promise<string> {
-  const cleanedUri = String(uri ?? '').split('?')[0]?.split('#')[0] ?? '';
-  const rawExt = cleanedUri.includes('.') ? cleanedUri.split('.').pop() : '';
-  const fileExt = String(rawExt || 'jpg').toLowerCase();
-  const fileName = `profile_photos/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${fileExt}`;
-
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-  const arrayBuffer = decode(base64);
-
-  const contentType =
-    fileExt === 'png'
-      ? 'image/png'
-      : fileExt === 'webp'
-        ? 'image/webp'
-        : fileExt === 'heic'
-          ? 'image/heic'
-          : fileExt === 'heif'
-            ? 'image/heif'
-            : 'image/jpeg';
-
-  const { error } = await supabase.storage.from('assets').upload(fileName, arrayBuffer, {
-    contentType,
-    cacheControl: '3600',
-    upsert: false,
-  });
-  if (error) {
-    if (error.message.includes('Bucket not found')) {
-      throw new Error('Supabase Storage bucket "assets" not found. Please create it in your Supabase dashboard.');
-    }
-    if (error.message.toLowerCase().includes('row-level security')) {
-      throw new Error('Profile photo upload was blocked by Row Level Security on the "assets" bucket.');
-    }
-    throw error;
-  }
-
-  const { data } = supabase.storage.from('assets').getPublicUrl(fileName);
-  return data.publicUrl;
+export async function uploadProfilePhoto(photo: string | MediaAsset): Promise<string> {
+  const stored = await storeMedia({ folder: 'profile_photos', prefix: 'profile', media: photo });
+  return stored.publicUrl;
 }
 
 /**
@@ -1116,13 +1049,13 @@ export async function saveStoredUser(user: StoredUser): Promise<void> {
  */
 export async function updateProfilePhoto(
   userId: number | string | null | undefined,
-  uri: string,
+  photo: string | MediaAsset,
 ): Promise<string> {
   if (userId === null || userId === undefined || String(userId) === '') {
     throw new Error('Current user is missing ID');
   }
 
-  const publicUrl = await uploadProfilePhoto(uri);
+  const publicUrl = await uploadProfilePhoto(photo);
   const now = new Date().toISOString();
 
   const { error } = await supabase

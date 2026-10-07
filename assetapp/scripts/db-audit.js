@@ -103,8 +103,10 @@ const STATUS_WRITES = {
 
 // ---- 3. real query shapes the services run --------------------------------
 const QUERIES = [
-  ['assetService  getAssets (full record + joins)', 'assets', '*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)'],
-  ['assetService  asset detail (single)', 'assets', '*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)'],
+  // `assets` has two foreign keys to `users` (user_id, inventory_removed_by), so
+  // these embeds MUST name the relationship or PostgREST answers PGRST201.
+  ['assetService  getAssets (full record + joins)', 'assets', '*, users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)'],
+  ['assetService  asset detail (single)', 'assets', '*, users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)'],
   ['assetService  registry lookup', 'assets', 'id, Asset_code, Asset_name, user_id, Category, asset_location, supplier, model, manufacture'],
   ['assetService  replacements for asset', 'replacements', 'Replacement_id, Request_id, old_assets_id, new_assets_id, status, reason, notes, Replacement_Date, created_at'],
   ['maintenanceService  alerts', 'assets', 'id, Asset_code, Asset_name, Lifecycle_Status, maintenance_interval, next_maintenance_date, last_maintenance_date, users:user_id(id, employee_numbers("Full_Name"))'],

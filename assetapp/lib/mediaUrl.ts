@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-import { supabase } from './supabase';
+import { STORAGE_BUCKET, supabase } from './supabase';
 
 /**
  * Everything that stores a file reference in this project writes one of two shapes:
@@ -31,7 +31,21 @@ type ExpoExtra = {
 
 const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'];
 const SUPABASE_PUBLIC_PREFIX = 'storage/v1/object/public/';
-const KNOWN_STORAGE_BUCKETS = ['assets', 'qr_codes', 'photos', 'request_files', 'public', 'asset_files'];
+/**
+ * This project keeps exactly ONE Storage bucket — `assets`. Every other name
+ * that looks like a bucket (`assets/`, `photos/`, `profile_photos/`,
+ * `request_files/`, `qr/`, `brand/`) is a folder inside it, and the reference
+ * stored in the database is the object KEY, so it has to survive untouched.
+ *
+ * Reading those names as buckets is what broke image loading: a stored
+ * `assets/qr/AST-1-17.png` was requested as
+ * `/object/public/assets/qr/AST-1-17.png` (404) instead of
+ * `/object/public/assets/assets/qr/AST-1-17.png` (200) — the same normalisation
+ * the web app does in `Media::normalizePath()`.
+ */
+const LEGACY_QR_FOLDER = 'qr_codes';
+/** Folder QR images live in inside the bucket, for rows that hold only a name. */
+const QR_FOLDER = 'assets/qr';
 /** Prefixes Laravel's `public` disk files carry on their way out of the database. */
 const LARAVEL_STORAGE_PREFIXES = ['public/storage/', 'storage/app/public/', 'wwwroot/storage/', 'storage/'];
 /** `php artisan serve` runs here unless told otherwise. */
@@ -169,23 +183,21 @@ const repointLoopbackHost = (url: string): string => {
   return next;
 };
 
-/** Supabase Storage public URL for an object key, detecting the bucket from the key. */
+/**
+ * Public URL of an object key inside the single `assets` bucket.
+ *
+ * The key is used verbatim — folder prefixes included — because the bucket
+ * layout is the key layout. Only two legacy shapes are repointed: a
+ * `qr_codes/...` reference (the QR folder is `assets/qr/` now) and a bare file
+ * name coming from the QR column, which belongs in `assets/qr/` too.
+ */
 const supabasePublicUrl = (key: string, fallbackBucket: string): string => {
-  let bucket = fallbackBucket;
-  let path = key;
+  let path = String(key ?? '').replace(/^\/+/, '');
 
-  for (const known of KNOWN_STORAGE_BUCKETS) {
-    if (path.toLowerCase().startsWith(`${known}/`)) {
-      bucket = known;
-      path = path.slice(known.length + 1);
-      break;
-    }
-  }
-
-  // QR codes live under the `assets` bucket in `qr/`.
-  if (bucket === 'qr_codes') {
-    bucket = 'assets';
-    if (!path.startsWith('qr/')) path = `qr/${path}`;
+  if (path.toLowerCase().startsWith(`${LEGACY_QR_FOLDER}/`)) {
+    path = `${QR_FOLDER}/${path.slice(LEGACY_QR_FOLDER.length + 1)}`;
+  } else if (fallbackBucket === LEGACY_QR_FOLDER && ! path.includes('/')) {
+    path = `${QR_FOLDER}/${path}`;
   }
 
   const encodedPath = path
@@ -195,7 +207,7 @@ const supabasePublicUrl = (key: string, fallbackBucket: string): string => {
     .join('/');
   if (!encodedPath) return '';
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(encodedPath);
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(encodedPath);
   return data?.publicUrl || '';
 };
 
@@ -203,7 +215,8 @@ const supabasePublicUrl = (key: string, fallbackBucket: string): string => {
  * Turn any stored file reference into a URL `<Image>` can load.
  *
  * @param raw an `asset_files` / request-file row, or the reference string itself
- * @param fallbackBucket bucket used when the reference carries no bucket of its own
+ * @param fallbackBucket only the legacy `qr_codes` value changes anything: a bare
+ *   file name then resolves inside the `assets/qr/` folder
  */
 export const resolveMediaUrl = (raw: unknown, fallbackBucket = 'assets'): string => {
   const reference = referenceOf(raw);
@@ -215,9 +228,14 @@ export const resolveMediaUrl = (raw: unknown, fallbackBucket = 'assets'): string
   const path = reference.replace(/^\/+/, '');
   if (!path) return '';
 
-  // A Supabase object path without the project origin.
+  // A Supabase object path without the project origin. The remainder still
+  // starts with the bucket name, which is not part of the object key.
   if (path.toLowerCase().startsWith(SUPABASE_PUBLIC_PREFIX)) {
-    return supabasePublicUrl(path.slice(SUPABASE_PUBLIC_PREFIX.length), fallbackBucket);
+    const remainder = path.slice(SUPABASE_PUBLIC_PREFIX.length);
+    const withoutBucket = remainder.toLowerCase().startsWith(`${STORAGE_BUCKET}/`)
+      ? remainder.slice(STORAGE_BUCKET.length + 1)
+      : remainder;
+    return supabasePublicUrl(withoutBucket, fallbackBucket);
   }
 
   // A file on the NUTrace web server's public disk.

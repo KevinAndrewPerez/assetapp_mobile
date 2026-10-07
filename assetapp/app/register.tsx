@@ -29,6 +29,11 @@ import {
   registerUser,
   uploadProfilePhoto,
 } from '../lib/userService';
+import { describeUploadError, type MediaAsset } from '../lib/mediaUpload';
+import {
+  PASSWORD_IDENTITY_MESSAGE,
+  passwordIsBasedOnIdentity,
+} from '../lib/passwordResetService';
 
 /**
  * The five requirements the web register form lists under the password field.
@@ -57,7 +62,9 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
 
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  // The full picker asset: its base64 bytes are what make the upload work even
+  // when Android hands back a `content://` URI the file system cannot read.
+  const [photoUri, setPhotoUri] = useState<MediaAsset | null>(null);
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -70,6 +77,14 @@ export default function RegisterScreen() {
 
   const allPasswordRulesMet = PASSWORD_RULES.every((rule) => rule.test(password));
   const passwordsMatch = password.length > 0 && password === confirmPassword;
+
+  // New on the web in the latest update: the password must not be built out of
+  // the person's own details (name words, email address, employee number).
+  const passwordUsesIdentity = passwordIsBasedOnIdentity(password, [
+    employee?.fullName,
+    email,
+    employee?.employeeNumber ?? employeeNumber,
+  ]);
 
   const handleEmployeeChange = (value: string) => {
     setEmployeeNumber(value);
@@ -122,9 +137,10 @@ export default function RegisterScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.7,
+        base64: true,
       });
-      if (!result.canceled) setPhotoUri(result.assets[0].uri);
+      if (!result.canceled) setPhotoUri(result.assets[0]);
       return;
     }
 
@@ -137,9 +153,10 @@ export default function RegisterScreen() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.7,
+      base64: true,
     });
-    if (!result.canceled) setPhotoUri(result.assets[0].uri);
+    if (!result.canceled) setPhotoUri(result.assets[0]);
   };
 
   const handlePhotoPress = () => {
@@ -180,6 +197,10 @@ export default function RegisterScreen() {
       setPasswordError('Your password does not meet all the requirements below.');
       return;
     }
+    if (passwordUsesIdentity) {
+      setPasswordError(PASSWORD_IDENTITY_MESSAGE);
+      return;
+    }
     if (!passwordsMatch) {
       setPasswordError('Passwords do not match.');
       return;
@@ -187,12 +208,22 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
-      const photoUrl = await uploadProfilePhoto(photoUri);
+      // The photo is stored before the account exists: a photo that never
+      // reached Storage is reported as an upload problem, not as a signup
+      // failure, and the account still gets created below.
+      let photoUrl = '';
+      try {
+        photoUrl = await uploadProfilePhoto(photoUri);
+      } catch (uploadErr) {
+        console.warn('Profile photo upload failed:', uploadErr);
+        setGeneralError(`Signing up without a profile photo — ${describeUploadError(uploadErr)}`);
+      }
+
       const created = await registerUser({
         employeeNumber: resolved.employeeNumber,
         email: email.trim(),
         password,
-        profilePhotoUrl: photoUrl,
+        profilePhotoUrl: photoUrl || null,
       });
 
       Alert.alert(
@@ -319,7 +350,7 @@ export default function RegisterScreen() {
                 disabled={loading}
               >
                 {photoUri ? (
-                  <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+                  <Image source={{ uri: photoUri.uri }} style={styles.photoPreview} />
                 ) : (
                   <View style={styles.photoPlaceholder}>
                     <MaterialCommunityIcons name="camera-plus-outline" size={21} color={colors.inkFaint} />
@@ -389,6 +420,12 @@ export default function RegisterScreen() {
                     </View>
                   );
                 })}
+                {passwordUsesIdentity ? (
+                  <View style={styles.ruleRow}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={14} color={colors.danger} />
+                    <Text style={[styles.ruleText, styles.ruleTextViolated]}>{PASSWORD_IDENTITY_MESSAGE}</Text>
+                  </View>
+                ) : null}
               </View>
             </View>
 
@@ -645,6 +682,10 @@ const styles = StyleSheet.create({
   ruleText: {
     color: colors.inkMuted,
     fontSize: 12,
+  },
+  ruleTextViolated: {
+    color: '#B91C1C',
+    flexShrink: 1,
   },
   ruleTextMet: {
     color: colors.successInk,

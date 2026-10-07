@@ -26,7 +26,9 @@ import {
   linkReplacementAsset,
   markReplacementReceived,
   ReplacementRecord,
+  uploadAssetPhoto,
 } from '@/lib/assetService';
+import { describeUploadError, type MediaAsset, type UploadedMedia } from '@/lib/mediaUpload';
 import { getStoredUser } from '@/lib/userService';
 import { headerTopPadding } from '@/lib/theme';
 
@@ -69,7 +71,8 @@ export default function ReplacementModule() {
   const [newWarranty, setNewWarranty] = useState('12');
   const [newLifespan, setNewLifespan] = useState('');
   const [newMaintInterval, setNewMaintInterval] = useState('');
-  const [newPhotoUri, setNewPhotoUri] = useState<string | null>(null);
+  // Whole picker asset (uri + base64 + mime type), not just the URI.
+  const [newPhoto, setNewPhoto] = useState<MediaAsset | null>(null);
   const [qrPreviewVisible, setQrPreviewVisible] = useState(false);
 
   /** Preview the QR of the generated code before creating the asset. */
@@ -165,7 +168,7 @@ export default function ReplacementModule() {
     setNewWarranty('12');
     setNewLifespan('');
     setNewMaintInterval('');
-    setNewPhotoUri(null);
+    setNewPhoto(null);
     setRegisterFormFor(record);
   };
 
@@ -173,7 +176,7 @@ export default function ReplacementModule() {
     Alert.alert('Asset Photo', 'Add a photo from your gallery or take one with the camera.', [
       { text: 'Take Photo', onPress: takeNewPhoto },
       { text: 'Choose from Library', onPress: chooseNewFromLibrary },
-      { text: 'Remove Photo', style: 'destructive', onPress: () => setNewPhotoUri(null) },
+      { text: 'Remove Photo', style: 'destructive', onPress: () => setNewPhoto(null) },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
@@ -188,9 +191,10 @@ export default function ReplacementModule() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.8,
+      quality: 0.7,
+      base64: true,
     });
-    if (!result.canceled) setNewPhotoUri(result.assets[0].uri);
+    if (!result.canceled) setNewPhoto(result.assets[0]);
   };
 
   const takeNewPhoto = async () => {
@@ -203,9 +207,10 @@ export default function ReplacementModule() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.8,
+      quality: 0.7,
+      base64: true,
     });
-    if (!result.canceled) setNewPhotoUri(result.assets[0].uri);
+    if (!result.canceled) setNewPhoto(result.assets[0]);
   };
 
   const handleCreateAndLink = async () => {
@@ -222,6 +227,20 @@ export default function ReplacementModule() {
     setSavingNewAsset(true);
     try {
       const user = await getStoredUser();
+
+      // The photo is uploaded first so the row only ever points at a file that
+      // really exists in Storage; a failure is reported, never swallowed.
+      let photo: UploadedMedia | null = null;
+      let uploadWarning = '';
+      if (newPhoto) {
+        try {
+          photo = await uploadAssetPhoto(newCode.trim(), newPhoto);
+        } catch (uploadErr) {
+          console.warn('Replacement photo upload failed:', uploadErr);
+          uploadWarning = `The photo was not saved: ${describeUploadError(uploadErr)}`;
+        }
+      }
+
       const result = await createAndLinkReplacementAsset({
         replacementId: registerFormFor.replacementId,
         requestId: registerFormFor.requestId,
@@ -237,14 +256,15 @@ export default function ReplacementModule() {
         warrantyMonths: Number(newWarranty) || undefined,
         lifespanMonths: Number(newLifespan) || undefined,
         maintenanceInterval: Number(newMaintInterval) || undefined,
-        photoUri: newPhotoUri,
+        photo,
         actorId: user?.id ?? null,
       });
 
       Alert.alert(
         'Asset Created & Linked',
         `${result.assetCode} is now the replacement asset and is ready for pickup.` +
-          (result.photoWarning ? `\n\nNote: the photo was not saved — ${result.photoWarning}` : ''),
+          (result.photoWarning ? `\n\nNote: ${result.photoWarning}` : '') +
+          (uploadWarning ? `\n\nNote: ${uploadWarning}` : ''),
       );
       setRegisterFormFor(null);
       await fetchData();
@@ -678,9 +698,9 @@ export default function ReplacementModule() {
             </View>
 
             <Text style={styles.regLabel}>Asset Photo</Text>
-            <TouchableOpacity style={[styles.photoBox, newPhotoUri && styles.photoBoxActive]} activeOpacity={0.8} onPress={pickNewPhoto}>
-              {newPhotoUri ? (
-                <Image source={{ uri: newPhotoUri }} style={styles.photoPreview} />
+            <TouchableOpacity style={[styles.photoBox, newPhoto && styles.photoBoxActive]} activeOpacity={0.8} onPress={pickNewPhoto}>
+              {newPhoto ? (
+                <Image source={{ uri: newPhoto.uri }} style={styles.photoPreview} />
               ) : (
                 <>
                   <MaterialCommunityIcons name="image-plus" size={30} color="#B45309" />

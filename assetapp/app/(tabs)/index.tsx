@@ -125,6 +125,16 @@ export default function App() {
       iconColor: '#FFFFFF',
     },
     {
+      title: 'Disposal Records',
+      subtitle: 'Archive & inventory removal',
+      icon: 'archive-arrow-down-outline',
+      onPress: () => router.push('/archived-disposals' as any),
+      gradientColors: ['#0F766E', '#115E59'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.7)',
+      iconColor: '#FFFFFF',
+    },
+    {
       title: 'Record Pullout',
       subtitle: 'Log pulled out assets',
       icon: 'arrow-up-box',

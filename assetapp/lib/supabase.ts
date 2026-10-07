@@ -45,4 +45,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 export const SUPABASE_URL = supabaseUrl;
 export const SUPABASE_ANON_KEY = supabaseAnonKey;
+/**
+ * The project keeps exactly ONE Storage bucket — `assets`. Everything that
+ * looks like a bucket name (`assets/`, `photos/`, `profile_photos/`,
+ * `request_files/`, `qr/`) is a folder inside it, so `storage.from()` must
+ * never be called with anything else: a missing bucket answers
+ * "Bucket not found" and the upload is lost.
+ */
+export const STORAGE_BUCKET = 'assets';
+
 export const supabaseStorage = supabase;

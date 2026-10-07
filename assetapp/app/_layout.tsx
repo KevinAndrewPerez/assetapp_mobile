@@ -16,6 +16,12 @@ export const unstable_settings = {
   initialRouteName: "login",
 };
 
+// Routes a signed-out visitor is allowed to open. Anything else gets bounced
+// back to /login by the guard below — including the forgot-password wizard,
+// which was the reason tapping "Forgot Password?" flashed the reset screen and
+// then landed straight back on the login page.
+const PUBLIC_ROUTES = ["login", "register", "forgot-password"];
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const segments = useSegments();
@@ -26,13 +32,13 @@ export default function RootLayout() {
     const checkAuth = async () => {
       try {
         const userJson = await AsyncStorage.getItem('user');
-        const inAuthGroup = segments[0] === 'login' || segments[0] === 'register';
+        const isPublicRoute = PUBLIC_ROUTES.includes(segments[0] as string);
 
         if (!userJson) {
-          if (!inAuthGroup) {
+          if (!isPublicRoute) {
             router.replace('/login');
           }
-        } else if (inAuthGroup) {
+        } else if (isPublicRoute) {
           const user = JSON.parse(userJson);
           const target = (user.role === 'Admin' || user.role === 'AssetOfficer') 
             ? '/(tabs)' 
@@ -63,6 +69,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="login" />
         <Stack.Screen name="register" />
+        <Stack.Screen name="forgot-password" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(user-tabs)" />
         <Stack.Screen name="submit-request" />
@@ -70,6 +77,7 @@ export default function RootLayout() {
         <Stack.Screen name="modal" options={{ presentation: "modal", title: "Modal" }} />
         <Stack.Screen name="asset-registry" />
         <Stack.Screen name="transfer" />
+        <Stack.Screen name="archived-disposals" />
         <Stack.Screen name="activity-log" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="maintenance" />

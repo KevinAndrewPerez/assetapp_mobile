@@ -1,22 +1,29 @@
-import * as WebBrowser from 'expo-web-browser';
-
 import { supabase } from './supabase';
 import { webOrigin } from './mediaUrl';
 import { writeAudit } from './auditService';
 import { hashPasswordForDatabase, verifyStoredHash } from './passwordHash';
+import { generateResetCode, mailerConfigured, sendResetCodeEmail } from './resetMailer';
 
 /**
  * Forgot password — the mobile twin of the web's `/forgot-password` flow.
  *
- * The web app owns the mail credentials, so it is the one that mails the code:
- * the app opens its form, posts the email with the session cookie + CSRF token
- * the page hands out, and the site generates a single-use 6-digit code and
- * stores its bcrypt hash in the shared `password_resets` table. The app then
- * does the rest itself, against the same table and the same `users` row the web
- * writes, so either app can finish a reset the other one started.
+ * The code itself is a single-use 6-digit number whose bcrypt hash lives in the
+ * shared `password_resets` table, and every step after that is the app's own
+ * work: it reads the row, checks expiry and single use, and writes the new
+ * bcrypt(12) password into the same `users` row the web writes. Either app can
+ * finish a reset the other one started.
  *
- * The wording of every message below is copied from the web controller so the
- * two apps report failures identically.
+ * Only the *mailing* used to be delegated to the NUTrace website, because it
+ * held the mail credentials. The deployed site has no `MAIL_*` configuration,
+ * so Laravel used its default `log` mailer: the message went into
+ * `storage/logs/laravel.log`, the site reported success, and the app — which
+ * only checked that a code row appeared — showed "code sent" for a mail nobody
+ * ever received.
+ *
+ * So the app mails the code itself now (`lib/resetMailer.ts`). Posting the
+ * website's form is kept as a fallback for builds that ship without an email
+ * key, and the wording of every message below still follows the web controller
+ * so the two apps report failures identically.
  */
 
 /** Same five requirements the web enforces (`Password::defaults()`). */
@@ -31,12 +38,46 @@ export const PASSWORD_RULES: { key: string; label: string; test: (value: string)
 export const passwordMeetsPolicy = (value: string): boolean =>
   PASSWORD_RULES.every((rule) => rule.test(value));
 
+/**
+ * New on the web in the latest update: a password must not be built out of the
+ * person's own details.
+ *
+ * Any word of four or more characters taken from the full name, the email
+ * address or the employee number found inside the password is rejected — those
+ * are the easiest things for someone else to guess. Mirrors
+ * `passwordIsBasedOnIdentity()` in the web's `routes/web.php` exactly, so the
+ * same password is refused by both apps.
+ */
+export function passwordIsBasedOnIdentity(
+  password: string,
+  identityFragments: (string | null | undefined)[],
+): boolean {
+  const candidate = String(password ?? '').toLowerCase();
+  if (!candidate) return false;
+
+  for (const fragment of identityFragments) {
+    if (typeof fragment !== 'string' || fragment === '') continue;
+    for (const word of fragment.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (word.length >= 4 && candidate.includes(word)) return true;
+    }
+  }
+
+  return false;
+}
+
+/** The message the web shows for a password built out of the person's details. */
+export const PASSWORD_IDENTITY_MESSAGE =
+  'Your password must not contain your name, email address, or employee number.';
+
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const NO_ACCOUNT_MESSAGE =
   'No account is registered with that email address. Please use the email you used to register.';
 export const SESSION_INVALID_MESSAGE =
   'Your verification session is no longer valid. Please start the password reset again.';
+
+/** How long a mailed code stays valid — the web uses the same 15 minutes. */
+export const RESET_CODE_TTL_MINUTES = 15;
 
 const CODE_INCORRECT = 'The verification code you entered is incorrect. Please try again.';
 const CODE_USED = 'This verification code has already been used. Please request a new code.';
@@ -144,15 +185,98 @@ async function waitForFreshCode(email: string, previousMaxId: number, timeoutMs 
 }
 
 /**
- * Ask the NUTrace website to email a fresh 6-digit code.
+ * `password_resets` timestamps are `timestamp without time zone` holding UTC —
+ * exactly what Laravel stores with the app on UTC. The `…Z` designator is
+ * stripped rather than left on: Postgres converts a zone-bearing string into the
+ * session's timezone, while the bare form is stored verbatim, so the digits are
+ * the UTC wall clock whatever the session is set to. (`parseStoredTimestamp`
+ * adds the zone back when reading.)
+ */
+const storedTimestamp = (value: Date): string =>
+  value.toISOString().replace(/\.\d{3}Z$/, '').replace('T', ' ');
+
+/** Drop every code for an address — the web deletes the previous one too. */
+async function clearResetCodes(email: string): Promise<void> {
+  const { error } = await supabase.from('password_resets').delete().eq('email', email);
+  if (error) console.warn('Could not clear existing reset codes:', error.message);
+}
+
+/**
+ * Write the code row the way the web writes it: hash first, row before the mail
+ * is handed over. Storing the hash (never the code) means the row is useless to
+ * anyone reading the table, and `verifyResetCode` compares against it with
+ * bcrypt.
+ */
+async function storeResetCode(email: string, code: string): Promise<void> {
+  await clearResetCodes(email);
+
+  const now = new Date();
+  const expires = new Date(now.getTime() + RESET_CODE_TTL_MINUTES * 60_000);
+  const { error } = await supabase.from('password_resets').insert({
+    email,
+    token: await hashPasswordForDatabase(code),
+    expires_at: storedTimestamp(expires),
+    used: false,
+    created_at: storedTimestamp(now),
+    updated_at: storedTimestamp(now),
+  });
+
+  if (error) {
+    console.error('Failed to store the reset code:', error.message);
+    throw new Error('We could not start a password reset right now. Please try again.');
+  }
+}
+
+/**
+ * Mail a fresh 6-digit code.
  *
- * The site's form is CSRF-protected, so the token is scraped from the page and
- * the session cookie has to travel back with it. React Native keeps cookies in
- * the platform's HTTP stack, so normally the token alone is enough; if the site
- * answers 419 (Laravel's "page expired") the request is retried once with the
- * cookie the page handed us, in case the cookie jar was unavailable.
+ * The app owns the code: it generates it, stores the bcrypt hash in
+ * `password_resets` and sends the message through the email service
+ * (`lib/resetMailer.ts`). The account is checked first — an address that is not
+ * registered must not receive anything, the same gate the web applies.
+ *
+ * When the build ships without an email key the flow falls back to asking the
+ * NUTrace website to send the mail, which is only useful if that deployment
+ * ever gets a real `MAIL_*` configuration.
  */
 export async function sendResetCode(email: string): Promise<void> {
+  const address = String(email ?? '').trim();
+
+  if (mailerConfigured()) {
+    const account = await findAccountByEmail(address);
+    if (!account) throw new Error(NO_ACCOUNT_MESSAGE);
+
+    const code = generateResetCode();
+    await storeResetCode(account.email, code);
+
+    try {
+      await sendResetCodeEmail(account.email, code);
+    } catch (error) {
+      // A code nobody received must not stay in the table: the next attempt
+      // starts clean instead of comparing against a message that never arrived.
+      await clearResetCodes(account.email);
+      throw error;
+    }
+    return;
+  }
+
+  await sendResetCodeViaWebsite(address);
+}
+
+/**
+ * Ask the NUTrace website to email the code — the fallback path.
+ *
+ * The verification endpoint is CSRF-protected, so the token is read from the
+ * page and the session cookie travels back with it. React Native keeps cookies
+ * in the platform's HTTP stack, so normally the token alone is enough; if the
+ * endpoint answers 419 (Laravel's "page expired") the request is retried once
+ * with the cookie the page handed us, in case the cookie jar was unavailable.
+ *
+ * Note that this path cannot know whether the site's mailer actually delivered:
+ * the site writes the code row before it hands the message to the mail server
+ * and, with the `log` mailer, reports success without sending anything.
+ */
+export async function sendResetCodeViaWebsite(email: string): Promise<void> {
   const address = String(email ?? '').trim();
   const base = webOrigin();
   const endpoint = `${base}/forgot-password`;
@@ -162,7 +286,7 @@ export async function sendResetCode(email: string): Promise<void> {
     page = await fetchWithTimeout(endpoint, { headers: { Accept: 'text/html' } });
   } catch {
     throw new Error(
-      `Could not reach the NU TRACE website at ${base} to send your code. Check your connection and try again.`,
+      `Could not reach the verification service at ${base} to send your code. Check your connection and try again.`,
     );
   }
 
@@ -171,7 +295,7 @@ export async function sendResetCode(email: string): Promise<void> {
   const cookie = readSetCookie(page);
   if (!token) {
     throw new Error(
-      'The NU TRACE website did not return a reset form. Please try again, or reset your password from the website.',
+      'The verification service did not respond correctly. Please try again.',
     );
   }
 
@@ -209,7 +333,7 @@ export async function sendResetCode(email: string): Promise<void> {
     // Laravel's CSRF guard: the site refused the form even with the cookie the
     // page handed us (it can happen on some devices' cookie handling).
     throw new Error(
-      'The NU TRACE website did not accept the reset request. Please try again, or reset your password from the website.',
+      'The verification service did not accept the reset request. Please try again.',
     );
   }
 
@@ -367,13 +491,3 @@ export async function completePasswordReset(
   });
 }
 
-/**
- * Last resort: hand the user the website's own reset pages in an in-app browser
- * (real browser session, so it works even if the app could not drive the form).
- */
-export async function openWebPasswordReset(): Promise<void> {
-  await WebBrowser.openBrowserAsync(`${webOrigin()}/forgot-password`, {
-    toolbarColor: '#1E3A5F',
-    controlsColor: '#FDB833',
-  });
-}

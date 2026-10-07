@@ -2,11 +2,11 @@ import { supabase } from './supabase';
 import { resolveAssetImageUrl } from './mediaUrl';
 import { formatStoredDate, normalizeStoredTimestamp } from './time';
 import { auditSessionNotice, stripNetworkIdentifiers } from './auditService';
-import * as FileSystem from 'expo-file-system/legacy';
 import { hashPasswordForDatabase } from './passwordHash';
-import { decode } from 'base64-arraybuffer';
 import { recordMaintenance } from './maintenanceService';
 import { createNotification } from './notificationService';
+import { type MediaAsset, type UploadedMedia, storeMedia } from './mediaUpload';
+import { excludeRemovedFromInventory, isRemovedFromInventory, withInventoryColumn } from './inventory';
 
 export type AssetSummary = {
   id: string;
@@ -179,16 +179,24 @@ async function insertRecord(table: string, payload: any) {
   return data;
 }
 
+/**
+ * Every asset the institution still holds.
+ *
+ * Archived disposals take their asset out of the inventory, and an asset that
+ * has left the inventory must not appear in any listing (same rule as the
+ * web's `Inventory::excludeRemoved`). The rows are filtered in JS because
+ * `select('*')` already carries the column when the database has it.
+ */
 export async function fetchAssets(): Promise<AssetSummary[]> {
   const { data, error } = await supabase
     .from('assets')
-    .select('*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)')
+    .select(`*, users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)`)
     .order('updated_at', { ascending: false });
-    
+
   if (error) {
     throw error;
   }
-  return (data ?? []).map(normalizeAssetRecord);
+  return excludeRemovedFromInventory(data ?? []).map(normalizeAssetRecord);
 }
 
 /**
@@ -239,8 +247,12 @@ export async function fetchAssetDetail(
   if (!key) return null;
 
   const numeric = Number(key);
+  // The asset's custodian, never the admin who archived its disposal: `assets`
+  // has two foreign keys to `users` (user_id and inventory_removed_by), so the
+  // embed names the relationship it means. Without the hint PostgREST answers
+  // `PGRST201 — more than one relationship was found`.
   const select =
-    '*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)';
+    '*, users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)';
 
   const { data, error } = await supabase
     .from('assets')
@@ -289,7 +301,7 @@ export async function fetchAssetDetail(
 
 export async function fetchAssetsWithDepartments(): Promise<{ assets: AssetSummary[], departments: any[] }> {
   const [assetsRes, deptsRes] = await Promise.all([
-    supabase.from('assets').select('*, users(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)'),
+    supabase.from('assets').select('*, users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)'),
     supabase.from('departments').select('*').eq('status', 'Active')
   ]);
 
@@ -297,7 +309,7 @@ export async function fetchAssetsWithDepartments(): Promise<{ assets: AssetSumma
   if (deptsRes.error) throw deptsRes.error;
 
   return {
-    assets: (assetsRes.data ?? []).map(normalizeAssetRecord),
+    assets: excludeRemovedFromInventory(assetsRes.data ?? []).map(normalizeAssetRecord),
     departments: deptsRes.data ?? []
   };
 }
@@ -535,7 +547,8 @@ export async function registerAsset(payload: {
   supplier?: string;
   notes?: string;
   status?: string;
-  imageUrl?: string;
+  /** Stored photo descriptor from `uploadAssetPhoto` — omit when there is no photo. */
+  photo?: UploadedMedia | null;
 }) {
   const now = new Date().toISOString();
 
@@ -567,25 +580,22 @@ export async function registerAsset(payload: {
 
   // 2. Persist the photo reference on `asset_files` (Asset_file_ID / Asset_id /
   //    file_name / file_path / file_size / mime_type / uploaded_at / url).
-  if (payload.imageUrl) {
+  //
+  //    `file_path` holds the object KEY inside the bucket and `url` holds the
+  //    absolute public URL — the same pair the web app stores, so both clients
+  //    resolve one asset photo the same way (and the web's `Media::url()` can
+  //    normalise a key on its own).
+  if (payload.photo) {
     try {
-      const imageUrl = payload.imageUrl;
-      const fileName = imageUrl.split('/').pop()?.split('?')[0] || 'asset-photo';
-      const mimeType = /\.png($|\?)/i.test(imageUrl)
-        ? 'image/png'
-        : /\.webp($|\?)/i.test(imageUrl)
-        ? 'image/webp'
-        : /heic/i.test(imageUrl)
-        ? 'image/heic'
-        : 'image/jpeg';
+      const photo = payload.photo;
       await insertRecord('asset_files', {
         Asset_id: asset.id,
-        file_name: fileName,
-        file_path: imageUrl,
-        file_size: 0,
-        mime_type: mimeType,
+        file_name: photo.fileName,
+        file_path: photo.objectKey,
+        file_size: photo.size,
+        mime_type: photo.contentType,
         uploaded_at: now,
-        url: imageUrl,
+        url: photo.publicUrl,
         created_at: now,
         updated_at: now,
       });
@@ -664,56 +674,24 @@ export async function insertDisposalEvent(payload: Record<string, any>) {
   return insertRecord('disposals', payload);
 }
 
-export async function uploadAssetPhoto(assetId: string, uri: string) {
-  try {
-    const cleanedUri = uri.split('?')[0]?.split('#')[0] ?? uri;
-    const rawExt = cleanedUri.includes('.') ? cleanedUri.split('.').pop() : '';
-    const fileExt = String(rawExt || 'jpg').toLowerCase();
-    const fileName = `${assetId}_${Date.now()}.${fileExt}`;
-    const filePath = `photos/${fileName}`;
-
-    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-    const arrayBuffer = decode(base64);
-
-    const contentType =
-      fileExt === 'png'
-        ? 'image/png'
-        : fileExt === 'webp'
-        ? 'image/webp'
-        : fileExt === 'heic'
-        ? 'image/heic'
-        : fileExt === 'heif'
-        ? 'image/heif'
-        : 'image/jpeg';
-
-    const { error } = await supabase.storage.from('assets').upload(filePath, arrayBuffer, {
-      contentType,
-      cacheControl: '3600',
-      upsert: false,
-    });
-
-    if (error) {
-      if (error.message.includes('Bucket not found')) {
-        throw new Error('Supabase Storage bucket "assets" not found. Please create it in your Supabase dashboard.');
-      }
-      if (
-        error.message.toLowerCase().includes('row-level security') ||
-        error.message.toLowerCase().includes('violates row-level security')
-      ) {
-        throw new Error(
-          'Supabase Storage upload blocked by Row Level Security (RLS). Add an INSERT policy for storage.objects on bucket "assets" (or disable RLS for storage.objects) so the client can upload files.',
-        );
-      }
-      throw error;
-    }
-
-    const { data } = supabase.storage.from('assets').getPublicUrl(filePath);
-
-    return data.publicUrl;
-  } catch (error) {
-    console.error('Error uploading photo:', error);
-    throw error;
-  }
+/**
+ * Store one asset photo in the `photos/` folder of the single `assets` bucket.
+ *
+ * The heavy lifting (four ways to read the picked file, three ways to send it,
+ * plus a read-back check) lives in `lib/mediaUpload.ts`; this wrapper only fixes
+ * the bucket layout: asset photos are the one thing the web app and the phone
+ * both write, and the web writes them relative to the bucket root
+ * (`assets/…`), so mobile-written photos live under `photos/…` and every reader
+ * resolves them through `asset_files.file_path` / `asset_files.url`.
+ *
+ * Returns the whole stored descriptor — the caller needs `objectKey` for
+ * `file_path`, `publicUrl` for `url`, plus the size and type for the row.
+ */
+export async function uploadAssetPhoto(
+  assetId: string,
+  photo: string | MediaAsset,
+): Promise<UploadedMedia> {
+  return storeMedia({ folder: 'photos', prefix: assetId, media: photo });
 }
 
 export type MaintenanceAlert = {
@@ -762,7 +740,9 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
   const { data, error } = await supabase
     .from('assets')
     .select(
-      'id, Asset_code, Asset_name, Category, Lifecycle_Status, next_maintenance_date, last_maintenance_date, maintenance_interval, asset_location, user_id, accusion_date, purchase_Price, serial_Number, repair_counts, users(employee_numbers("Full_Name"))',
+      await withInventoryColumn(
+        'id, Asset_code, Asset_name, Category, Lifecycle_Status, next_maintenance_date, last_maintenance_date, maintenance_interval, asset_location, user_id, accusion_date, purchase_Price, serial_Number, repair_counts, users!assets_user_id_foreign(employee_numbers("Full_Name"))',
+      ),
     )
     .not('next_maintenance_date', 'is', null)
     .lte('next_maintenance_date', today)
@@ -776,6 +756,8 @@ export async function fetchMaintenanceAlerts(): Promise<MaintenanceAlert[]> {
       // A disposed / replaced asset keeps its old maintenance dates, but its
       // upkeep is over — it must not sit in the maintenance queue at all.
       .filter((row: any) => !isClosedForMaintenance(row.Lifecycle_Status))
+      // Nor does an asset that already left the inventory (archived disposal).
+      .filter((row: any) => !isRemovedFromInventory(row))
       .map((row: any) => ({
     id: row.id,
     assetId: String(row.Asset_code ?? ''),
@@ -869,7 +851,7 @@ export async function fetchAssetsRequiringEvaluation(): Promise<EvaluationAlert[
   const { data, error } = await supabase
     .from('assets')
     .select(
-      'id, Asset_code, Asset_name, Lifecycle_Status, expiration_date, repair_counts, user_id, users(employee_numbers("Full_Name"))',
+      'id, Asset_code, Asset_name, Lifecycle_Status, expiration_date, repair_counts, user_id, users!assets_user_id_foreign(employee_numbers("Full_Name"))',
     )
     .not('expiration_date', 'is', null)
     .lte('expiration_date', today)
@@ -1098,7 +1080,8 @@ export async function createAndLinkReplacementAsset(payload: {
   warrantyMonths?: number;
   lifespanMonths?: number;
   maintenanceInterval?: number;
-  photoUri?: string | null;
+  /** Already-uploaded photo for the new asset (see `uploadAssetPhoto`). */
+  photo?: UploadedMedia | null;
   actorId?: string | number | null;
 }): Promise<{ newAssetId: string; assetCode: string; photoWarning: string | null }> {
   const now = new Date().toISOString();
@@ -1155,26 +1138,27 @@ export async function createAndLinkReplacementAsset(payload: {
   });
   const newAssetId: string = String(newAsset.id);
 
-  // 2. Photo (best-effort — never blocks the registration itself).
+  // 2. Link the photo (best-effort — never blocks the registration itself).
+  //    The caller uploads the file before calling in, so a storage failure
+  //    already reached the user as a clear message and this stays pure DB work.
   let photoWarning: string | null = null;
-  if (payload.photoUri) {
+  if (payload.photo) {
+    const photo = payload.photo;
     try {
-      const publicUrl = await uploadAssetPhoto(newAssetId, payload.photoUri);
-      const fileName = publicUrl.split('/').pop()?.split('?')[0] || `${newAssetId}-photo.jpg`;
       await insertRecord('asset_files', {
         Asset_id: newAsset.id,
-        file_name: fileName,
-        file_path: publicUrl,
-        file_size: 0,
-        mime_type: /\.png($|\?)/i.test(publicUrl) ? 'image/png' : 'image/jpeg',
+        file_name: photo.fileName,
+        file_path: photo.objectKey,
+        file_size: photo.size,
+        mime_type: photo.contentType,
         uploaded_at: now,
-        url: publicUrl,
+        url: photo.publicUrl,
         created_at: now,
         updated_at: now,
       });
     } catch (photoErr) {
-      console.warn('Replacement asset photo upload failed:', photoErr);
-      photoWarning = (photoErr as Error)?.message || 'Photo upload failed';
+      console.warn('Replacement asset photo record failed:', photoErr);
+      photoWarning = (photoErr as Error)?.message || 'The photo record could not be saved.';
     }
   }
 

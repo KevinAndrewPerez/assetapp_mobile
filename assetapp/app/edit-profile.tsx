@@ -25,6 +25,7 @@ import {
   saveStoredUser,
   updateProfilePhoto,
 } from '@/lib/userService';
+import { describeUploadError, type MediaAsset } from '@/lib/mediaUpload';
 
 /**
  * Edit Profile — the account details the user actually owns.
@@ -38,7 +39,9 @@ export default function EditProfileScreen() {
 
   const [user, setUser] = useState<StoredUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  // Whole picker asset — see lib/mediaUpload: the picker's base64 bytes are
+  // the upload path that survives Android `content://` URIs.
+  const [photoUri, setPhotoUri] = useState<MediaAsset | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -84,9 +87,10 @@ export default function EditProfileScreen() {
           mediaTypes: ['images'],
           allowsEditing: true,
           aspect: [1, 1],
-          quality: 0.8,
+          quality: 0.7,
+          base64: true,
         });
-        if (!result.canceled) setPhotoUri(result.assets[0].uri);
+        if (!result.canceled) setPhotoUri(result.assets[0]);
         return;
       }
 
@@ -99,9 +103,10 @@ export default function EditProfileScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.7,
+        base64: true,
       });
-      if (!result.canceled) setPhotoUri(result.assets[0].uri);
+      if (!result.canceled) setPhotoUri(result.assets[0]);
     } catch (err: any) {
       setError(String(err?.message ?? 'Could not open the photo picker.'));
     }
@@ -123,10 +128,9 @@ export default function EditProfileScreen() {
 
       Alert.alert('Profile Updated', 'Your profile photo has been saved.', [
         { text: 'OK', onPress: () => router.back() },
-      ]);
-    } catch (err: any) {
-      setError(String(err?.message ?? 'Could not save your new photo. Please try again.'));
-    } finally {
+      ]);      } catch (err: any) {
+        setError(describeUploadError(err) || 'Could not save your new photo. Please try again.');
+      } finally {
       setSaving(false);
     }
   };
@@ -170,7 +174,7 @@ export default function EditProfileScreen() {
           >
             {/* Photo */}
             <View style={styles.photoCard}>
-              <Avatar name={user?.full_name} photo={photoUri ?? user?.profile_photo} size={104} ring />
+              <Avatar name={user?.full_name} photo={photoUri?.uri ?? user?.profile_photo} size={104} ring />
 
               <Text style={styles.name} numberOfLines={1}>
                 {user?.full_name || 'Unnamed user'}

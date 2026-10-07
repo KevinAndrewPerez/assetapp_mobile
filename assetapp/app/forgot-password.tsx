@@ -23,7 +23,6 @@ import {
   PASSWORD_RULES,
   completePasswordReset,
   findAccountByEmail,
-  openWebPasswordReset,
   sendResetCode,
   verifyResetCode,
 } from '@/lib/passwordResetService';
@@ -32,9 +31,10 @@ type Step = 'email' | 'code' | 'password';
 
 /**
  * Forgot Password — mirror of the web flow: confirm the address, receive a
- * single-use 6-digit code, then set a new password. The code is generated and
- * mailed by the NU TRACE website (it holds the mail credentials) and verified
- * here against the shared `password_resets` row.
+ * single-use 6-digit code, then set a new password. The app generates the code,
+ * stores its bcrypt hash in the shared `password_resets` table and mails it
+ * through the configured email service (`lib/resetMailer.ts`); the NUTrace
+ * website's form is only used when this build has no email key.
  */
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -134,14 +134,6 @@ export default function ForgotPasswordScreen() {
       setError(String(err?.message ?? 'Password reset failed. Please try again.'));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const openWebsite = async () => {
-    try {
-      await openWebPasswordReset();
-    } catch {
-      setError('Could not open the NU TRACE website on this device.');
     }
   };
 
@@ -271,7 +263,8 @@ export default function ForgotPasswordScreen() {
                     />
                   </View>
                   <Text style={styles.hintText}>
-                    The code is valid for 15 minutes and can only be used once.
+                    The code is valid for 15 minutes and can only be used once. If it has not
+                    arrived within a minute, check your spam folder.
                   </Text>
                 </View>
 
@@ -439,11 +432,6 @@ export default function ForgotPasswordScreen() {
               </>
             ) : null}
 
-            {/* The website can always finish the job if a code never arrives. */}
-            <TouchableOpacity style={styles.websiteButton} onPress={openWebsite} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="open-in-new" size={16} color={colors.inkMuted} />
-              <Text style={styles.websiteButtonText}>Open the NU TRACE website instead</Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.footer}>
@@ -600,17 +588,6 @@ const styles = StyleSheet.create({
   linkDivider: {
     color: colors.inkFaint,
     fontSize: 13,
-  },
-  websiteButton: {
-    ...button.compact,
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignSelf: 'stretch',
-  },
-  websiteButtonText: {
-    ...button.compactLabel,
-    color: colors.inkMuted,
   },
   errorBanner: {
     flexDirection: 'row',

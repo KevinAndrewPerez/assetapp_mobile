@@ -30,6 +30,7 @@ import {
 } from '@/lib/userService';
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { describeUploadError, type MediaAsset } from '@/lib/mediaUpload';
 import {
   REPAIR_PRIORITIES,
   RepairPriority,
@@ -141,7 +142,9 @@ export default function SubmitRequest() {
   const [priority, setPriority] = useState<RepairPriority>('Medium');
   const [note, setNote] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  // Whole picker asset (uri + base64 + mime type) so the upload never depends
+  // on the app being able to read a `content://` URI back off disk.
+  const [photoUri, setPhotoUri] = useState<MediaAsset | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [recipient, setRecipient] = useState<TransferRecipient | null>(null);
@@ -330,12 +333,13 @@ export default function SubmitRequest() {
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        quality: 0.8,
+        quality: 0.7,
         allowsEditing: true,
+        base64: true,
       });
       if (result.canceled) return;
-      const uri = result.assets?.[0]?.uri;
-      if (uri) setPhotoUri(uri);
+      const picked = result.assets?.[0];
+      if (picked) setPhotoUri(picked);
     } catch (err) {
       console.warn('Camera failed:', err);
       Alert.alert('Camera unavailable', 'Could not open the camera on this device.');
@@ -350,12 +354,13 @@ export default function SubmitRequest() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 0.8,
+      quality: 0.7,
       allowsEditing: true,
+      base64: true,
     });
     if (result.canceled) return;
-    const uri = result.assets?.[0]?.uri;
-    if (uri) setPhotoUri(uri);
+    const picked = result.assets?.[0];
+    if (picked) setPhotoUri(picked);
   };
 
   const pickPhoto = () => {
@@ -403,6 +408,10 @@ export default function SubmitRequest() {
           file = await uploadRequestPhoto(photoUri);
         } catch (uploadErr) {
           console.warn('Request photo upload failed (submitting without it):', uploadErr);
+          Alert.alert(
+            'Photo not attached',
+            `${describeUploadError(uploadErr)}\n\nThe request will still be submitted without the photo.`,
+          );
         }
       }
 
@@ -796,7 +805,7 @@ export default function SubmitRequest() {
 
             {photoUri ? (
               <View style={styles.photoPreviewWrap}>
-                <Image source={{ uri: photoUri }} style={styles.photoPreview} resizeMode="cover" />
+                <Image source={{ uri: photoUri.uri }} style={styles.photoPreview} resizeMode="cover" />
                 <View style={styles.photoPreviewActions}>
                   <TouchableOpacity style={styles.photoActionBtn} onPress={pickPhoto} activeOpacity={0.85}>
                     <MaterialCommunityIcons name="image-outline" size={16} color="#1E3A5F" />
