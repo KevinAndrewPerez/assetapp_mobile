@@ -97,6 +97,18 @@ export default function ProfileScreen() {
       label: 'Notifications',
       color: '#FBBF24',
     },
+    // Account administration belongs to the Asset Management Office; everyone
+    // else has no business seeing who else can sign in.
+    ...(profile.role === 'Admin'
+      ? [
+          {
+            id: 'accounts',
+            icon: 'account-group-outline',
+            label: 'Manage Accounts',
+            color: '#FBBF24',
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -159,6 +171,7 @@ export default function ProfileScreen() {
               onPress={() => {
                 if (option.id === 'edit-profile') router.push('/edit-profile' as any);
                 if (option.id === 'notifications') router.push('/notifications');
+                if (option.id === 'accounts') router.push('/accounts' as any);
               }}
             >
               <View style={[styles.settingIconContainer, { backgroundColor: `${option.color}20` }]}>

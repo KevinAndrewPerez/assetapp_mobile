@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 import { webOrigin } from './mediaUrl';
 import { writeAudit } from './auditService';
 import { hashPasswordForDatabase, verifyStoredHash } from './passwordHash';
-import { generateResetCode, mailerConfigured, sendResetCodeEmail } from './resetMailer';
+
 
 /**
  * Forgot password — the mobile twin of the web's `/forgot-password` flow.
@@ -13,17 +13,18 @@ import { generateResetCode, mailerConfigured, sendResetCodeEmail } from './reset
  * bcrypt(12) password into the same `users` row the web writes. Either app can
  * finish a reset the other one started.
  *
- * Only the *mailing* used to be delegated to the NUTrace website, because it
- * held the mail credentials. The deployed site has no `MAIL_*` configuration,
- * so Laravel used its default `log` mailer: the message went into
- * `storage/logs/laravel.log`, the site reported success, and the app — which
- * only checked that a code row appeared — showed "code sent" for a mail nobody
- * ever received.
+ * The *mailing* belongs to the NUTrace website, because that is the only place
+ * a mail-provider credential may live. The app must never carry one: a
+ * `EXPO_PUBLIC_*` value is embedded in the APK/IPA and is readable by anyone
+ * who extracts the bundle. The old `lib/resetMailer.ts` did exactly that and
+ * has been removed; `sendResetCode` now always posts the website's form. If the
+ * deployment has no `MAIL_*` configuration, the website's log mailer is an
+ * operational problem to fix on the server, not a credential to move into the
+ * phone.
  *
- * So the app mails the code itself now (`lib/resetMailer.ts`). Posting the
- * website's form is kept as a fallback for builds that ship without an email
- * key, and the wording of every message below still follows the web controller
- * so the two apps report failures identically.
+ * The code row, the expiry check, single-use enforcement and the password write
+ * are still shared with the web, so either app can finish a reset the other
+ * started.
  */
 
 /** Same five requirements the web enforces (`Password::defaults()`). */
@@ -185,86 +186,24 @@ async function waitForFreshCode(email: string, previousMaxId: number, timeoutMs 
 }
 
 /**
- * `password_resets` timestamps are `timestamp without time zone` holding UTC —
- * exactly what Laravel stores with the app on UTC. The `…Z` designator is
- * stripped rather than left on: Postgres converts a zone-bearing string into the
- * session's timezone, while the bare form is stored verbatim, so the digits are
- * the UTC wall clock whatever the session is set to. (`parseStoredTimestamp`
- * adds the zone back when reading.)
- */
-const storedTimestamp = (value: Date): string =>
-  value.toISOString().replace(/\.\d{3}Z$/, '').replace('T', ' ');
-
-/** Drop every code for an address — the web deletes the previous one too. */
-async function clearResetCodes(email: string): Promise<void> {
-  const { error } = await supabase.from('password_resets').delete().eq('email', email);
-  if (error) console.warn('Could not clear existing reset codes:', error.message);
-}
-
-/**
- * Write the code row the way the web writes it: hash first, row before the mail
- * is handed over. Storing the hash (never the code) means the row is useless to
- * anyone reading the table, and `verifyResetCode` compares against it with
- * bcrypt.
- */
-async function storeResetCode(email: string, code: string): Promise<void> {
-  await clearResetCodes(email);
-
-  const now = new Date();
-  const expires = new Date(now.getTime() + RESET_CODE_TTL_MINUTES * 60_000);
-  const { error } = await supabase.from('password_resets').insert({
-    email,
-    token: await hashPasswordForDatabase(code),
-    expires_at: storedTimestamp(expires),
-    used: false,
-    created_at: storedTimestamp(now),
-    updated_at: storedTimestamp(now),
-  });
-
-  if (error) {
-    console.error('Failed to store the reset code:', error.message);
-    throw new Error('We could not start a password reset right now. Please try again.');
-  }
-}
-
-/**
- * Mail a fresh 6-digit code.
+ * Ask the NUTrace website to mail a fresh 6-digit code.
  *
- * The app owns the code: it generates it, stores the bcrypt hash in
- * `password_resets` and sends the message through the email service
- * (`lib/resetMailer.ts`). The account is checked first — an address that is not
- * registered must not receive anything, the same gate the web applies.
- *
- * When the build ships without an email key the flow falls back to asking the
- * NUTrace website to send the mail, which is only useful if that deployment
- * ever gets a real `MAIL_*` configuration.
+ * The site generates the code, stores its bcrypt hash in `password_resets` and
+ * sends the message with its server-side `MAIL_*` configuration. The account is
+ * checked first — an address that is not registered must not receive anything,
+ * the same gate the web applies. No mail-provider credential is read here.
  */
 export async function sendResetCode(email: string): Promise<void> {
   const address = String(email ?? '').trim();
+  if (!address) throw new Error('Enter the email address you registered with.');
 
-  if (mailerConfigured()) {
-    const account = await findAccountByEmail(address);
-    if (!account) throw new Error(NO_ACCOUNT_MESSAGE);
-
-    const code = generateResetCode();
-    await storeResetCode(account.email, code);
-
-    try {
-      await sendResetCodeEmail(account.email, code);
-    } catch (error) {
-      // A code nobody received must not stay in the table: the next attempt
-      // starts clean instead of comparing against a message that never arrived.
-      await clearResetCodes(account.email);
-      throw error;
-    }
-    return;
-  }
-
+  // No provider key, no direct provider call: the website owns the mail
+  // credentials and writes the same `password_resets` row this app reads.
   await sendResetCodeViaWebsite(address);
 }
 
 /**
- * Ask the NUTrace website to email the code — the fallback path.
+ * Post the address to the NUTrace website and wait for the shared code row.
  *
  * The verification endpoint is CSRF-protected, so the token is read from the
  * page and the session cookie travels back with it. React Native keeps cookies

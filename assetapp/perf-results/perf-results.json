@@ -1,0 +1,797 @@
+{
+  "runs": 5,
+  "coldMs": 281.82809999999995,
+  "ping": {
+    "runs": [
+      117.13850000000002,
+      107.10809999999992,
+      99.14200000000005,
+      130.68079999999986,
+      102.33870000000002
+    ],
+    "avg": 111.28161999999998
+  },
+  "results": [
+    {
+      "id": "sign-in-admin",
+      "document": "App launch / sign-in — Admin",
+      "precondition": "Admin account is available and the NU TRACE mobile app is installed.",
+      "metric": "Application Load Time (backend portion)",
+      "screen": "app/login.tsx → supabase.rpc(verify_user_password) + enrichUserWithEmployeeData()",
+      "concurrency": "sequential",
+      "steps": [
+        [
+          null,
+          "/rest/v1/rpc/verify_user_password",
+          {
+            "method": "POST",
+            "body": "{\"email_input\":\"alex@nu-lipa.edu.ph\",\"password_input\":\"perf-test-wrong-password\"}"
+          }
+        ],
+        [
+          null,
+          "/rest/v1/users?select=*,employee_numbers(%22Full_Name%22,%22Department_id%22,%22Employee_number%22),departments:department_id(%22Name%22)&id=eq.1",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        511.73070000000007,
+        506.2323000000001,
+        499.62440000000015,
+        484.6515000000004,
+        499.15260000000035
+      ],
+      "avg": 500.27830000000023,
+      "min": 484.6515000000004,
+      "max": 511.73070000000007,
+      "bytes": 418,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "sign-in-department-head",
+      "document": "App launch / sign-in — Department Head",
+      "precondition": "Department Head account is available and the NU TRACE mobile app is installed.",
+      "metric": "Application Load Time (backend portion)",
+      "screen": "app/login.tsx → supabase.rpc(verify_user_password) + enrichUserWithEmployeeData()",
+      "concurrency": "sequential",
+      "steps": [
+        [
+          null,
+          "/rest/v1/rpc/verify_user_password",
+          {
+            "method": "POST",
+            "body": "{\"email_input\":\"joseph@nu-lipa.edu.ph\",\"password_input\":\"perf-test-wrong-password\"}"
+          }
+        ],
+        [
+          null,
+          "/rest/v1/users?select=*,employee_numbers(%22Full_Name%22,%22Department_id%22,%22Employee_number%22),departments:department_id(%22Name%22)&id=eq.2",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        489.9382999999998,
+        494.1918000000005,
+        476.6797000000006,
+        474.1734000000006,
+        513.7624000000005
+      ],
+      "avg": 489.7491200000004,
+      "min": 474.1734000000006,
+      "max": 513.7624000000005,
+      "bytes": 564,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "sign-in-employee",
+      "document": "App launch / sign-in — Employee",
+      "precondition": "Employee account is available and the NU TRACE mobile app is installed.",
+      "metric": "Application Load Time (backend portion)",
+      "screen": "app/login.tsx → supabase.rpc(verify_user_password) + enrichUserWithEmployeeData()",
+      "concurrency": "sequential",
+      "steps": [
+        [
+          null,
+          "/rest/v1/rpc/verify_user_password",
+          {
+            "method": "POST",
+            "body": "{\"email_input\":\"joel@yahoo.com\",\"password_input\":\"perf-test-wrong-password\"}"
+          }
+        ],
+        [
+          null,
+          "/rest/v1/users?select=*,employee_numbers(%22Full_Name%22,%22Department_id%22,%22Employee_number%22),departments:department_id(%22Name%22)&id=eq.3",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        496.77939999999944,
+        487.4356000000007,
+        473.61159999999836,
+        477.34370000000126,
+        465.15229999999974
+      ],
+      "avg": 480.0645199999999,
+      "min": 465.15229999999974,
+      "max": 496.77939999999944,
+      "bytes": 551,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "dashboard-admin",
+      "document": "Dashboard opens — Admin",
+      "precondition": "Admin is authenticated and the mobile dashboard can be opened.",
+      "metric": "Application Response Time",
+      "screen": "app/(tabs)/index.tsx → fetchDashboardData()",
+      "concurrency": "parallel (Promise.all, as the screen does)",
+      "steps": [
+        [
+          "total assets",
+          "/rest/v1/assets?select=id",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "deployed",
+          "/rest/v1/assets?select=id&Lifecycle_Status=eq.Active",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "for repair",
+          "/rest/v1/assets?select=id&Lifecycle_Status=eq.For%20Repair",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "pending requests",
+          "/rest/v1/requests?select=id&status=eq.Pending",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          null,
+          "/rest/v1/audit_logs?select=*,assets(%22Asset_name%22,%22Asset_code%22),users(role,employee_numbers(%22Full_Name%22)),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/repairs?select=*,assets(%22Asset_name%22,%22Asset_code%22),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/replacements?select=*,old_assets:old_assets_id(Asset_name,Asset_code),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/disposals?select=*,assets(Asset_name,Asset_code),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ]
+      ],
+      "runs": [
+        118.44660000000113,
+        107.88010000000031,
+        114.41389999999956,
+        109.70999999999913,
+        109.45100000000093
+      ],
+      "avg": 111.9803200000002,
+      "min": 107.88010000000031,
+      "max": 118.44660000000113,
+      "bytes": 63239,
+      "rows": 450,
+      "count": null
+    },
+    {
+      "id": "dashboard-department-head",
+      "document": "Dashboard opens — Department Head",
+      "precondition": "Department Head is authenticated and the mobile dashboard can be opened.",
+      "metric": "Application Response Time",
+      "screen": "app/(tabs)/index.tsx → fetchDashboardData()",
+      "concurrency": "parallel (Promise.all, as the screen does)",
+      "steps": [
+        [
+          "total assets",
+          "/rest/v1/assets?select=id",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "deployed",
+          "/rest/v1/assets?select=id&Lifecycle_Status=eq.Active",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "for repair",
+          "/rest/v1/assets?select=id&Lifecycle_Status=eq.For%20Repair",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "pending requests",
+          "/rest/v1/requests?select=id&status=eq.Pending",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          null,
+          "/rest/v1/audit_logs?select=*,assets(%22Asset_name%22,%22Asset_code%22),users(role,employee_numbers(%22Full_Name%22)),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/repairs?select=*,assets(%22Asset_name%22,%22Asset_code%22),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/replacements?select=*,old_assets:old_assets_id(Asset_name,Asset_code),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/disposals?select=*,assets(Asset_name,Asset_code),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ]
+      ],
+      "runs": [
+        111.78629999999976,
+        104.95180000000073,
+        109.63990000000013,
+        118.41300000000047,
+        119.01579999999922
+      ],
+      "avg": 112.76136000000005,
+      "min": 104.95180000000073,
+      "max": 119.01579999999922,
+      "bytes": 63239,
+      "rows": 450,
+      "count": null
+    },
+    {
+      "id": "dashboard-employee",
+      "document": "Dashboard opens — Employee",
+      "precondition": "Employee is authenticated and the mobile dashboard can be opened.",
+      "metric": "Application Response Time",
+      "screen": "app/(tabs)/index.tsx → fetchDashboardData()",
+      "concurrency": "parallel (Promise.all, as the screen does)",
+      "steps": [
+        [
+          "total assets",
+          "/rest/v1/assets?select=id",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "deployed",
+          "/rest/v1/assets?select=id&Lifecycle_Status=eq.Active",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "for repair",
+          "/rest/v1/assets?select=id&Lifecycle_Status=eq.For%20Repair",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          "pending requests",
+          "/rest/v1/requests?select=id&status=eq.Pending",
+          {
+            "Prefer": "count=exact"
+          }
+        ],
+        [
+          null,
+          "/rest/v1/audit_logs?select=*,assets(%22Asset_name%22,%22Asset_code%22),users(role,employee_numbers(%22Full_Name%22)),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/repairs?select=*,assets(%22Asset_name%22,%22Asset_code%22),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/replacements?select=*,old_assets:old_assets_id(Asset_name,Asset_code),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/disposals?select=*,assets(Asset_name,Asset_code),requests(id,request_type)&order=created_at.desc&limit=100",
+          null
+        ]
+      ],
+      "runs": [
+        105.01249999999891,
+        112.66960000000108,
+        125.0547000000006,
+        115.04520000000048,
+        179.66490000000158
+      ],
+      "avg": 127.48938000000052,
+      "min": 105.01249999999891,
+      "max": 179.66490000000158,
+      "bytes": 63239,
+      "rows": 450,
+      "count": null
+    },
+    {
+      "id": "asset-list-head",
+      "document": "Assigned asset list opens — Department Head",
+      "precondition": "Department Head is authenticated and has at least one assigned asset.",
+      "metric": "Application Response Time",
+      "screen": "(user-tabs) asset list → fetchUserAssets(user, 'own')",
+      "concurrency": "sequential — the embedded select is rejected, so the screen immediately re-queries without the embeds",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=*,users(employee_numbers(%22Full_Name%22),departments(%22Name%22))&user_id=eq.2&order=updated_at.desc",
+          null,
+          [
+            300
+          ]
+        ],
+        [
+          null,
+          "/rest/v1/assets?select=*&user_id=eq.2&order=updated_at.desc",
+          null,
+          []
+        ]
+      ],
+      "count": 47,
+      "runs": [
+        252.26000000000022,
+        206.7492000000002,
+        202.85649999999987,
+        214.91300000000047,
+        227.8076999999994
+      ],
+      "avg": 220.91728000000003,
+      "min": 202.85649999999987,
+      "max": 252.26000000000022,
+      "bytes": 34938,
+      "rows": 48
+    },
+    {
+      "id": "asset-list-employee",
+      "document": "Assigned asset list opens — Employee",
+      "precondition": "Employee is authenticated and has at least one assigned asset.",
+      "metric": "Application Response Time",
+      "screen": "(user-tabs) asset list → fetchUserAssets(user, 'own')",
+      "concurrency": "sequential — the embedded select is rejected, so the screen immediately re-queries without the embeds",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=*,users(employee_numbers(%22Full_Name%22),departments(%22Name%22))&user_id=eq.3&order=updated_at.desc",
+          null,
+          [
+            300
+          ]
+        ],
+        [
+          null,
+          "/rest/v1/assets?select=*&user_id=eq.3&order=updated_at.desc",
+          null,
+          []
+        ]
+      ],
+      "count": 44,
+      "runs": [
+        204.20409999999902,
+        186.7584999999999,
+        208.11709999999948,
+        202.66530000000057,
+        194.7935000000016
+      ],
+      "avg": 199.30770000000012,
+      "min": 186.7584999999999,
+      "max": 208.11709999999948,
+      "bytes": 32323,
+      "rows": 45
+    },
+    {
+      "id": "asset-details-head",
+      "document": "Asset details render — Department Head",
+      "precondition": "Department Head has an assigned asset available for viewing.",
+      "metric": "Application Response Time",
+      "screen": "app/asset-details.tsx → fetchAssetDetail(code)",
+      "concurrency": "single query",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=*,users!assets_user_id_foreign(department_id,employee_numbers(%22Full_Name%22),departments(id,%22Name%22)),asset_files(%22Asset_file_ID%22,file_name,file_path,url,mime_type)&Asset_code=eq.AST-BCZYE9KW-Y4AD",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        123.21890000000167,
+        101.2430000000004,
+        122.83129999999983,
+        103.53850000000057,
+        101.42679999999928
+      ],
+      "avg": 110.45170000000034,
+      "min": 101.2430000000004,
+      "max": 123.21890000000167,
+      "bytes": 1166,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "asset-details-employee",
+      "document": "Asset details render — Employee",
+      "precondition": "Employee has an assigned asset available for viewing.",
+      "metric": "Application Response Time",
+      "screen": "app/asset-details.tsx → fetchAssetDetail(code)",
+      "concurrency": "single query",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=*,users!assets_user_id_foreign(department_id,employee_numbers(%22Full_Name%22),departments(id,%22Name%22)),asset_files(%22Asset_file_ID%22,file_name,file_path,url,mime_type)&Asset_code=eq.AST-FDVZ5SP-8M8I-02",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        100.83929999999964,
+        105.23629999999685,
+        117.21389999999883,
+        99.00010000000111,
+        97.52269999999771
+      ],
+      "avg": 103.96245999999883,
+      "min": 97.52269999999771,
+      "max": 117.21389999999883,
+      "bytes": 1171,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "qr-scan-admin",
+      "document": "QR / barcode scan resolves an asset — Admin",
+      "precondition": "Admin is authenticated and a valid NU TRACE asset QR/barcode is available.",
+      "metric": "Application Response Time",
+      "screen": "components/asset-scanner.tsx → findAssetByScan() then /asset-details",
+      "concurrency": "sequential (exact match, then case-insensitive retry only if it misses)",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=id,Asset_code,Asset_name,Lifecycle_Status&Asset_code=eq.AST-BCZYE9KW-Y4AD",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        96.08250000000044,
+        106.80469999999696,
+        102.74880000000121,
+        97.34569999999803,
+        104.79430000000139
+      ],
+      "avg": 101.5551999999996,
+      "min": 96.08250000000044,
+      "max": 106.80469999999696,
+      "bytes": 95,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "qr-scan-head",
+      "document": "QR / barcode scan resolves an asset — Department Head",
+      "precondition": "Department Head is authenticated and a valid NU TRACE asset QR/barcode is available.",
+      "metric": "Application Response Time",
+      "screen": "components/asset-scanner.tsx → findAssetByScan() then /asset-details",
+      "concurrency": "sequential",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=id,Asset_code,Asset_name,Lifecycle_Status&Asset_code=eq.AST-BCZYE9KW-Y4AD",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        101.577699999998,
+        98.70769999999902,
+        90.13190000000031,
+        102.21849999999904,
+        96.77260000000024
+      ],
+      "avg": 97.88167999999932,
+      "min": 90.13190000000031,
+      "max": 102.21849999999904,
+      "bytes": 95,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "qr-scan-employee",
+      "document": "QR / barcode scan resolves an asset — Employee",
+      "precondition": "Employee is authenticated and a valid NU TRACE asset QR/barcode is available.",
+      "metric": "Application Response Time",
+      "screen": "components/asset-scanner.tsx → findAssetByScan() then /asset-details",
+      "concurrency": "sequential",
+      "steps": [
+        [
+          null,
+          "/rest/v1/assets?select=id,Asset_code,Asset_name,Lifecycle_Status&Asset_code=eq.AST-FDVZ5SP-8M8I-02",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        104.05329999999958,
+        89.22530000000188,
+        103.72039999999834,
+        95.19100000000253,
+        101.11319999999978
+      ],
+      "avg": 98.66064000000043,
+      "min": 89.22530000000188,
+      "max": 104.05329999999958,
+      "bytes": 96,
+      "rows": 1,
+      "count": null
+    },
+    {
+      "id": "asset-tab-admin",
+      "document": "Assets tab (registry) opens — Admin",
+      "precondition": "Admin is authenticated and the asset registry tab can be opened.",
+      "metric": "Application Response Time",
+      "screen": "app/(tabs)/assets.tsx → loadData(): assets+departments, then one head lookup per department",
+      "concurrency": "two phases — assets+departments in parallel, then one users query per department in parallel",
+      "phases": [
+        [
+          [
+            null,
+            "/rest/v1/assets?select=*,users!assets_user_id_foreign(department_id,employee_numbers(%22Full_Name%22),departments(id,%22Name%22)),asset_files(%22Asset_file_ID%22,file_name,file_path,url,mime_type)",
+            null
+          ],
+          [
+            null,
+            "/rest/v1/departments?select=*&status=eq.Active",
+            null
+          ]
+        ],
+        [
+          [
+            null,
+            "/rest/v1/users?select=email,employee_numbers(%22Full_Name%22)&department_id=eq.1&role=eq.Department%20Head&limit=1",
+            {
+              "Accept": "application/vnd.pgrst.object+json"
+            }
+          ]
+        ],
+        [
+          [
+            null,
+            "/rest/v1/users?select=email,employee_numbers(%22Full_Name%22)&department_id=eq.2&role=eq.Department%20Head&limit=1",
+            {
+              "Accept": "application/vnd.pgrst.object+json"
+            }
+          ]
+        ],
+        [
+          [
+            null,
+            "/rest/v1/users?select=email,employee_numbers(%22Full_Name%22)&department_id=eq.3&role=eq.Department%20Head&limit=1",
+            {
+              "Accept": "application/vnd.pgrst.object+json"
+            }
+          ]
+        ],
+        [
+          [
+            null,
+            "/rest/v1/users?select=email,employee_numbers(%22Full_Name%22)&department_id=eq.4&role=eq.Department%20Head&limit=1",
+            {
+              "Accept": "application/vnd.pgrst.object+json"
+            }
+          ]
+        ]
+      ],
+      "runs": [
+        513.0365999999995,
+        528.6395000000011,
+        547.495600000002,
+        509.6529999999984,
+        550.2767999999996
+      ],
+      "avg": 529.8203000000001,
+      "min": 509.6529999999984,
+      "max": 550.2767999999996,
+      "bytes": 186575,
+      "rows": 174,
+      "count": null
+    },
+    {
+      "id": "notifications-head",
+      "document": "Notifications load — Department Head",
+      "precondition": "Department Head is authenticated and notification records are available.",
+      "metric": "Application Response Time",
+      "screen": "app/notifications.tsx → fetchNotifications(userId)",
+      "concurrency": "sequential (list, then unread count)",
+      "steps": [
+        [
+          null,
+          "/rest/v1/notifications?select=*&user_id=eq.2&order=created_at.desc&limit=50",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/notifications?select=id&user_id=eq.2&is_read=eq.false",
+          {
+            "Prefer": "count=exact"
+          }
+        ]
+      ],
+      "runs": [
+        205.9478999999992,
+        250.6231000000007,
+        216.48289999999906,
+        235.87319999999818,
+        199.39860000000044
+      ],
+      "avg": 221.66513999999952,
+      "min": 199.39860000000044,
+      "max": 250.6231000000007,
+      "bytes": 8472,
+      "rows": 38,
+      "count": null
+    },
+    {
+      "id": "notifications-employee",
+      "document": "Notifications load — Employee",
+      "precondition": "Employee is authenticated and notification records are available.",
+      "metric": "Application Response Time",
+      "screen": "app/notifications.tsx → fetchNotifications(userId)",
+      "concurrency": "sequential (list, then unread count)",
+      "steps": [
+        [
+          null,
+          "/rest/v1/notifications?select=*&user_id=eq.3&order=created_at.desc&limit=50",
+          null
+        ],
+        [
+          null,
+          "/rest/v1/notifications?select=id&user_id=eq.3&is_read=eq.false",
+          {
+            "Prefer": "count=exact"
+          }
+        ]
+      ],
+      "runs": [
+        216.99499999999898,
+        210.18279999999868,
+        190.45950000000084,
+        211.25789999999688,
+        233.07440000000133
+      ],
+      "avg": 212.39391999999935,
+      "min": 190.45950000000084,
+      "max": 233.07440000000133,
+      "bytes": 8091,
+      "rows": 48,
+      "count": null
+    },
+    {
+      "id": "profile-employee",
+      "document": "Profile / account page opens — Employee",
+      "precondition": "Employee is authenticated and the profile/account page is accessible.",
+      "metric": "Application Response Time",
+      "screen": "app/(tabs)/profile.tsx → fetchLiveUser(id)",
+      "concurrency": "single query",
+      "steps": [
+        [
+          null,
+          "/rest/v1/users?select=id,email,department_id,role,status,profile_photo,created_at,updated_at,employee_numbers(%22Full_Name%22,%22Department_id%22,%22Employee_number%22),departments:department_id(%22Name%22)&id=eq.3",
+          {
+            "Accept": "application/vnd.pgrst.object+json"
+          }
+        ]
+      ],
+      "runs": [
+        99.04080000000249,
+        122.69120000000112,
+        103.58720000000176,
+        109.55559999999969,
+        103.52089999999953
+      ],
+      "avg": 107.67914000000091,
+      "min": 99.04080000000249,
+      "max": 122.69120000000112,
+      "bytes": 451,
+      "rows": 1,
+      "count": null
+    }
+  ],
+  "writeResults": [
+    {
+      "role": "Department Head",
+      "runs": [
+        481.1834000000017,
+        227.7042999999976,
+        220.95520000000033,
+        221.2438000000002,
+        470.1093000000001
+      ],
+      "avg": 324.2392
+    },
+    {
+      "role": "Employee",
+      "runs": [
+        228.65500000000247,
+        220.35889999999927,
+        467.35109999999986,
+        223.57819999999992,
+        231.29100000000108
+      ],
+      "avg": 274.24684000000053
+    }
+  ],
+  "accounts": [
+    {
+      "id": 1,
+      "role": "Admin",
+      "email": "alex@nu-lipa.edu.ph"
+    },
+    {
+      "id": 2,
+      "role": "Department Head",
+      "email": "joseph@nu-lipa.edu.ph"
+    },
+    {
+      "id": 3,
+      "role": "Employee",
+      "email": "joel@yahoo.com"
+    },
+    {
+      "id": 4,
+      "role": "Employee",
+      "email": "miggybalmes9@gmail.com"
+    },
+    {
+      "id": 5,
+      "role": "Employee",
+      "email": "ilbalmes@nu-lipa.edu.ph"
+    },
+    {
+      "id": 15,
+      "role": "Department Head",
+      "email": "Demo@gmail.com"
+    }
+  ],
+  "assetTotal": 168,
+  "departmentTotal": 4,
+  "finishedAt": "2026-10-07T08:32:17.308Z"
+}

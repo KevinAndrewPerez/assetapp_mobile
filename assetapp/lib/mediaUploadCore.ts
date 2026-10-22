@@ -31,6 +31,10 @@ const EXTENSION_CONTENT_TYPES: Record<string, string> = {
   bmp: 'image/bmp',
   heic: 'image/heic',
   heif: 'image/heif',
+  // Supporting documents (disposal paperwork) are PDFs; they travel through the
+  // same storeMedia pipeline as photos, so the type has to be knowable here or
+  // a PDF would be stored as image/jpeg and download as a broken image.
+  pdf: 'application/pdf',
 };
 
 /** MIME type → extension, for when the picker gives a type but no usable name. */
@@ -44,6 +48,7 @@ const MIME_EXTENSIONS: Record<string, string> = {
   'image/bmp': 'bmp',
   'image/heic': 'heic',
   'image/heif': 'heif',
+  'application/pdf': 'pdf',
 };
 
 export const DEFAULT_EXTENSION = 'jpg';
@@ -108,7 +113,7 @@ export function extensionFor(input: string | MediaAsset | null | undefined, fall
 export function contentTypeFor(input: string | MediaAsset | null | undefined): string {
   const media = normalizeMedia(input);
   const mime = media?.mimeType ? String(media.mimeType).toLowerCase().split(';')[0].trim() : '';
-  if (mime && (MIME_EXTENSIONS[mime] || mime.startsWith('image/'))) {
+  if (mime && (MIME_EXTENSIONS[mime] || mime.startsWith('image/') || mime === 'application/pdf')) {
     return mime === 'image/jpg' ? DEFAULT_CONTENT_TYPE : mime;
   }
   return EXTENSION_CONTENT_TYPES[extensionFor(media)] ?? DEFAULT_CONTENT_TYPE;

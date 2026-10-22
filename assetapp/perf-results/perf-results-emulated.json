@@ -1,0 +1,878 @@
+{
+  "measuredAt": "2026-10-07T10:31:37.911Z",
+  "environment": {
+    "browser": "chrome.exe",
+    "mobileEmulation": "412×915, DPR 2.625, touch",
+    "cpuThrottle": 4,
+    "cache": "disabled (cold load of the bundle from the local static server)",
+    "bundle": "expo export --platform web (production)",
+    "readiness": "screen text showing + every request of the screen received + page settled",
+    "browserRestarts": 0
+  },
+  "runs": 5,
+  "results": [
+    {
+      "scenario": "launch-admin",
+      "url": "/login",
+      "role": null,
+      "account": null,
+      "marker": "Welcome to NU TRACE",
+      "forms": [
+        "launch-admin"
+      ],
+      "runs": [
+        {
+          "load": 1786,
+          "response": null,
+          "render": 970,
+          "fcp": 816,
+          "requests": 0
+        },
+        {
+          "load": 650,
+          "response": null,
+          "render": 590,
+          "fcp": 60,
+          "requests": 0
+        },
+        {
+          "load": 517,
+          "response": null,
+          "render": 445,
+          "fcp": 72,
+          "requests": 0
+        },
+        {
+          "load": 512,
+          "response": null,
+          "render": 456,
+          "fcp": 56,
+          "requests": 0
+        },
+        {
+          "load": 567,
+          "response": null,
+          "render": 519,
+          "fcp": 48,
+          "requests": 0
+        }
+      ],
+      "load": 806,
+      "response": null,
+      "render": 596,
+      "failures": 0
+    },
+    {
+      "scenario": "launch-head",
+      "url": "/login",
+      "role": null,
+      "account": null,
+      "marker": "Welcome to NU TRACE",
+      "forms": [
+        "launch-head"
+      ],
+      "runs": [
+        {
+          "load": 504,
+          "response": null,
+          "render": 444,
+          "fcp": 60,
+          "requests": 0
+        },
+        {
+          "load": 505,
+          "response": null,
+          "render": 449,
+          "fcp": 56,
+          "requests": 0
+        },
+        {
+          "load": 479,
+          "response": null,
+          "render": 431,
+          "fcp": 48,
+          "requests": 0
+        },
+        {
+          "load": 547,
+          "response": null,
+          "render": 483,
+          "fcp": 64,
+          "requests": 0
+        },
+        {
+          "load": 507,
+          "response": null,
+          "render": 455,
+          "fcp": 52,
+          "requests": 0
+        }
+      ],
+      "load": 508,
+      "response": null,
+      "render": 452,
+      "failures": 0
+    },
+    {
+      "scenario": "launch-employee",
+      "url": "/login",
+      "role": null,
+      "account": null,
+      "marker": "Welcome to NU TRACE",
+      "forms": [
+        "launch-employee"
+      ],
+      "runs": [
+        {
+          "load": 524,
+          "response": null,
+          "render": 480,
+          "fcp": 44,
+          "requests": 0
+        },
+        {
+          "load": 500,
+          "response": null,
+          "render": 436,
+          "fcp": 64,
+          "requests": 0
+        },
+        {
+          "load": 501,
+          "response": null,
+          "render": 453,
+          "fcp": 48,
+          "requests": 0
+        },
+        {
+          "load": 482,
+          "response": null,
+          "render": 414,
+          "fcp": 68,
+          "requests": 0
+        },
+        {
+          "load": 466,
+          "response": null,
+          "render": 414,
+          "fcp": 52,
+          "requests": 0
+        }
+      ],
+      "load": 495,
+      "response": null,
+      "render": 439,
+      "failures": 0
+    },
+    {
+      "scenario": "dashboard-admin",
+      "url": "/",
+      "role": "Admin",
+      "account": "alex@nu-lipa.edu.ph",
+      "marker": "Total Assets",
+      "forms": [
+        "dashboard-admin"
+      ],
+      "runs": [
+        {
+          "load": 1773,
+          "response": 381,
+          "render": 103,
+          "fcp": 60,
+          "requests": 11
+        },
+        {
+          "load": 1644,
+          "response": 204,
+          "render": 77,
+          "fcp": 68,
+          "requests": 11
+        },
+        {
+          "load": 1532,
+          "response": 282,
+          "render": 141,
+          "fcp": 56,
+          "requests": 11
+        },
+        {
+          "load": 1598,
+          "response": 235,
+          "render": 68,
+          "fcp": 44,
+          "requests": 11
+        },
+        {
+          "load": 1614,
+          "response": 195,
+          "render": 70,
+          "fcp": 80,
+          "requests": 11
+        }
+      ],
+      "load": 1632,
+      "response": 259,
+      "render": 92,
+      "failures": 0
+    },
+    {
+      "scenario": "dashboard-head",
+      "url": "/",
+      "role": "Department Head",
+      "account": "joseph@nu-lipa.edu.ph",
+      "marker": "Asset Lifecycle Status",
+      "forms": [
+        "dashboard-head"
+      ],
+      "runs": [
+        {
+          "load": 1604,
+          "response": 243,
+          "render": 155,
+          "fcp": 56,
+          "requests": 6
+        },
+        {
+          "load": 1605,
+          "response": 214,
+          "render": 167,
+          "fcp": 64,
+          "requests": 6
+        },
+        {
+          "load": 1520,
+          "response": 264,
+          "render": 79,
+          "fcp": 72,
+          "requests": 6
+        },
+        {
+          "load": 1444,
+          "response": 193,
+          "render": 98,
+          "fcp": 48,
+          "requests": 6
+        },
+        {
+          "load": 1591,
+          "response": 206,
+          "render": 115,
+          "fcp": 64,
+          "requests": 6
+        }
+      ],
+      "load": 1553,
+      "response": 224,
+      "render": 123,
+      "failures": 0
+    },
+    {
+      "scenario": "dashboard-employee",
+      "url": "/",
+      "role": "Employee",
+      "account": "joel@yahoo.com",
+      "marker": "Asset Lifecycle Status",
+      "forms": [
+        "dashboard-employee"
+      ],
+      "runs": [
+        {
+          "load": 1508,
+          "response": 187,
+          "render": 100,
+          "fcp": 52,
+          "requests": 6
+        },
+        {
+          "load": 1548,
+          "response": 193,
+          "render": 106,
+          "fcp": 56,
+          "requests": 6
+        },
+        {
+          "load": 1541,
+          "response": 221,
+          "render": 120,
+          "fcp": 72,
+          "requests": 6
+        },
+        {
+          "load": 1583,
+          "response": 229,
+          "render": 119,
+          "fcp": 48,
+          "requests": 6
+        },
+        {
+          "load": 1520,
+          "response": 194,
+          "render": 134,
+          "fcp": 56,
+          "requests": 6
+        }
+      ],
+      "load": 1540,
+      "response": 205,
+      "render": 116,
+      "failures": 0
+    },
+    {
+      "scenario": "asset-tab-admin",
+      "url": "/assets",
+      "role": "Admin",
+      "account": "alex@nu-lipa.edu.ph",
+      "marker": "Total Assets:",
+      "forms": [],
+      "runs": [
+        {
+          "load": 1614,
+          "response": 200,
+          "render": 86,
+          "fcp": 60,
+          "requests": 9
+        },
+        {
+          "load": 1652,
+          "response": 211,
+          "render": 163,
+          "fcp": 48,
+          "requests": 9
+        },
+        {
+          "load": 1591,
+          "response": 232,
+          "render": 53,
+          "fcp": 64,
+          "requests": 9
+        },
+        {
+          "load": 1684,
+          "response": 207,
+          "render": 170,
+          "fcp": 40,
+          "requests": 9
+        },
+        {
+          "load": 1563,
+          "response": 201,
+          "render": 101,
+          "fcp": 44,
+          "requests": 9
+        }
+      ],
+      "load": 1621,
+      "response": 210,
+      "render": 115,
+      "failures": 0
+    },
+    {
+      "scenario": "my-assets-head",
+      "url": "/my-assets",
+      "role": "Department Head",
+      "account": "joseph@nu-lipa.edu.ph",
+      "marker": "Total Assets",
+      "forms": [
+        "my-assets-head"
+      ],
+      "runs": [
+        {
+          "load": 1816,
+          "response": 192,
+          "render": 280,
+          "fcp": 40,
+          "requests": 8
+        },
+        {
+          "load": 1769,
+          "response": 193,
+          "render": 196,
+          "fcp": 60,
+          "requests": 8
+        },
+        {
+          "load": 1791,
+          "response": 216,
+          "render": 217,
+          "fcp": 64,
+          "requests": 8
+        },
+        {
+          "load": 1923,
+          "response": 209,
+          "render": 225,
+          "fcp": 64,
+          "requests": 8
+        },
+        {
+          "load": 1779,
+          "response": 201,
+          "render": 190,
+          "fcp": 80,
+          "requests": 8
+        }
+      ],
+      "load": 1816,
+      "response": 202,
+      "render": 222,
+      "failures": 0
+    },
+    {
+      "scenario": "my-assets-employee",
+      "url": "/my-assets",
+      "role": "Employee",
+      "account": "joel@yahoo.com",
+      "marker": "Total Assets",
+      "forms": [
+        "my-assets-employee"
+      ],
+      "runs": [
+        {
+          "load": 1708,
+          "response": 194,
+          "render": 299,
+          "fcp": 56,
+          "requests": 7
+        },
+        {
+          "load": 1653,
+          "response": 221,
+          "render": 206,
+          "fcp": 60,
+          "requests": 7
+        },
+        {
+          "load": 1590,
+          "response": 190,
+          "render": 190,
+          "fcp": 64,
+          "requests": 7
+        },
+        {
+          "load": 1585,
+          "response": 201,
+          "render": 190,
+          "fcp": 60,
+          "requests": 7
+        },
+        {
+          "load": 1588,
+          "response": 193,
+          "render": 187,
+          "fcp": 56,
+          "requests": 7
+        }
+      ],
+      "load": 1625,
+      "response": 200,
+      "render": 214,
+      "failures": 0
+    },
+    {
+      "scenario": "asset-details-admin",
+      "url": "/asset-details?id=186",
+      "role": "Admin",
+      "account": "alex@nu-lipa.edu.ph",
+      "marker": "AST-FAF-L-FIAXOL",
+      "forms": [],
+      "runs": [
+        {
+          "load": 1042,
+          "response": 191,
+          "render": 219,
+          "fcp": 68,
+          "requests": 2
+        },
+        {
+          "load": 1188,
+          "response": 408,
+          "render": 198,
+          "fcp": 52,
+          "requests": 2
+        },
+        {
+          "load": 1061,
+          "response": 195,
+          "render": 225,
+          "fcp": 56,
+          "requests": 2
+        },
+        {
+          "load": 1006,
+          "response": 165,
+          "render": 190,
+          "fcp": 56,
+          "requests": 2
+        },
+        {
+          "load": 1008,
+          "response": 187,
+          "render": 191,
+          "fcp": 56,
+          "requests": 2
+        }
+      ],
+      "load": 1061,
+      "response": 229,
+      "render": 205,
+      "failures": 0
+    },
+    {
+      "scenario": "asset-details-head",
+      "url": "/asset-details?id=1",
+      "role": "Department Head",
+      "account": "joseph@nu-lipa.edu.ph",
+      "marker": "AST-BCZYE9KW-Y4AD",
+      "forms": [
+        "asset-details-head"
+      ],
+      "runs": [
+        {
+          "load": 1082,
+          "response": 201,
+          "render": 248,
+          "fcp": 68,
+          "requests": 2
+        },
+        {
+          "load": 1021,
+          "response": 179,
+          "render": 160,
+          "fcp": 60,
+          "requests": 2
+        },
+        {
+          "load": 1006,
+          "response": 187,
+          "render": 191,
+          "fcp": 48,
+          "requests": 2
+        },
+        {
+          "load": 997,
+          "response": 179,
+          "render": 210,
+          "fcp": 60,
+          "requests": 2
+        },
+        {
+          "load": 994,
+          "response": 195,
+          "render": 179,
+          "fcp": 52,
+          "requests": 2
+        }
+      ],
+      "load": 1020,
+      "response": 188,
+      "render": 198,
+      "failures": 0
+    },
+    {
+      "scenario": "asset-details-employee",
+      "url": "/asset-details?id=130",
+      "role": "Employee",
+      "account": "joel@yahoo.com",
+      "marker": "AST-AW2AWYX-8P50-02",
+      "forms": [
+        "asset-details-employee"
+      ],
+      "runs": [
+        {
+          "load": 978,
+          "response": 178,
+          "render": 191,
+          "fcp": 56,
+          "requests": 2
+        },
+        {
+          "load": 1068,
+          "response": 245,
+          "render": 215,
+          "fcp": 56,
+          "requests": 2
+        },
+        {
+          "load": 1116,
+          "response": 196,
+          "render": 266,
+          "fcp": 60,
+          "requests": 2
+        },
+        {
+          "load": 1053,
+          "response": 199,
+          "render": 223,
+          "fcp": 68,
+          "requests": 2
+        },
+        {
+          "load": 1071,
+          "response": 200,
+          "render": 210,
+          "fcp": 52,
+          "requests": 2
+        }
+      ],
+      "load": 1057,
+      "response": 204,
+      "render": 221,
+      "failures": 0
+    },
+    {
+      "scenario": "submit-request-head",
+      "url": "/submit-request",
+      "role": "Department Head",
+      "account": "joseph@nu-lipa.edu.ph",
+      "marker": "Request type",
+      "forms": [
+        "submit-request-head"
+      ],
+      "runs": [
+        {
+          "load": 685,
+          "response": null,
+          "render": 617,
+          "fcp": 68,
+          "requests": 0
+        },
+        {
+          "load": 567,
+          "response": null,
+          "render": 511,
+          "fcp": 56,
+          "requests": 0
+        },
+        {
+          "load": 627,
+          "response": null,
+          "render": 567,
+          "fcp": 60,
+          "requests": 0
+        },
+        {
+          "load": 586,
+          "response": null,
+          "render": 534,
+          "fcp": 52,
+          "requests": 0
+        },
+        {
+          "load": 599,
+          "response": null,
+          "render": 547,
+          "fcp": 52,
+          "requests": 0
+        }
+      ],
+      "load": 613,
+      "response": null,
+      "render": 555,
+      "failures": 0
+    },
+    {
+      "scenario": "submit-request-employee",
+      "url": "/submit-request",
+      "role": "Employee",
+      "account": "joel@yahoo.com",
+      "marker": "Request type",
+      "forms": [
+        "submit-request-employee"
+      ],
+      "runs": [
+        {
+          "load": 622,
+          "response": null,
+          "render": 570,
+          "fcp": 52,
+          "requests": 0
+        },
+        {
+          "load": 682,
+          "response": null,
+          "render": 618,
+          "fcp": 64,
+          "requests": 0
+        },
+        {
+          "load": 615,
+          "response": null,
+          "render": 555,
+          "fcp": 60,
+          "requests": 0
+        },
+        {
+          "load": 670,
+          "response": null,
+          "render": 618,
+          "fcp": 52,
+          "requests": 0
+        },
+        {
+          "load": 655,
+          "response": null,
+          "render": 603,
+          "fcp": 52,
+          "requests": 0
+        }
+      ],
+      "load": 649,
+      "response": null,
+      "render": 593,
+      "failures": 0
+    },
+    {
+      "scenario": "notifications-head",
+      "url": "/notifications",
+      "role": "Department Head",
+      "account": "joseph@nu-lipa.edu.ph",
+      "marker": "Notifications",
+      "forms": [
+        "notifications-head"
+      ],
+      "runs": [
+        {
+          "load": 1013,
+          "response": 203,
+          "render": 187,
+          "fcp": 64,
+          "requests": 2
+        },
+        {
+          "load": 1033,
+          "response": 234,
+          "render": 158,
+          "fcp": 76,
+          "requests": 2
+        },
+        {
+          "load": 945,
+          "response": 180,
+          "render": 136,
+          "fcp": 48,
+          "requests": 2
+        },
+        {
+          "load": 901,
+          "response": 161,
+          "render": 133,
+          "fcp": 60,
+          "requests": 2
+        },
+        {
+          "load": 869,
+          "response": 160,
+          "render": 121,
+          "fcp": 56,
+          "requests": 2
+        }
+      ],
+      "load": 952,
+      "response": 188,
+      "render": 147,
+      "failures": 0
+    },
+    {
+      "scenario": "notifications-employee",
+      "url": "/notifications",
+      "role": "Employee",
+      "account": "joel@yahoo.com",
+      "marker": "Notifications",
+      "forms": [
+        "notifications-employee"
+      ],
+      "runs": [
+        {
+          "load": 637,
+          "response": 183,
+          "render": 9,
+          "fcp": 56,
+          "requests": 2
+        },
+        {
+          "load": 921,
+          "response": 161,
+          "render": 125,
+          "fcp": 56,
+          "requests": 2
+        },
+        {
+          "load": 915,
+          "response": 181,
+          "render": 83,
+          "fcp": 48,
+          "requests": 2
+        },
+        {
+          "load": 977,
+          "response": 181,
+          "render": 169,
+          "fcp": 68,
+          "requests": 2
+        },
+        {
+          "load": 988,
+          "response": 164,
+          "render": 191,
+          "fcp": 52,
+          "requests": 2
+        }
+      ],
+      "load": 888,
+      "response": 174,
+      "render": 115,
+      "failures": 0
+    },
+    {
+      "scenario": "profile-employee",
+      "url": "/profile",
+      "role": "Employee",
+      "account": "joel@yahoo.com",
+      "marker": "Joel Enriquize",
+      "forms": [
+        "profile-employee"
+      ],
+      "runs": [
+        {
+          "load": 993,
+          "response": 216,
+          "render": 140,
+          "fcp": 72,
+          "requests": 1
+        },
+        {
+          "load": 929,
+          "response": 184,
+          "render": 118,
+          "fcp": 52,
+          "requests": 1
+        },
+        {
+          "load": 898,
+          "response": 185,
+          "render": 109,
+          "fcp": 60,
+          "requests": 1
+        },
+        {
+          "load": 930,
+          "response": 190,
+          "render": 107,
+          "fcp": 60,
+          "requests": 1
+        },
+        {
+          "load": 981,
+          "response": 189,
+          "render": 110,
+          "fcp": 76,
+          "requests": 1
+        }
+      ],
+      "load": 946,
+      "response": 193,
+      "render": 117,
+      "failures": 0
+    }
+  ]
+}

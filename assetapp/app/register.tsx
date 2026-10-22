@@ -21,15 +21,21 @@ import * as ImagePicker from 'expo-image-picker';
 import { colors, radius, shadow } from '../lib/theme';
 import { BrandLogo } from '../components/brand-logo';
 import {
-  EMPLOYEE_INACTIVE_MESSAGE,
-  EMPLOYEE_NOT_FOUND_MESSAGE,
   EmployeeLookup,
-  isEmployeeEligible,
   lookupEmployeeByNumber,
   registerUser,
   uploadProfilePhoto,
 } from '../lib/userService';
+import {
+  EMPLOYEE_EMAIL_MISMATCH_MESSAGE,
+  EMPLOYEE_INACTIVE_MESSAGE,
+  EMPLOYEE_NOT_FOUND_MESSAGE,
+  isEmployeeRecordActive,
+  officialEmailMismatch,
+  validateRegistrationEmail,
+} from '../lib/registrationRules';
 import { describeUploadError, type MediaAsset } from '../lib/mediaUpload';
+import { friendlyErrorMessage } from '../lib/errorMessage';
 import {
   PASSWORD_IDENTITY_MESSAGE,
   passwordIsBasedOnIdentity,
@@ -46,8 +52,6 @@ const PASSWORD_RULES: { key: string; label: string; test: (value: string) => boo
   { key: 'number', label: 'A number (0-9)', test: (v) => /\d/.test(v) },
   { key: 'symbol', label: 'A symbol such as ! @ # $ %', test: (v) => /[^A-Za-z0-9]/.test(v) },
 ];
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -108,7 +112,7 @@ export default function RegisterScreen() {
 
       // The number must be on file AND its employee record active: that is what
       // keeps accounts limited to NU Lipa staff.
-      if (found && !isEmployeeEligible(found)) {
+      if (found && !isEmployeeRecordActive(found.status)) {
         setEmployee(null);
         setEmployeeError(EMPLOYEE_INACTIVE_MESSAGE);
         return null;
@@ -176,13 +180,16 @@ export default function RegisterScreen() {
     const resolved = employee ?? (await verifyEmployee());
     if (!resolved) return;
 
-    // 2. Email
-    if (!email.trim()) {
-      setEmailError('Email is required.');
+    // 2. Email — well-formed, and (when the masterlist records one) the
+    //    official address on this employee's record. The service repeats the
+    //    same check; this only saves a round-trip.
+    const emailProblem = validateRegistrationEmail(email);
+    if (emailProblem) {
+      setEmailError(emailProblem);
       return;
     }
-    if (!EMAIL_PATTERN.test(email.trim())) {
-      setEmailError('Enter a valid email address.');
+    if (officialEmailMismatch(resolved.email, email)) {
+      setEmailError(EMPLOYEE_EMAIL_MISMATCH_MESSAGE);
       return;
     }
 
@@ -232,8 +239,9 @@ export default function RegisterScreen() {
         [{ text: 'OK', onPress: () => router.replace('/login' as any) }],
       );
     } catch (error: any) {
-      const message = String(error?.message ?? 'Unable to create your account.');
-      setGeneralError(message);
+      // Registration rules are written by us and read well as-is; a database,
+      // network or JS failure is translated so it cannot leak schema details.
+      setGeneralError(friendlyErrorMessage(error, 'Unable to create your account. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -284,6 +292,7 @@ export default function RegisterScreen() {
                   value={employeeNumber}
                   onChangeText={handleEmployeeChange}
                   onBlur={verifyEmployee}
+                  maxLength={20}
                   autoCapitalize="characters"
                   autoCorrect={false}
                   returnKeyType="next"
@@ -329,6 +338,7 @@ export default function RegisterScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   value={email}
+                  maxLength={100}
                   onChangeText={(text) => {
                     setEmail(text);
                     if (emailError) setEmailError('');

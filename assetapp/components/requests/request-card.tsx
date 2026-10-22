@@ -1,7 +1,8 @@
 import React from 'react';
-import { Image, View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { ActivityIndicator, Image, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { evaluateAssetLifecycle } from '@/lib/requestService';
+import { isDecidable, requestStatusHint } from '@/lib/requestWorkflow';
 
 export type RequestStatus =
   | 'Pending'
@@ -42,6 +43,8 @@ export interface RequestItem {
   department: string;
   submittedBy: string;
   dateSubmitted: string;
+  /** Raw `created_at`, kept for month filtering and date sorting. */
+  submittedAt?: string;
   reason: string;
   status: RequestStatus;
   statusLabel: string;
@@ -58,18 +61,9 @@ interface RequestCardProps {
   onApprove?: () => void;
   onReject?: () => void;
   onViewDetails?: () => void;
-  /** Admin status control: writes the selected status back to Supabase. */
-  onStatusChange?: (status: RequestStatus) => void;
+  /** A decision for this card is being written; a second tap must not post again. */
+  busy?: boolean;
 }
-
-const STATUS_OPTIONS: RequestStatus[] = [
-  'Pending',
-  'Approved',
-  'In Progress',
-  'Completed',
-  'Rejected',
-  'Cancelled',
-];
 
 const statusStyles = {
   Pending: {
@@ -140,7 +134,7 @@ export function RequestCard({
   onApprove,
   onReject,
   onViewDetails,
-  onStatusChange,
+  busy = false,
 }: RequestCardProps) {
   const statusStyle = statusStyles[item.status];
   const requestTypeStyle = typeStyles[item.requestType] ?? typeStyles.Approval;
@@ -158,7 +152,11 @@ export function RequestCard({
             </View>
           </View>
           <Text style={styles.title}>{item.title}</Text>
-          <Text style={styles.subtitle} numberOfLines={2}>{`Submitted by: ${item.submittedBy} • ${item.department}`}</Text>
+          <Text style={styles.subtitle} numberOfLines={2}>
+            {item.department
+              ? `Submitted by: ${item.submittedBy} • ${item.department}`
+              : `Submitted by: ${item.submittedBy}`}
+          </Text>
           <Text style={styles.dateText}>{item.dateSubmitted}</Text>
         </View>
         <MaterialCommunityIcons
@@ -249,7 +247,7 @@ export function RequestCard({
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Department</Text>
-            <Text style={styles.detailValue}>{item.department}</Text>
+            <Text style={styles.detailValue}>{item.department || '—'}</Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Date Submitted</Text>
@@ -263,44 +261,42 @@ export function RequestCard({
             <Text style={[styles.badgeText, { color: statusStyle.color }]}>{item.status}</Text>
           </View>
 
-          {item.status === 'Pending' ? (
+          {/* Only the transitions the web allows: a Pending request can be
+              approved or rejected, and a decided one has no request-level
+              action left. "In Progress" / "Completed" are per-asset states,
+              not request decisions, so they are not offered here. */}
+          {isDecidable(item.status) ? (
             <View style={styles.actionRow}>
-              <TouchableOpacity style={[styles.actionButton, styles.approveButton]} activeOpacity={0.8} onPress={onApprove}>
-                <Text style={styles.actionButtonText}>Approve</Text>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.approveButton, busy && styles.actionButtonBusy]}
+                activeOpacity={0.8}
+                onPress={onApprove}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: busy }}
+                accessibilityLabel={`Approve request ${item.requestId}`}
+              >
+                {busy ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.actionButtonText}>Approve</Text>
+                )}
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionButton, styles.rejectButton]} activeOpacity={0.8} onPress={onReject}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.rejectButton, busy && styles.actionButtonBusy]}
+                activeOpacity={0.8}
+                onPress={onReject}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: busy }}
+                accessibilityLabel={`Reject request ${item.requestId}`}
+              >
                 <Text style={styles.actionButtonText}>Reject</Text>
               </TouchableOpacity>
             </View>
           ) : null}
 
-          {onStatusChange ? (
-            <View style={styles.statusPickerWrap}>
-              <Text style={styles.statusPickerLabel}>Update status</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.statusPickerRow}
-              >
-                {STATUS_OPTIONS.map((option) => {
-                  const active = item.status === option;
-                  return (
-                    <TouchableOpacity
-                      key={option}
-                      style={[styles.statusChip, active && styles.statusChipActive]}
-                      onPress={() => !active && onStatusChange(option)}
-                      disabled={active}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
-                        {option}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          ) : null}
+          <Text style={styles.workflowHint}>{requestStatusHint(item.status)}</Text>
 
           {onViewDetails ? (
             <TouchableOpacity style={styles.viewDetailsButton} activeOpacity={0.8} onPress={onViewDetails}>
@@ -442,40 +438,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  statusPickerWrap: {
-    marginBottom: 14,
-  },
-  statusPickerLabel: {
+  workflowHint: {
+    marginTop: 12,
+    marginBottom: 12,
     fontSize: 12,
+    lineHeight: 17,
     color: '#64748B',
-    marginBottom: 8,
-    fontWeight: '600',
   },
-  statusPickerRow: {
-    gap: 8,
-    paddingRight: 8,
-  },
-  statusChip: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    height: 40,
-  },
-  statusChipActive: {
-    backgroundColor: '#1E3A5F',
-    borderColor: '#1E3A5F',
-  },
-  statusChipText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  statusChipTextActive: {
-    color: '#FFFFFF',
+  actionButtonBusy: {
+    opacity: 0.65,
   },
   viewDetailsButton: {
     flexDirection: 'row',

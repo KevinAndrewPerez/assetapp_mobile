@@ -15,6 +15,9 @@ import { fetchUserRequests, getStoredUser } from '@/lib/userService';
 import { requestTypeMeta } from '@/lib/lifecycle';
 import NotificationBell from '@/components/notification-bell';
 import { headerTopPadding } from '@/lib/theme';
+import { monthLabel, monthQueryBounds } from '@/lib/monthFilter';
+import { MonthFilter } from '@/components/month-filter';
+import { friendlyErrorMessage } from '@/lib/errorMessage';
 
 const tabs = ['All', 'Pending', 'Approved', 'Rejected'] as const;
 type RequestTab = (typeof tabs)[number];
@@ -31,20 +34,30 @@ export default function MyRequests() {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [monthKey, setMonthKey] = useState<string | null>(null);
+  // A failed load must not look like "you have no requests".
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // The month's requests can be many; let the requester flip the order.
+  const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const user = await getStoredUser();
       if (!user) return;
-      const data = await fetchUserRequests(user);
+      // The month is applied in the query, so an account with years of history
+      // only downloads the month it is looking at. The window is the local
+      // month expressed in the naive-UTC form `created_at` is stored in.
+      const data = await fetchUserRequests(user, (monthKey && monthQueryBounds(monthKey)) || undefined);
       setRequests(data);
     } catch (error) {
       console.error('Failed to load user requests:', error);
+      setLoadError(friendlyErrorMessage(error, 'Could not load your requests. Please try again.'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [monthKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -68,10 +81,18 @@ export default function MyRequests() {
     [requests],
   );
 
-  const filteredRequests = useMemo(
-    () => (activeTab === 'All' ? requests : requests.filter((item) => item.status === activeTab)),
-    [activeTab, requests],
-  );
+  const filteredRequests = useMemo(() => {
+    const list = activeTab === 'All' ? requests : requests.filter((item) => item.status === activeTab);
+    // `createdAt` is the raw request date; `submittedAt`-style parsing keeps a
+    // zone-less database timestamp from sorting as local time.
+    const timeOf = (row: any) => {
+      const parsed = Date.parse(String(row?.createdAt ?? ''));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return [...list].sort((a, b) =>
+      sort === 'oldest' ? timeOf(a) - timeOf(b) : timeOf(b) - timeOf(a),
+    );
+  }, [activeTab, requests, sort]);
 
   const emptyCopy: Record<RequestTab, string> = {
     All: 'You have not submitted any request yet.',
@@ -79,6 +100,10 @@ export default function MyRequests() {
     Approved: 'No approved request yet.',
     Rejected: 'No rejected request.',
   };
+
+  const emptyText = monthKey
+    ? `Nothing in ${monthLabel(monthKey)}. ${emptyCopy[activeTab]}`
+    : emptyCopy[activeTab];
 
   if (loading && requests.length === 0) {
     return (
@@ -124,6 +149,28 @@ export default function MyRequests() {
       </View>
 
       <View style={styles.container}>
+        {/* Month filter: the last six months one tap away, any earlier month
+            through the picker, applied in the query. */}
+        <View style={styles.monthBar}>
+          <MonthFilter value={monthKey} onChange={setMonthKey} />
+        </View>
+
+        <View style={styles.sortRow}>
+          <Text style={styles.sortLabel}>Sort</Text>
+          {(['newest', 'oldest'] as const).map((option) => (
+            <TouchableOpacity
+              key={option}
+              style={[styles.sortChip, sort === option ? styles.sortChipActive : null]}
+              onPress={() => setSort(option)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.sortChipText, sort === option ? styles.sortChipTextActive : null]}>
+                {option === 'newest' ? 'Newest' : 'Oldest'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {/* Tabs */}
         <View style={styles.tabContainer}>
           {tabs.map((tab) => {
@@ -151,12 +198,27 @@ export default function MyRequests() {
           contentContainerStyle={styles.scrollContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {filteredRequests.length === 0 ? (
+          {loadError ? (
+            <View style={styles.emptyState}>
+              <View style={styles.emptyIconWrap}>
+                <MaterialCommunityIcons name="wifi-off" size={34} color="#94A3B8" />
+              </View>
+              <Text style={styles.emptyStateText}>{loadError}</Text>
+              <TouchableOpacity
+                style={styles.emptyAction}
+                activeOpacity={0.85}
+                onPress={() => void loadRequests()}
+              >
+                <MaterialCommunityIcons name="refresh" size={16} color="#1E3A5F" />
+                <Text style={styles.emptyActionText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : filteredRequests.length === 0 ? (
             <View style={styles.emptyState}>
               <View style={styles.emptyIconWrap}>
                 <MaterialCommunityIcons name="file-document-outline" size={34} color="#94A3B8" />
               </View>
-              <Text style={styles.emptyStateText}>{emptyCopy[activeTab]}</Text>
+              <Text style={styles.emptyStateText}>{emptyText}</Text>
               <TouchableOpacity
                 style={styles.emptyAction}
                 activeOpacity={0.85}
@@ -306,6 +368,48 @@ const styles = StyleSheet.create({
     color: '#1E3A5F',
     fontWeight: '700',
     fontSize: 12.5,
+  },
+  monthBar: {
+    backgroundColor: '#FFFFFF',
+  },
+  sortRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 4,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDF1F7',
+  },
+  sortLabel: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sortChip: {
+    paddingHorizontal: 12,
+    height: 30,
+    borderRadius: 999,
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  sortChipActive: {
+    backgroundColor: '#0C134F',
+    borderColor: '#0C134F',
+  },
+  sortChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  sortChipTextActive: {
+    color: '#FFFFFF',
   },
   tabContainer: {
     flexDirection: 'row',

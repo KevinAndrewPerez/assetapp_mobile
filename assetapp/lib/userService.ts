@@ -10,15 +10,38 @@ import {
   isAssignmentRequest,
 } from './requestService';
 import { applyRequestStatusToRepairs } from './repairService';
-import { applyRequestStatusToDisposals } from './disposalService';
-import { createNotification, notifyAdmins } from './notificationService';
+import {
+  discardDisposalForm,
+  ensureDisposalFormForRequest,
+  normalizeDisposalReason,
+} from './disposalForm';
+import {
+  createNotification,
+  notifyAdmins,
+  notifyDisposalApproval,
+} from './notificationService';
 import { clampRequestStatus } from './requestStatus';
+import { currentActorProfile, fetchActorProfile, isInactiveStatus } from './access';
+import { decisionRefusal } from './requestWorkflow';
+import { approveTransferRequest } from './transferWorkflow';
 import {
   isRequestableAsset,
   isVisibleToUser,
   NOT_YOUR_ASSET_MESSAGE,
   notRequestableReason,
 } from './lifecycle';
+import {
+  EMAIL_TAKEN_MESSAGE,
+  EMPLOYEE_EMAIL_MISMATCH_MESSAGE,
+  EMPLOYEE_INACTIVE_MESSAGE,
+  EMPLOYEE_NOT_FOUND_MESSAGE,
+  EMPLOYEE_TAKEN_MESSAGE,
+  escapeLikePattern,
+  isEmployeeRecordActive,
+  officialEmailMismatch,
+  roleForNewAccount,
+  validateRegistrationEmail,
+} from './registrationRules';
 
 export type StoredUser = {
   id?: number | string;
@@ -98,6 +121,8 @@ export type UserRequest = {
   statusBg: string;
   reason: string;
   dateSubmitted: string;
+  /** Raw `created_at`, for sorting the month's requests by date. */
+  createdAt?: string;
   barcode: string;
   assetId: string;
   submittedBy: string;
@@ -111,6 +136,8 @@ export type RequestLinkedAsset = {
   code: string;
   name: string;
   imageUrl?: string;
+  /** Shown so a disposal in progress never looks disposed already. */
+  lifecycleStatus?: string;
 };
 
 export type RequestDetail = {
@@ -126,6 +153,10 @@ export type RequestDetail = {
   linkedAssets: RequestLinkedAsset[];
   attachedFileName?: string;
   attachedFileUrl?: string;
+  /** Object key inside the shared `assets` bucket, used for a short signed URL. */
+  attachedFilePath?: string;
+  /** The office's rejection reason (`requests.admin_remarks`, web parity). */
+  adminRemarks?: string;
 };
 
 const resolveStorageUrl = (raw: any, fallbackBucket = 'assets'): string => resolveMediaUrl(raw, fallbackBucket);
@@ -248,6 +279,7 @@ const normalizeUserRequest = (row: any): UserRequest => {
   const asset = row.assets ?? row.asset ?? null;
   const user = Array.isArray(row.users) ? row.users[0] : row.users;
   const empNumbers = Array.isArray(user?.employee_numbers) ? user?.employee_numbers[0] : user?.employee_numbers;
+  const userDepartment = Array.isArray(user?.departments) ? user.departments[0] : user?.departments;
 
   // A request may link several assets through `request_items`; resolve them all
   // (including each asset's photo from `asset_files`).
@@ -286,10 +318,13 @@ const normalizeUserRequest = (row: any): UserRequest => {
     statusBg,
     reason: String(row.Note ?? row.note ?? row.reason ?? ''),
     dateSubmitted: new Date(String(row.created_at ?? row.createdAt ?? row.date ?? '')).toLocaleDateString(),
+    createdAt: row.created_at ? String(row.created_at) : undefined,
     barcode,
     assetId: barcode,
     submittedBy: String(empNumbers?.Full_Name ?? 'Unknown User'),
-    department: String(user?.department_id ?? row.department ?? ''),
+    // The department's name, not its id — a numeric `department_id` here used to
+    // render as "Submitted by: Name • 4".
+    department: String(userDepartment?.Name ?? row.department ?? '').trim(),
     imageUrl: firstItem?.imageUrl || directImage || '',
     linkedAssets: itemAssets.length > 0 ? itemAssets : undefined,
   };
@@ -305,7 +340,7 @@ export async function fetchRequestDetail(
   const { data, error } = await supabase
     .from('requests')
     .select(
-      `*, users:user_id(department_id, employee_numbers(Full_Name), departments:department_id(Name)), assets(Asset_code, Asset_name, asset_files(Asset_file_ID, file_name, file_path, url)), request_items(assets(Asset_code, Asset_name, asset_files(Asset_file_ID, file_name, file_path, url)))`,
+      `*, users:user_id(department_id, employee_numbers(Full_Name), departments:department_id(Name)), assets(Asset_code, Asset_name, Lifecycle_Status, asset_files(Asset_file_ID, file_name, file_path, url)), request_items(assets(Asset_code, Asset_name, Lifecycle_Status, asset_files(Asset_file_ID, file_name, file_path, url)))`,
     )
     .eq('id', requestId)
     .maybeSingle();
@@ -320,6 +355,33 @@ export async function fetchRequestDetail(
   const emp = Array.isArray(user?.employee_numbers) ? user?.employee_numbers[0] : user?.employee_numbers;
   const dept = Array.isArray(user?.departments) ? user?.departments[0] : user?.departments;
   const direct = Array.isArray(data.assets) ? data.assets[0] : data.assets;
+
+  // The detail route used to read any request by id. A request is visible to
+  // the office, to the person who submitted it, to the employee it is being
+  // transferred to, and (for a Department Head) to their own department. The
+  // QR verifier already applies a viewer rule; this is the same idea for the
+  // request detail screen and its deep link.
+  const viewer = await currentActorProfile();
+  const viewerId = viewer?.id != null ? String(viewer.id) : '';
+  const submitterId = (data as any).user_id;
+  const assigneeId = (data as any).assign_to_user_id;
+  const submitterDepartment = Number(user?.department_id ?? dept?.id);
+  const viewerIsOffice = String(viewer?.role ?? '').trim() === 'Admin';
+  const viewerIsDepartmentHead = String(viewer?.role ?? '').trim() === 'Department Head';
+  const viewerCanSee =
+    Boolean(viewer) &&
+    !isInactiveStatus(viewer?.status) &&
+    (viewerIsOffice ||
+      (viewerId !== '' && String(submitterId) === viewerId) ||
+      (viewerId !== '' && assigneeId != null && String(assigneeId) === viewerId) ||
+      (viewerIsDepartmentHead &&
+        viewer?.departmentId != null &&
+        Number.isFinite(submitterDepartment) &&
+        Number(viewer.departmentId) === submitterDepartment));
+
+  if (!viewerCanSee) {
+    throw new Error("This request is outside your account's access, so its details are not shown.");
+  }
 
   const rawItems = Array.isArray(data.request_items)
     ? data.request_items
@@ -336,6 +398,7 @@ export async function fetchRequestDetail(
       code: String(a.Asset_code ?? ''),
       name: String(a.Asset_name ?? ''),
       imageUrl: resolveAssetFileUrl(a.asset_files),
+      lifecycleStatus: String(a.Lifecycle_Status ?? ''),
     });
   };
 
@@ -369,11 +432,13 @@ export async function fetchRequestDetail(
     reason: String(data.Note ?? ''),
     dateSubmitted: new Date(String(data.created_at ?? '')).toLocaleDateString(),
     submittedBy: String(emp?.Full_Name ?? 'Unknown'),
-    department: String(dept?.Name ?? user?.department_id ?? ''),
+    department: String(dept?.Name ?? ''),
     assignTo: assignToName,
     linkedAssets: linkedAssets.filter((a) => a.code || a.name),
     attachedFileName: String(data.file_name ?? ''),
     attachedFileUrl,
+    attachedFilePath: String(data.file_path ?? ''),
+    adminRemarks: String(data.admin_remarks ?? ''),
   };
 }
 
@@ -502,6 +567,26 @@ export async function fetchUserAssets(
     (Array.isArray((user as any).employee_numbers) ? (user as any).employee_numbers[0]?.Department_id : (user as any).employee_numbers?.Department_id) ??
     null;
 
+  // A Department Head's list used to download every assigned asset in the
+  // institution and then filter it in JavaScript. Resolve the department's
+  // accounts first, then ask the database only for those assets.
+  let departmentUserIds: string[] = [];
+  if (scope === 'department' && userDepartmentId != null) {
+    const deptIdNum = Number(userDepartmentId);
+    if (!Number.isFinite(deptIdNum) || deptIdNum <= 0) return [];
+
+    const { data: departmentUsers, error: departmentUsersError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('department_id', deptIdNum);
+    if (departmentUsersError) throw departmentUsersError;
+
+    departmentUserIds = (departmentUsers ?? [])
+      .map((row: any) => String(row?.id ?? ''))
+      .filter(Boolean);
+    if (departmentUserIds.length === 0) return [];
+  }
+
   try {
     const baseQuery = supabase
       .from('assets')
@@ -509,7 +594,7 @@ export async function fetchUserAssets(
 
     let finalQuery: any = baseQuery;
     if (scope === 'department' && userDepartmentId != null) {
-      finalQuery = finalQuery.not('user_id', 'is', null);
+      finalQuery = finalQuery.in('user_id', departmentUserIds);
     } else {
       finalQuery = finalQuery.eq('user_id', userId);
     }
@@ -521,7 +606,7 @@ export async function fetchUserAssets(
     if (error || !data) {
       let fallbackBuilder = supabase.from('assets').select('*');
       if (scope === 'department' && userDepartmentId != null) {
-        fallbackBuilder = fallbackBuilder.not('user_id', 'is', null) as any;
+        fallbackBuilder = fallbackBuilder.in('user_id', departmentUserIds) as any;
       } else {
         fallbackBuilder = fallbackBuilder.eq('user_id', userId) as any;
       }
@@ -704,13 +789,26 @@ export async function fetchAssetCategories(): Promise<string[]> {
   }
 }
 
-export async function fetchUserRequests(user: StoredUser): Promise<UserRequest[]> {
+export async function fetchUserRequests(
+  user: StoredUser,
+  /** Optional inclusive `yyyy-mm-dd` window, so one month can be fetched alone. */
+  createdRange?: { from?: string; to?: string },
+): Promise<UserRequest[]> {
   const userId = String(user.id ?? '');
-  const { data, error } = await supabase
+
+  let query = supabase
     .from('requests')
-    .select('id, request_type, status, Note, created_at, users:user_id(department_id, employee_numbers(Full_Name)), assets(Asset_code, Asset_name, asset_files(Asset_file_ID, file_name, file_path, url)), request_items(assets(Asset_code, Asset_name, asset_files(Asset_file_ID, file_name, file_path, url)))')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .select('id, request_type, status, Note, created_at, users:user_id(department_id, employee_numbers(Full_Name), departments:department_id(Name)), assets(Asset_code, Asset_name, asset_files (Asset_file_ID, file_name, file_path, url)), request_items(assets(Asset_code, Asset_name, asset_files (Asset_file_ID, file_name, file_path, url)))')
+    .eq('user_id', userId);
+
+  // The window may arrive as a plain `yyyy-mm-dd` or as the full naive-UTC
+  // timestamps `monthQueryBounds()` builds. Both are inclusive.
+  const windowStart = (value: string) => (value.length <= 10 ? `${value}T00:00:00` : value);
+  const windowEnd = (value: string) => (value.length <= 10 ? `${value}T23:59:59` : value);
+  if (createdRange?.from) query = query.gte('created_at', windowStart(createdRange.from));
+  if (createdRange?.to) query = query.lte('created_at', windowEnd(createdRange.to));
+
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
     console.error('Failed to fetch user requests:', error.message);
@@ -912,36 +1010,21 @@ export type EmployeeLookup = {
   departmentId: number | string | null;
   departmentName: string;
   status: string;
+  /** The office's official work address, when it has recorded one. */
+  email: string;
 };
 
-/** Same wording the web register form returns for these two cases. */
-export const EMPLOYEE_NOT_FOUND_MESSAGE =
-  'Employee number not found in the system. Please contact the administrator.';
-export const EMPLOYEE_TAKEN_MESSAGE =
-  'This employee number is already registered. Please use a different employee number or contact the administrator.';
-
-export const EMAIL_TAKEN_MESSAGE =
-  'This email is already registered. Please sign in instead.';
-
-/**
- * Only NU Lipa staff whose `employee_numbers` record is still active may open an
- * account — the whole point of the employee-number gate is that no account is
- * ever created for someone who is not on file. A row with no status at all is
- * treated as active (the column is enum-defaulted to 'Active'); only an explicit
- * non-'Active' value, such as 'Inactive', blocks. The web register form does not
- * check this yet, so the mobile build is the stricter of the two.
- */
-export const EMPLOYEE_INACTIVE_MESSAGE =
-  'This employee number is no longer active. Please contact the administrator.';
-
-export function isEmployeeEligible(employee: EmployeeLookup | null | undefined): boolean {
-  if (!employee) return false;
-  const status = String(employee.status ?? '').trim();
-  return status === '' || status.toLowerCase() === 'active';
-}
+/** Re-exported so callers keep one import (`lib/userService`) for registration. */
+export {
+  EMAIL_TAKEN_MESSAGE,
+  EMPLOYEE_EMAIL_MISMATCH_MESSAGE,
+  EMPLOYEE_INACTIVE_MESSAGE,
+  EMPLOYEE_NOT_FOUND_MESSAGE,
+  EMPLOYEE_TAKEN_MESSAGE,
+} from './registrationRules';
 
 const EMPLOYEE_SELECT =
-  'id, Full_Name, Employee_number, Department_id, status, departments:Department_id(Name)';
+  'id, Full_Name, Employee_number, Department_id, status, Email, departments:Department_id(Name)';
 
 const digitsOf = (value: unknown) => String(value ?? '').replace(/\D/g, '');
 
@@ -954,6 +1037,7 @@ function normalizeEmployee(row: any): EmployeeLookup {
     departmentId: row?.Department_id ?? department?.id ?? null,
     departmentName: String(department?.Name ?? ''),
     status: String(row?.status ?? ''),
+    email: String(row?.Email ?? ''),
   };
 }
 
@@ -1092,11 +1176,17 @@ export type RegisterResult = {
  *
  *   1. the employee number must already exist in `employee_numbers` — the
  *      name and department are read from that row, never typed by the user;
- *   2. neither that employee number nor the email may already have an account;
- *   3. the very first account becomes an Admin, otherwise the first person in a
- *      department becomes its Department Head and everyone else an Employee;
- *   4. `users.profile_photo` stores the uploaded public URL;
- *   5. the password is stored as a bcrypt hash tagged `$2y$` so the login
+ *   2. the employee record must be Active (an inactive record cannot activate
+ *      an account);
+ *   3. when the office has recorded an official email on that record, the
+ *      address entered must be that address — knowing an employee number is
+ *      not proof of identity;
+ *   4. neither that employee number nor the email may already have an account;
+ *   5. the very first account ever is the Admin bootstrap, everyone else is an
+ *      Employee. A department head is appointed by the office, never by
+ *      registering first (`lib/registrationRules.ts`);
+ *   6. `users.profile_photo` stores the uploaded public URL;
+ *   7. the password is stored as a bcrypt hash tagged `$2y$` so the login
  *      screen's `verify_user_password` RPC keeps verifying it (see
  *      lib/passwordHash.ts — a `$2b$` digest is invisible to pgcrypto).
  */
@@ -1109,16 +1199,29 @@ export async function registerUser(payload: {
   const now = new Date().toISOString();
   const email = String(payload.email ?? '').trim();
 
+  // The same gate the screen shows, enforced where the write happens.
+  const emailProblem = validateRegistrationEmail(email);
+  if (emailProblem) throw new Error(emailProblem);
+
   const employee = await lookupEmployeeByNumber(payload.employeeNumber);
   if (!employee) throw new Error(EMPLOYEE_NOT_FOUND_MESSAGE);
-  if (!isEmployeeEligible(employee)) throw new Error(EMPLOYEE_INACTIVE_MESSAGE);
+  if (!isEmployeeRecordActive(employee.status)) throw new Error(EMPLOYEE_INACTIVE_MESSAGE);
+
+  // The masterlist's official address, when present, is the only address this
+  // employee record may be activated with (web register controller).
+  if (officialEmailMismatch(employee.email, email)) {
+    throw new Error(EMPLOYEE_EMAIL_MISMATCH_MESSAGE);
+  }
 
   if (await isEmployeeNumberRegistered(employee.id)) throw new Error(EMPLOYEE_TAKEN_MESSAGE);
 
+  // Case-insensitive equality, with LIKE wildcards escaped: the address is a
+  // value to compare, never a pattern. The database's unique index on
+  // `users.email` is the final word if two registrations race.
   const { data: emailRows, error: emailError } = await supabase
     .from('users')
     .select('id')
-    .ilike('email', email)
+    .ilike('email', escapeLikePattern(email))
     .limit(1);
   if (emailError) {
     console.error('Failed to check email:', emailError.message);
@@ -1126,8 +1229,10 @@ export async function registerUser(payload: {
   }
   if ((emailRows ?? []).length > 0) throw new Error(EMAIL_TAKEN_MESSAGE);
 
-  // Role: first account ever -> Admin; first account in a department ->
-  // Department Head; otherwise Employee.
+  // Role: the first account ever is the Admin bootstrap the system needs;
+  // everyone else is an Employee. A Department Head, like any other role, is
+  // appointed deliberately by the office on the Accounts tab — never by being
+  // the first person to register in a department (web parity).
   const { count: userCount, error: countError } = await supabase
     .from('users')
     .select('id', { count: 'exact', head: true });
@@ -1136,22 +1241,7 @@ export async function registerUser(payload: {
     throw countError;
   }
 
-  let role = 'Employee';
-  if (!userCount) {
-    role = 'Admin';
-  } else if (employee.departmentId != null) {
-    const { data: heads, error: headError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('department_id', employee.departmentId)
-      .eq('role', 'Department Head')
-      .limit(1);
-    if (headError) {
-      console.error('Failed to check department head:', headError.message);
-      throw headError;
-    }
-    if ((heads ?? []).length === 0) role = 'Department Head';
-  }
+  const role = roleForNewAccount(userCount ?? 0);
 
   const passwordHash = await hashPasswordForDatabase(payload.password);
 
@@ -1268,10 +1358,20 @@ export async function searchUsers(query: string) {
     }));
 }
 
+export type RequestDecisionOptions = {
+  /** Disposal only: the reason the office records for the official form. */
+  approvedReason?: string | null;
+  /** Disposal only: expected date of disposal printed on the form. */
+  expectedDisposalDate?: string | null;
+  /** Rejection only: stored in `requests.admin_remarks` (web parity). */
+  rejectionReason?: string | null;
+};
+
 export async function updateRequestStatus(
   requestId: string,
   status: 'Pending' | 'In Progress' | 'Completed' | 'Cancelled' | 'Approved' | 'Rejected',
   adminId: string | number,
+  options: RequestDecisionOptions = {},
 ): Promise<ApprovalReport | null> {
   const { data: request, error: fetchError } = await supabase
     .from('requests')
@@ -1281,43 +1381,38 @@ export async function updateRequestStatus(
 
   if (fetchError) throw fetchError;
 
-  // ---------- Assignment requests (Transfer / asset request) ----------
-  // Approving an issue/transfer request must NOT blindly override an asset's
-  // lifecycle status: each linked asset is evaluated individually and only the
-  // suitable ones are assigned. The report is returned so the UI can show
-  // which assets were issued and which must run their own process first.
-  if (status === 'Approved' && isAssignmentRequest(request.request_type)) {
-    return approveRequestWithEvaluation({
-      requestId: String(requestId ?? '').trim(),
+  // ── Approval rules, checked before any row is written ─────────────────
+  // Mirrors the web's approve/reject routes: the office decides, nobody
+  // decides their own request, and only a Pending request can be decided. The
+  // actor's role and status are read from the database rather than from the
+  // cached `user` object, so a demoted or deactivated account loses the
+  // authority immediately. The screen hides the buttons; this is what makes a
+  // second tap (or a call from anywhere else) harmless.
+  if (status === 'Approved' || status === 'Rejected') {
+    const actor = await fetchActorProfile(adminId);
+    const refusal = decisionRefusal({
+      requestStatus: (request as any).status,
+      requestSubmitterId: (request as any).user_id,
       actorId: adminId,
-      assignToUserId: (request as any).assign_to_user_id ?? null,
-      notes: String(request.Note ?? request.note ?? ''),
+      actorRole: actor?.role ?? '',
+      actorActive: actor ? !isInactiveStatus(actor.status) : false,
+      target: status,
     });
+    if (refusal) throw new Error(refusal);
   }
-
-  const now = new Date().toISOString();
-
-  // `requests.status` only stores Pending/Approved/Rejected (check constraint
-  // `requests_status_check`), so an admin decision like Completed, Cancelled or
-  // In Progress is clamped for the column — the per-asset rows below carry the
-  // real progress. The un-clamped `status` still drives the workflow logic.
-  const { error: updateError } = await supabase
-    .from('requests')
-    .update({
-      status: clampRequestStatus(status),
-      updated_at: now,
-    })
-    .eq('id', requestId);
-
-  if (updateError) throw updateError;
 
   const note = String(request.Note ?? request.note ?? '');
   const isTerminal = status === 'Cancelled' || status === 'Rejected';
   const requestIdText = String(requestId ?? '').trim();
+  const requestTypeKey = String(request.request_type ?? '').trim().toLowerCase();
+  const isDisposalRequest = requestTypeKey === 'disposal';
+  const rejectionReason = String(options.rejectionReason ?? '').trim().slice(0, 500);
 
-  // Resolve the asset(s) attached to this request. `requests.asset_id` is often
-  // NULL in this database — assets get linked through `request_items` and the
-  // per-asset log rows (repairs.Assets_id per Request_id), so fall back to those.
+  // Resolve the asset(s) attached to this request BEFORE any write.
+  // `requests.asset_id` is often NULL in this database — assets get linked
+  // through `request_items` and the per-asset log rows (repairs.Assets_id per
+  // Request_id), so fall back to those. Resolving first lets a disposal
+  // approval refuse an empty request without changing its status.
   const directAssetIdRaw = Number(request.asset_id);
   const hasDirectAsset = Number.isFinite(directAssetIdRaw) && directAssetIdRaw > 0;
 
@@ -1341,6 +1436,117 @@ export async function updateRequestStatus(
     .eq('request_id', requestIdText);
   for (const row of (Array.isArray(itemRows) ? itemRows : [])) pushAsset(Number(row?.asset_id));
 
+  // ---------- Disposal approval preflight ----------
+  // The web refuses an approval whose official form would have nothing to
+  // explain, and refuses one that points at assets which no longer exist.
+  // Both checks run before the status changes. Approving a disposal does NOT
+  // write a disposal record and does NOT touch the asset's lifecycle — the
+  // asset is retired only when the web finalizes the signed form.
+  if (isDisposalRequest && status === 'Approved') {
+    if (linkedAssetIds.length === 0) {
+      throw new Error(
+        'This disposal request refers to no existing asset, so there is nothing to retire. The request cannot be approved.',
+      );
+    }
+
+    const { data: existingAssets, error: assetsError } = await supabase
+      .from('assets')
+      .select('id')
+      .in('id', linkedAssetIds);
+    if (assetsError) throw assetsError;
+    const found = new Set((existingAssets ?? []).map((row: any) => Number(row?.id)));
+    const missing = linkedAssetIds.filter((id) => !found.has(id));
+    if (missing.length > 0) {
+      throw new Error(
+        `This disposal request refers to asset(s) that no longer exist (#${missing.join(', #')}), so there is nothing to retire. The request cannot be approved.`,
+      );
+    }
+
+    if (note.trim() === '' && String(options.approvedReason ?? '').trim() === '') {
+      throw new Error(
+        'This disposal request has neither a note nor a reason, so the official disposal form would have nothing to explain. Add a reason before approving.',
+      );
+    }
+  }
+
+  // ---------- Assignment requests (Transfer / asset request) ----------
+  // Approving an issue/transfer request must NOT blindly override an asset's
+  // lifecycle status: each linked asset is evaluated individually and only the
+  // suitable ones are assigned. The report is returned so the UI can show
+  // which assets were issued and which must run their own process first.
+  if (status === 'Approved' && isAssignmentRequest(request.request_type)) {
+    // Transfers have their own approval path: assets may only move after the
+    // Pending request is claimed, and the move has to leave accountability
+    // history behind. Every other assignment request keeps the generic
+    // per-asset lifecycle evaluation.
+    if (requestTypeKey === 'transfer') {
+      return approveTransferRequest({
+        requestId: requestIdText,
+        actorId: adminId,
+        notes: note,
+      });
+    }
+
+    return approveRequestWithEvaluation({
+      requestId: requestIdText,
+      actorId: adminId,
+      assignToUserId: (request as any).assign_to_user_id ?? null,
+      notes: note,
+    });
+  }
+
+  const now = new Date().toISOString();
+
+  // ---------- The official disposal form ----------
+  // Prepared BEFORE the status flips, mirroring the web: there, the form is
+  // written inside the same transaction as the approval, and an approval whose
+  // form cannot be prepared is refused. The phone has no transaction, so it
+  // generates the form first and removes it again if the status write loses the
+  // race (that is the only failure that leaves it unused).
+  let preparedForm: { formId: string | null; created: boolean } | null = null;
+
+  if (isDisposalRequest && status === 'Approved') {
+    const prepared = await ensureDisposalFormForRequest({
+      requestId: requestIdText,
+      actorId: adminId,
+      approvedReason: options.approvedReason ?? null,
+      expectedDisposalDate: options.expectedDisposalDate ?? null,
+    });
+    if (!prepared.formId) {
+      throw new Error(prepared.error ?? 'The official disposal form could not be prepared, so the approval was not recorded.');
+    }
+    preparedForm = { formId: prepared.formId, created: prepared.created };
+  }
+
+  // `requests.status` only stores Pending/Approved/Rejected (check constraint
+  // `requests_status_check`), so an admin decision like Completed, Cancelled or
+  // In Progress is clamped for the column — the per-asset rows below carry the
+  // real progress. The un-clamped `status` still drives the workflow logic.
+  //
+  // A decision is also conditional on the request still being Pending, so two
+  // admins (or a retried tap) cannot both decide it: the second UPDATE matches
+  // no row and is reported instead of overwriting the first decision.
+  const decision = status === 'Approved' || status === 'Rejected';
+  const patch: Record<string, unknown> = { status: clampRequestStatus(status), updated_at: now };
+  if (status === 'Rejected') {
+    patch.admin_remarks = rejectionReason || null;
+    patch.admin_remarks_by = rejectionReason ? adminId : null;
+    patch.admin_remarks_at = rejectionReason ? now : null;
+  }
+
+  let updateQuery = supabase.from('requests').update(patch).eq('id', requestId);
+  if (decision) updateQuery = updateQuery.ilike('status', 'pending');
+
+  const { data: updatedRows, error: updateError } = await updateQuery.select('id');
+  if (updateError) throw updateError;
+
+  if (decision && (updatedRows ?? []).length === 0) {
+    if (preparedForm?.created) await discardDisposalForm(preparedForm.formId);
+    throw new Error(
+      `Only a Pending request can be ${status === 'Approved' ? 'approved' : 'rejected'}. This request was already decided — reload to see the current status.`,
+    );
+  }
+
   // ---------- Repairs ----------
   // Repair decisions are applied per asset through the shared repair service:
   // it updates the repair row, moves the asset through its lifecycle, writes the
@@ -1356,17 +1562,67 @@ export async function updateRequestStatus(
     });
   }
 
+  // ---------- Rejections ----------
+  // The web's reject route records the decision in the audit trail (the reason
+  // lives in `requests.admin_remarks`); the phone mirrors it. Best-effort: the
+  // decision is already stored, and an audit failure must not look like one.
+  if (status === 'Rejected') {
+    try {
+      await writeAudit({
+        actorId: adminId,
+        assetId: linkedAssetIds[0] ?? null,
+        requestId: requestIdText,
+        actionType: 'APPROVAL',
+        description: `Request #${requestIdText} rejected`,
+        notes:
+          `Rejected ${String(request.request_type ?? 'request')} request` +
+          (rejectionReason ? `: ${rejectionReason}` : ''),
+      });
+    } catch (auditError) {
+      console.warn('Rejection audit entry failed:', auditError);
+    }
+  }
+
   // ---------- Disposals ----------
-  // A disposal is a reviewed transaction: approving it authorizes the disposal,
-  // completing it marks the asset Disposed (never deleted) and cancelling it
-  // returns the asset to the status it had before. Same rows the web reads.
-  if (request.request_type === 'Disposal') {
-    await applyRequestStatusToDisposals({
+  // Approval authorizes the official form (prepared above); it never writes a
+  // `disposals` row and never changes the asset's lifecycle. Finalization is
+  // the web's one explicit step, after the signed form is on file, so nothing
+  // is recorded against the asset here. The audit entry says exactly that, for
+  // every asset of the request, as the web does.
+  if (isDisposalRequest && status === 'Approved') {
+    const approvedReason = normalizeDisposalReason(options.approvedReason, note);
+    const formRef = preparedForm?.formId ? `official disposal form #${preparedForm.formId}` : 'the official disposal form';
+
+    const { data: assetRows } = await supabase
+      .from('assets')
+      .select('id, Asset_code')
+      .in('id', linkedAssetIds);
+    const codeById = new Map<string, string>();
+    (assetRows ?? []).forEach((row: any) => codeById.set(String(row?.id), String(row?.Asset_code ?? '')));
+
+    for (const assetId of linkedAssetIds) {
+      try {
+        await writeAudit({
+          actorId: adminId,
+          assetId,
+          requestId: requestIdText,
+          actionType: 'DISPOSAL',
+          description:
+            `Disposal request #${requestIdText} was approved and ${formRef} was generated for preparation. ` +
+            `Asset ${codeById.get(String(assetId)) || `#${assetId}`} is not disposed of yet — it is retired only when the disposal is finalized.`,
+          notes: `Approved disposal request #${requestIdText} (${formRef}, reason: ${approvedReason}). No disposal record was written.`,
+        });
+      } catch (auditError) {
+        console.warn('Disposal approval audit entry failed:', auditError);
+      }
+    }
+
+    // Same notices the web writes, for the requester and the other officers.
+    await notifyDisposalApproval({
       requestId: requestIdText,
-      status,
+      requesterId: (request as any).user_id ?? null,
       actorId: adminId,
-      actorLabel: await resolveApprover(adminId),
-      notes: note,
+      assetCodes: linkedAssetIds.map((id) => codeById.get(String(id)) || `#${id}`),
     });
   }
 
@@ -1479,13 +1735,74 @@ export async function updateRequestStatus(
         });
       }
     } else if (request.request_type === 'Replacement') {
-      // A `replacements` row needs both old and new asset ids; the new asset
-      // is chosen later (web/admin), so only flag the old asset here.
-      const { error: aErr } = await supabase
-        .from('assets')
-        .update({ Lifecycle_Status: 'For Replacement', updated_at: now })
-        .in('id', linkedAssetIds);
-      if (aErr) throw aErr;
+      // Approval opens the replacement record, exactly as the web does: one
+      // `replacements` row per old asset with the old id as the placeholder
+      // for `new_assets_id` (the column is NOT NULL). The new asset is linked
+      // later from the Replacement screen; a placeholder is NOT a completed
+      // replacement and must not be shown as one. The (Request_id,
+      // old_assets_id) check makes a retried approval idempotent.
+      const createdReplacementIds: (string | number)[] = [];
+
+      try {
+        for (const assetId of linkedAssetIds) {
+          const { data: existingReplacement, error: existingError } = await supabase
+            .from('replacements')
+            .select('Replacement_id')
+            .eq('Request_id', requestIdText)
+            .eq('old_assets_id', assetId as any)
+            .maybeSingle();
+          if (existingError) throw existingError;
+
+          if (!existingReplacement) {
+            const { data: insertedReplacement, error: replacementError } = await supabase
+              .from('replacements')
+              .insert([
+                {
+                  Request_id: requestIdText,
+                  old_assets_id: assetId,
+                  new_assets_id: assetId,
+                  Approve_by: approver,
+                  reason: note || 'Approved replacement request',
+                  replacement_reason: 'Obsolete',
+                  notes: note || 'Replacement request approved',
+                  Replacement_Date: now,
+                  status: 'Approved',
+                  created_at: now,
+                  updated_at: now,
+                },
+              ])
+              .select('Replacement_id')
+              .single();
+            if (replacementError) throw replacementError;
+            if ((insertedReplacement as any)?.Replacement_id != null) {
+              createdReplacementIds.push((insertedReplacement as any).Replacement_id);
+            }
+          }
+        }
+
+        const { error: aErr } = await supabase
+          .from('assets')
+          .update({ Lifecycle_Status: 'For Replacement', updated_at: now })
+          .in('id', linkedAssetIds);
+        if (aErr) throw aErr;
+      } catch (replacementFailure) {
+        // The request status was already flipped above. Undo the rows this
+        // approval created and return the request to Pending so the office can
+        // retry instead of leaving an Approved request with no replacement.
+        if (createdReplacementIds.length > 0) {
+          const { error: undoRows } = await supabase
+            .from('replacements')
+            .delete()
+            .in('Replacement_id', createdReplacementIds as any[]);
+          if (undoRows) console.warn('Could not remove partial replacement rows:', undoRows.message);
+        }
+        const { error: undoStatus } = await supabase
+          .from('requests')
+          .update({ status: 'Pending', updated_at: now })
+          .eq('id', requestIdText);
+        if (undoStatus) console.warn('Could not return the replacement request to Pending:', undoStatus.message);
+        throw replacementFailure;
+      }
     } else {
       const { error: auditErr } = await supabase.from('audit_logs').insert([{
         user_id: adminId,
@@ -1502,8 +1819,10 @@ export async function updateRequestStatus(
   }
 
   // The requester hears about the decision — same notifications the web's
-  // approve / reject endpoints send.
-  if (status === 'Approved' || status === 'Rejected') {
+  // approve / reject endpoints send. A disposal approval has already been
+  // announced by notifyDisposalApproval above (with the web's wording), so it
+  // is not announced a second time here.
+  if ((status === 'Approved' || status === 'Rejected') && !(isDisposalRequest && status === 'Approved')) {
     const requesterId = (request as any).user_id ?? null;
     if (requesterId != null) {
       const typeLabel = String(request.request_type ?? 'request');
@@ -1525,7 +1844,8 @@ export async function updateRequestStatus(
         message:
           status === 'Approved'
             ? `Your ${typeLabel} request for ${assetLabel} has been approved by the Asset Management Office.`
-            : `Your ${typeLabel} request for ${assetLabel} has been rejected. Please check your request for more details.`,
+            : `Your ${typeLabel} request for ${assetLabel} has been rejected.` +
+              (rejectionReason ? ` Reason: ${rejectionReason}` : ' Please check your request for more details.'),
         type: 'REQUEST',
         referenceId: requestIdText,
         referenceType: 'request',

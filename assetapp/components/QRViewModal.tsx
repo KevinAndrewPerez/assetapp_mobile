@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -13,6 +13,7 @@ import QRCode from 'react-native-qrcode-svg';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as Sharing from 'expo-sharing';
+import { supabase } from '@/lib/supabase';
 
 interface QRViewModalProps {
   visible: boolean;
@@ -23,8 +24,53 @@ interface QRViewModalProps {
 
 const { width } = Dimensions.get('window');
 
+const SIGNED_PREFIX = /^NUT[0-9]{1,2}[-:]/i;
+
+/** Escape a value used as an ILIKE pattern: an asset code is not a pattern. */
+const escapeLike = (value: string): string => value.replace(/[\\%_]/g, (char) => `\\${char}`);
+
 export default function QRViewModal({ visible, onClose, value, title }: QRViewModalProps) {
   const qrRef = useRef<any>(null);
+  // `key` ties a resolved payload to the value it was looked up for, so a
+  // different asset can never display the previous asset's sticker.
+  const [resolved, setResolved] = useState<{ key: string; payload: string } | null>(null);
+
+  // The web stores the exact text its sticker encodes in `assets.qr_payload`.
+  // Showing the plain code on the phone would produce a QR that scans as an
+  // *unsigned* sticker even though the office's printed sticker is signed, so
+  // prefer the stored payload whenever the asset has one.
+  useEffect(() => {
+    let active = true;
+
+    const text = String(value ?? '').trim();
+    if (!visible || !text || SIGNED_PREFIX.test(text)) return undefined;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('assets')
+          .select('qr_payload')
+          .ilike('Asset_code', escapeLike(text.toUpperCase()))
+          .limit(1)
+          .maybeSingle();
+
+        const payload = String(data?.qr_payload ?? '').trim();
+        if (active && !error && payload) setResolved({ key: text, payload });
+      } catch {
+        // A lookup failure leaves the plain code on screen; the code still
+        // opens the asset, and the scanner labels it unsigned rather than fake.
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [visible, value]);
+
+  const text = String(value ?? '').trim();
+  const storedPayload = resolved?.key === text ? resolved.payload : null;
+  const shownValue = SIGNED_PREFIX.test(text) ? text : storedPayload ?? value;
+  const isSigned = SIGNED_PREFIX.test(shownValue);
 
   const getFileUri = () => {
     const safeName = value.replace(/[^a-zA-Z0-9]/g, '_');
@@ -134,7 +180,7 @@ export default function QRViewModal({ visible, onClose, value, title }: QRViewMo
 
           <View style={styles.qrWrapper}>
             <QRCode
-              value={value}
+              value={shownValue}
               size={width * 0.7}
               getRef={(ref) => (qrRef.current = ref)}
               backgroundColor="white"
@@ -142,7 +188,12 @@ export default function QRViewModal({ visible, onClose, value, title }: QRViewMo
             />
           </View>
 
-          <Text style={styles.qrValueText}>{value}</Text>
+          <Text style={styles.qrValueText}>{isSigned ? 'Signed NU Trace sticker' : value}</Text>
+          <Text style={styles.qrStatusText}>
+            {isSigned
+              ? 'The app verifies this signature when the code is scanned.'
+              : 'Unsigned code — the Asset Management Office prints the signed sticker from the web.'}
+          </Text>
 
           <View style={styles.actionButtons}>
             <TouchableOpacity
@@ -212,8 +263,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#334155',
-    marginBottom: 32,
+    marginBottom: 6,
     textAlign: 'center',
+  },
+  qrStatusText: {
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: '#64748B',
+    marginBottom: 28,
+    textAlign: 'center',
+    paddingHorizontal: 10,
   },
   actionButtons: {
     width: '100%',

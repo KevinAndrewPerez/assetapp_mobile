@@ -31,10 +31,10 @@ type Step = 'email' | 'code' | 'password';
 
 /**
  * Forgot Password — mirror of the web flow: confirm the address, receive a
- * single-use 6-digit code, then set a new password. The app generates the code,
- * stores its bcrypt hash in the shared `password_resets` table and mails it
- * through the configured email service (`lib/resetMailer.ts`); the NUTrace
- * website's form is only used when this build has no email key.
+ * single-use 6-digit code, then set a new password. The NUTrace website owns
+ * the mail-provider credentials and writes the shared `password_resets` row;
+ * the phone only verifies the code and writes the new password. No mail key is
+ * shipped in the mobile bundle.
  */
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -80,7 +80,9 @@ export default function ForgotPasswordScreen() {
       setEmail(account.email);
       setCode('');
       setStep('code');
-      setNotice(`A 6-digit verification code has been sent to ${account.email}. It expires in 15 minutes.`);
+      setNotice(
+        `If email delivery is configured for NU TRACE, a 6-digit code has been sent to ${account.email}. It expires in 15 minutes.`,
+      );
     } catch (err: any) {
       setError(String(err?.message ?? 'Could not send the verification code. Please try again.'));
     } finally {

@@ -1,8 +1,14 @@
 import { supabase } from './supabase';
 import { resolveAssetImageUrl } from './mediaUrl';
 import { formatStoredDate, normalizeStoredTimestamp } from './time';
-import { auditSessionNotice, stripNetworkIdentifiers } from './auditService';
-import { hashPasswordForDatabase } from './passwordHash';
+import { auditSessionNotice, stripNetworkIdentifiers, writeAudit } from './auditService';
+import {
+  currentActorProfile,
+  requireAdminActor,
+  requireOfficeActor,
+  requireOfficeSession,
+} from './access';
+import { QR_ACCESS_DETAIL, viewerMaySee } from './qrAccess';
 import { recordMaintenance } from './maintenanceService';
 import { createNotification } from './notificationService';
 import { type MediaAsset, type UploadedMedia, storeMedia } from './mediaUpload';
@@ -34,7 +40,7 @@ const resolveFileUrl = (files: any): string => resolveAssetImageUrl(files);
 
 export type LifecycleEvent = {
   id: string;
-  eventType: 'audit' | 'repair' | 'replacement' | 'disposal';
+  eventType: 'audit' | 'repair' | 'replacement' | 'disposal' | 'pullout';
   title: string;
   description: string;
   timestamp: string;
@@ -136,6 +142,8 @@ const normalizeLifecycleRow = (row: any, eventType: LifecycleEvent['eventType'],
     title = `Replacement activity for ${assetCode}`;
   } else if (eventType === 'disposal') {
     title = `Disposal activity for ${assetCode}`;
+  } else if (eventType === 'pullout') {
+    title = `Pullout activity for ${assetCode}`;
   }
 
   // Privacy-safe wording for the row: a session notice, or the row's own text
@@ -165,8 +173,8 @@ const normalizeLifecycleRow = (row: any, eventType: LifecycleEvent['eventType'],
     assetName: assetName,
     barcode: assetCode,
     date: normalizeTimestamp(row.created_at ?? row.updated_at ?? ''),
-    icon: String(row.icon ?? (eventType === 'audit' ? 'plus-circle' : eventType === 'repair' ? 'wrench' : eventType === 'replacement' ? 'swap-horizontal' : 'delete-circle')),
-    iconColor: String(row.icon_color ?? (eventType === 'audit' ? '#3B82F6' : eventType === 'repair' ? '#F59E0B' : eventType === 'replacement' ? '#8B5CF6' : '#EF4444')),
+    icon: String(row.icon ?? (eventType === 'audit' ? 'plus-circle' : eventType === 'repair' ? 'wrench' : eventType === 'replacement' ? 'swap-horizontal' : eventType === 'pullout' ? 'package-variant-closed-remove' : 'delete-circle')),
+    iconColor: String(row.icon_color ?? (eventType === 'audit' ? '#3B82F6' : eventType === 'repair' ? '#F59E0B' : eventType === 'replacement' ? '#8B5CF6' : eventType === 'pullout' ? '#0EA5E9' : '#EF4444')),
     raw: row,
   };
 };
@@ -179,6 +187,26 @@ async function insertRecord(table: string, payload: any) {
   return data;
 }
 
+/** The custodian + department embed every asset listing needs. */
+const ASSET_CUSTODIAN_SELECT =
+  'users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name"))';
+
+/** The photo embed — one row per uploaded file, so only ask for it when needed. */
+const ASSET_FILES_SELECT = 'asset_files("Asset_file_ID", file_name, file_path, url, mime_type)';
+
+export type FetchAssetsOptions = {
+  /**
+   * Include each asset's `asset_files` rows.
+   *
+   * A long list only shows a photo for the card the admin expanded, so it can
+   * pass `false` and fetch that one photo when it opens (`fetchAssetPhotoUrl`).
+   * That keeps the list query from carrying a file row for every asset in the
+   * registry, which is most of its payload on a department with many photos.
+   * Defaults to true so existing callers keep the photo they expect.
+   */
+  includeFiles?: boolean;
+};
+
 /**
  * Every asset the institution still holds.
  *
@@ -187,16 +215,39 @@ async function insertRecord(table: string, payload: any) {
  * web's `Inventory::excludeRemoved`). The rows are filtered in JS because
  * `select('*')` already carries the column when the database has it.
  */
-export async function fetchAssets(): Promise<AssetSummary[]> {
+export async function fetchAssets(options: FetchAssetsOptions = {}): Promise<AssetSummary[]> {
+  const select =
+    options.includeFiles === false
+      ? `*, ${ASSET_CUSTODIAN_SELECT}`
+      : `*, ${ASSET_CUSTODIAN_SELECT}, ${ASSET_FILES_SELECT}`;
+
   const { data, error } = await supabase
     .from('assets')
-    .select(`*, users!assets_user_id_foreign(department_id, employee_numbers("Full_Name"), departments(id, "Name")), asset_files("Asset_file_ID", file_name, file_path, url, mime_type)`)
+    .select(select)
     .order('updated_at', { ascending: false });
 
   if (error) {
     throw error;
   }
   return excludeRemovedFromInventory(data ?? []).map(normalizeAssetRecord);
+}
+
+/**
+ * Photo of one asset, resolved when a card is expanded. Used by lists that load
+ * without the `asset_files` embed (see `fetchAssets({ includeFiles: false })`).
+ */
+export async function fetchAssetPhotoUrl(assetId: string | number): Promise<string> {
+  const id = Number(assetId);
+  if (!Number.isFinite(id) || id <= 0) return '';
+
+  const { data, error } = await supabase
+    .from('assets')
+    .select(ASSET_FILES_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+
+  return resolveFileUrl((data as any)?.asset_files);
 }
 
 /**
@@ -266,6 +317,31 @@ export async function fetchAssetDetail(
   const user = firstOf(record.users) || {};
   const department = firstOf(user.departments) || {};
 
+  // The signed QR path already refuses a sticker outside the viewer's access;
+  // the detail route must ask the same question, or the same record opens by
+  // deep link. Admin sees all, a Department Head their department, an Employee
+  // only the asset assigned to them.
+  const viewer = await currentActorProfile();
+  const ownerDepartmentId = Number((user as any).department_id ?? department.id);
+  if (
+    !viewerMaySee(
+      viewer
+        ? {
+            id: viewer.id,
+            role: viewer.role,
+            status: viewer.status,
+            departmentId: viewer.departmentId,
+          }
+        : null,
+      {
+        userId: record.user_id ?? null,
+        departmentId: Number.isFinite(ownerDepartmentId) ? ownerDepartmentId : null,
+      },
+    )
+  ) {
+    throw new Error(QR_ACCESS_DETAIL);
+  }
+
   return {
     id: String(record.id ?? ''),
     assetId: String(record.Asset_code ?? ''),
@@ -316,8 +392,18 @@ export async function fetchAssetsWithDepartments(): Promise<{ assets: AssetSumma
 
 export async function updateDepartmentHead(
   departmentId: string | number,
-  options: { userId?: string | number; headName?: string; headEmail?: string },
+  options: {
+    userId?: string | number;
+    headName?: string;
+    headEmail?: string;
+    actorId?: string | number | null;
+  },
 ) {
+  await requireAdminActor(
+    options.actorId,
+    'Only an Administrator can assign a Department Head.',
+  );
+
   const now = new Date().toISOString();
   const { userId, headName, headEmail } = options;
 
@@ -376,37 +462,14 @@ export async function updateDepartmentHead(
     return true;
   }
 
-  // No Department Head user exists yet: create the employee record, then link
-  // a users row to it.
-  const { data: emp, error: empError } = await supabase
-    .from('employee_numbers')
-    .insert([{
-      Department_id: departmentId,
-      Full_Name: headName || 'Department Head',
-      Employee_number: 'N/A',
-      status: 'Active',
-      created_at: now,
-      updated_at: now,
-    }])
-    .select('id')
-    .single();
-  if (empError) throw empError;
-
-  const passwordHash = await hashPasswordForDatabase('password123');
-  const { error: insertError } = await supabase
-    .from('users')
-    .insert([{
-      department_id: departmentId,
-      employee_numbers_id: (emp as any)?.id ?? null,
-      email: headEmail,
-      password: passwordHash, // Default password; user should log in and change it
-      role: 'Department Head',
-      status: 'Active',
-      created_at: now,
-      updated_at: now,
-    }]);
-  if (insertError) throw insertError;
-  return true;
+  // No account exists for this department yet. The old fallback invented an
+  // employee row with Employee_number "N/A" and created an account with the
+  // hardcoded password "password123". That is an account nobody chose to own
+  // and a password that is public knowledge, so the fallback is now refused.
+  // The office registers the employee (or chooses an existing account) first.
+  throw new Error(
+    'This department has no account to appoint as Department Head. Register the employee or choose an existing account from the department first — Department Head accounts cannot be created from this screen.',
+  );
 }
 
 export async function fetchAssetLifecycle(assetId: string): Promise<LifecycleEvent[]> {
@@ -438,14 +501,17 @@ export async function fetchAssetLifecycle(assetId: string): Promise<LifecycleEve
 }
 
 export async function fetchActivityTimeline(limit = 100): Promise<LifecycleEvent[]> {
-  const [auditRes, repairRes, replacementRes, disposalRes] = await Promise.all([
+  await requireOfficeSession();
+
+  const [auditRes, repairRes, replacementRes, disposalRes, pulloutRes] = await Promise.all([
     supabase.from('audit_logs').select('*, assets("Asset_name", "Asset_code"), users(role, employee_numbers("Full_Name")), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
     supabase.from('repairs').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
     supabase.from('replacements').select('*, old_assets:old_assets_id(Asset_name, Asset_code), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
     supabase.from('disposals').select('*, assets(Asset_name, Asset_code), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
+    supabase.from('pullouts').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
   ]);
 
-  const errors = [auditRes.error, repairRes.error, replacementRes.error, disposalRes.error].filter(Boolean);
+  const errors = [auditRes.error, repairRes.error, replacementRes.error, disposalRes.error, pulloutRes.error].filter(Boolean);
   if (errors.length > 0) {
     throw errors[0];
   }
@@ -455,6 +521,7 @@ export async function fetchActivityTimeline(limit = 100): Promise<LifecycleEvent
     ...(repairRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'repair', idx)),
     ...(replacementRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'replacement', idx)),
     ...(disposalRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'disposal', idx)),
+    ...(pulloutRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'pullout', idx)),
   ];
 
   return events.sort((a, b) => {
@@ -476,6 +543,8 @@ const ACTIVITY_SELECT = '*, assets("Asset_name", "Asset_code"), users(role, empl
  * through the whole table instead.
  */
 export async function fetchAuditLogsPage(page = 0, pageSize = AUDIT_PAGE_SIZE): Promise<LifecycleEvent[]> {
+  await requireOfficeSession();
+
   const { data, error } = await supabase
     .from('audit_logs')
     .select(ACTIVITY_SELECT)
@@ -491,6 +560,8 @@ export async function fetchAuditLogsPage(page = 0, pageSize = AUDIT_PAGE_SIZE): 
 
 /** Total number of audit rows, so the UI knows when more pages exist. */
 export async function fetchAuditLogsCount(): Promise<number> {
+  await requireOfficeSession();
+
   const { count, error } = await supabase
     .from('audit_logs')
     .select('id', { count: 'exact', head: true });
@@ -506,13 +577,16 @@ export async function fetchAuditLogsCount(): Promise<number> {
  * that grow unbounded and need paging.
  */
 export async function fetchActivitySources(limit = 200): Promise<LifecycleEvent[]> {
-  const [repairRes, replacementRes, disposalRes] = await Promise.all([
+  await requireOfficeSession();
+
+  const [repairRes, replacementRes, disposalRes, pulloutRes] = await Promise.all([
     supabase.from('repairs').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
     supabase.from('replacements').select('*, old_assets:old_assets_id(Asset_name, Asset_code), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
     supabase.from('disposals').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
+    supabase.from('pullouts').select('*, assets("Asset_name", "Asset_code"), requests(id, request_type)').order('created_at', { ascending: false }).limit(limit),
   ]);
 
-  const errors = [repairRes.error, replacementRes.error, disposalRes.error].filter(Boolean);
+  const errors = [repairRes.error, replacementRes.error, disposalRes.error, pulloutRes.error].filter(Boolean);
   if (errors.length > 0) {
     throw errors[0];
   }
@@ -521,6 +595,7 @@ export async function fetchActivitySources(limit = 200): Promise<LifecycleEvent[
     ...(repairRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'repair', idx)),
     ...(replacementRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'replacement', idx)),
     ...(disposalRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'disposal', idx)),
+    ...(pulloutRes.data ?? []).map((row: any, idx: number) => normalizeLifecycleRow(row, 'pullout', idx)),
   ];
 }
 
@@ -932,6 +1007,193 @@ export type ReplacementRecord = {
 };
 
 /**
+ * Open a replacement for the asset the office just scanned.
+ *
+ * The phone's stand-in for the web's `POST /admin/replacements/create`, minus
+ * the repair: a scan has no repair row to convert, so the destination asset is
+ * left as the same-row placeholder the web writes and is linked afterwards with
+ * the existing "Link Replacement Asset" action.
+ *
+ * Every row is one the web already reads, so the record appears there
+ * unchanged:
+ *   • `requests` — type Replacement, status `Approved`, owned by the admin (the
+ *     mobile list groups replacements under their request, and an admin-opened
+ *     replacement is a decision, not a pending request);
+ *   • `replacements` — old_assets_id, new_assets_id = the same id (placeholder),
+ *     status `Approved`, the admin's wording in `reason`, and the
+ *     `replacement_reason` value the web's page shows;
+ *   • `assets.Lifecycle_Status = 'For Replacement'`;
+ *   • one REPLACEMENT audit entry, plus a notification for the custodian when
+ *     they are not the admin who scanned it.
+ *
+ * A disposed asset, or one already inside an open replacement, is refused before
+ * anything is written.
+ */
+export async function createReplacementForAsset(input: {
+  assetId: string | number;
+  actorId?: string | number | null;
+  actorLabel?: string;
+  /** Required, exactly as the web route requires it. */
+  reason: string;
+}): Promise<{
+  replacementId: string;
+  requestId: string;
+  requestRef: string;
+  assetName: string;
+  assetCode: string;
+}> {
+  await requireOfficeActor(
+    input.actorId,
+    'Only the Asset Management Office can open a replacement.',
+  );
+
+  const assetId = Number(input.assetId);
+  if (!Number.isFinite(assetId) || assetId <= 0) {
+    throw new Error('Scan an asset sticker first.');
+  }
+
+  const reason = String(input.reason ?? '').trim();
+  if (!reason) {
+    throw new Error('A reason is required so the user knows why the asset is being replaced.');
+  }
+
+  const actorId = input.actorId;
+  if (actorId === undefined || actorId === null || actorId === '') {
+    throw new Error('Your session was not found. Please sign in again.');
+  }
+
+  const { data: assetRow, error: assetLookupError } = await supabase
+    .from('assets')
+    .select('id, Asset_code, Asset_name, Lifecycle_Status, user_id')
+    .eq('id', assetId)
+    .maybeSingle();
+  if (assetLookupError) throw assetLookupError;
+  if (!assetRow) throw new Error('No asset found for the scanned code.');
+
+  const assetStatus = String((assetRow as any).Lifecycle_Status ?? '').trim();
+  const statusKey = assetStatus.toLowerCase();
+  if (statusKey === 'disposal' || statusKey === 'disposed') {
+    throw new Error('The asset is already disposed — it cannot be replaced.');
+  }
+
+  // One open replacement per asset: an Approved (not yet Received) row means the
+  // process is already running, and a second one would split its history.
+  const { data: existing, error: existingError } = await supabase
+    .from('replacements')
+    .select('Replacement_id, status')
+    .eq('old_assets_id', assetId);
+  if (existingError) throw existingError;
+  const alreadyOpen = ((existing ?? []) as any[]).some((row) => {
+    const key = String(row?.status ?? '').trim().toLowerCase();
+    return key === 'approved' || key === 'pending';
+  });
+  if (alreadyOpen) {
+    throw new Error('This asset is already in the replacement process.');
+  }
+
+  const now = new Date().toISOString();
+  const actorLabel = String(input.actorLabel ?? '').trim() || 'Admin';
+  const assetName = String((assetRow as any).Asset_name ?? 'Asset');
+  const assetCode = String((assetRow as any).Asset_code ?? '');
+
+  const { data: requestRow, error: requestError } = await supabase
+    .from('requests')
+    .insert([
+      {
+        user_id: actorId,
+        asset_id: assetId,
+        request_type: 'Replacement',
+        status: 'Approved',
+        Note: reason,
+        created_at: now,
+        updated_at: now,
+      },
+    ])
+    .select('id')
+    .single();
+  if (requestError) throw requestError;
+
+  const requestId = String((requestRow as any)?.id ?? '');
+  let replacementId = '';
+
+  try {
+    const { data: replacementRow, error: replacementError } = await supabase
+      .from('replacements')
+      .insert([
+        {
+          Request_id: requestId,
+          old_assets_id: assetId,
+          // The web's placeholder: the real unit is linked once it is known.
+          new_assets_id: assetId,
+          Approve_by: actorLabel,
+          reason,
+          replacement_reason: 'Beyond Repair',
+          notes: `Created by the Asset Management Office from a scanned sticker. Reason: ${reason}`,
+          Replacement_Date: now,
+          status: 'Approved',
+          created_at: now,
+          updated_at: now,
+        },
+      ])
+      .select('Replacement_id')
+      .single();
+    if (replacementError) throw replacementError;
+    replacementId = String((replacementRow as any)?.Replacement_id ?? '');
+
+    const { error: assetError } = await supabase
+      .from('assets')
+      .update({ Lifecycle_Status: 'For Replacement', updated_at: now })
+      .eq('id', assetId);
+    if (assetError) throw assetError;
+  } catch (error) {
+    // No transaction on this client: undo the rows this call created, so a
+    // half-written replacement cannot block the asset from being retried.
+    if (replacementId) {
+      const { error: undoReplacement } = await supabase
+        .from('replacements')
+        .delete()
+        .eq('Replacement_id', replacementId as any);
+      if (undoReplacement) console.warn('Could not roll back the replacement row:', undoReplacement.message);
+    }
+    const { error: undoRequest } = await supabase
+      .from('requests')
+      .delete()
+      .eq('id', requestId as any);
+    if (undoRequest) console.warn('Could not roll back the request row:', undoRequest.message);
+    throw error;
+  }
+
+  await writeAudit({
+    actorId,
+    assetId,
+    requestId,
+    actionType: 'REPLACEMENT',
+    description: `Replacement #${replacementId || requestId} opened for ${assetName} ${assetCode} from a scanned sticker`,
+    notes: `Reason: ${reason}`,
+  });
+
+  const ownerId = (assetRow as any).user_id ?? null;
+  if (ownerId !== null && ownerId !== undefined && String(ownerId) !== String(actorId)) {
+    await createNotification({
+      userId: ownerId,
+      title: 'Asset Scheduled for Replacement',
+      message: `${assetName} (${assetCode}) has been scheduled for replacement by the Asset Management Office. Reason: ${reason}. You will be notified when a new asset is ready for pickup.`,
+      type: 'REPLACEMENT',
+      referenceId: replacementId || requestId,
+      referenceType: 'replacement',
+    });
+  }
+
+  return {
+    replacementId,
+    requestId,
+    requestRef: `REQ-${requestId}`,
+    assetName,
+    assetCode,
+  };
+}
+
+/**
  * One record per `replacements` row (one old asset + its linked new asset),
  * skipping requests that are still Pending. A replacement whose new_assets_id
  * equals the old asset id is a placeholder (no real replacement linked yet).
@@ -1239,6 +1501,11 @@ export async function linkReplacementAsset(
   newAssetId: string | number,
   actorId?: string | number | null,
 ) {
+  await requireOfficeActor(
+    actorId,
+    'Only the Asset Management Office can link a replacement asset.',
+  );
+
   const now = new Date().toISOString();
 
   const { data: replacement, error: fetchErr } = await supabase
@@ -1290,6 +1557,11 @@ export async function markReplacementReceived(
   replacementId: string | number,
   actorId?: string | number | null,
 ) {
+  await requireOfficeActor(
+    actorId,
+    'Only the Asset Management Office can receive a replacement.',
+  );
+
   const now = new Date().toISOString();
 
   const { data: replacement, error: fetchErr } = await supabase

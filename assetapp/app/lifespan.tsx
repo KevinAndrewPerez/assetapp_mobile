@@ -242,7 +242,7 @@ export default function LifespanScreen() {
       return;
     }
     if (decision === 'disposal' && !disposalChecked) {
-      Alert.alert('Confirmation Required', 'Please confirm that this asset should be disposed.');
+      Alert.alert('Confirmation Required', 'Please confirm that a disposal request should be filed for this asset.');
       return;
     }
 
@@ -266,7 +266,7 @@ export default function LifespanScreen() {
         repair: 'Asset sent for repair. A pending repair record was created.',
         replacement:
           'Replacement recommendation submitted. A replacement record was created for this asset.',
-        disposal: 'Asset marked for disposal. The disposal process has been initiated.',
+        disposal: 'Disposal request submitted for approval. The asset has not been disposed of — its status stays the same until the request is approved and the official form is finalized on the web.',
         extend: `Lifespan extended to ${formatDate(
           result.expirationDate ?? null,
         )}.\nThe asset remains in Pullout status.`,
@@ -555,8 +555,11 @@ export default function LifespanScreen() {
                     <View style={styles.infoBoxRed}>
                       <MaterialCommunityIcons name="alert-circle" size={20} color="#EF4444" />
                       <View style={styles.warningContent}>
-                        <Text style={styles.warningTitle}>Warning: Asset will transition to disposal process.</Text>
-                        <Text style={styles.warningText}>This action marks the end of the asset&apos;s operational lifespan.</Text>
+                        <Text style={styles.warningTitle}>This files a disposal request — it does not dispose the asset.</Text>
+                        <Text style={styles.warningText}>
+                          The Asset Management Office must still approve the request and prepare the
+                          official form. The asset keeps its current status until the web finalizes it.
+                        </Text>
                       </View>
                     </View>
                     <TouchableOpacity
@@ -570,7 +573,7 @@ export default function LifespanScreen() {
                       <View style={[styles.checkbox, disposalChecked ? styles.checkboxDanger : null]}>
                         {disposalChecked && <MaterialCommunityIcons name="check-bold" size={13} color="#FFFFFF" />}
                       </View>
-                      <Text style={styles.checkboxLabelText}>I confirm this asset should be disposed</Text>
+                      <Text style={styles.checkboxLabelText}>I confirm a disposal request should be filed for this asset</Text>
                     </TouchableOpacity>
                     <View style={styles.formGroup}>
                       <Text style={styles.formLabel}>DISPOSAL NOTES (OPTIONAL)</Text>

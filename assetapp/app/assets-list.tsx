@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,8 +12,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { fetchAssets, AssetSummary } from '../lib/assetService';
+import { fetchAssets, fetchAssetPhotoUrl, AssetSummary } from '../lib/assetService';
 import { getStoredUser } from '../lib/userService';
+import { PAGE_SIZE, usePagedList } from '../hooks/use-paged-list';
 import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
 import QRViewModal from '../components/QRViewModal';
@@ -24,6 +26,8 @@ export default function AssetsListScreen() {
   const { department, departmentId } = useLocalSearchParams() as { department?: string, departmentId?: string };
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState('All');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -32,11 +36,40 @@ export default function AssetsListScreen() {
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [selectedQrValue, setSelectedQrValue] = useState('');
   const [selectedQrTitle, setSelectedQrTitle] = useState('');
+  // Photos are fetched per card, only once it is opened (see loadPhoto).
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  // Assets whose photo has already been asked for, so opening a card twice (or
+  // re-rendering the list) never repeats the lookup.
+  const photoRequested = useRef<Record<string, boolean>>({});
 
   const openQrModal = (value: string, title: string) => {
     setSelectedQrValue(value);
     setSelectedQrTitle(title);
     setQrModalVisible(true);
+  };
+
+  /**
+   * Lazy photo: the list query leaves `asset_files` out, so a card's photo is
+   * requested the first time the admin expands it and then kept in state.
+   */
+  const loadPhoto = useCallback(async (item: AssetSummary) => {
+    if (!item?.id || item.imageUrl) return;
+    if (photoRequested.current[item.id]) return;
+    photoRequested.current[item.id] = true;
+    try {
+      const url = await fetchAssetPhotoUrl(item.id);
+      setPhotoUrls((prev) => ({ ...prev, [item.id]: url }));
+    } catch (err) {
+      console.warn('[assets-list] Photo lookup failed:', err);
+      photoRequested.current[item.id] = false;
+      setPhotoUrls((prev) => ({ ...prev, [item.id]: '' }));
+    }
+  }, []);
+
+  const toggleExpanded = (item: AssetSummary) => {
+    const next = expandedId === item.id ? null : item.id;
+    setExpandedId(next);
+    if (next) void loadPhoto(item);
   };
 
   useEffect(() => {
@@ -45,13 +78,16 @@ export default function AssetsListScreen() {
       setError(null);
 
       try {
+        // No `asset_files` embed: a department list can be long, and only the
+        // expanded card ever shows a photo.
         const [records, userData] = await Promise.all([
-          fetchAssets(),
+          fetchAssets({ includeFiles: false }),
           getStoredUser()
         ]);
         setAssets(records);
         setUser(userData);
         setExpandedId((prev) => prev ?? (records?.[0]?.id ? String(records[0].id) : null));
+        if (records?.[0]) void loadPhoto(records[0]);
       } catch (err) {
         setError((err as Error).message || 'Unable to load assets from Supabase');
       } finally {
@@ -60,9 +96,40 @@ export default function AssetsListScreen() {
     };
 
     loadData();
-  }, [department, departmentId]);
+  }, [department, departmentId, loadPhoto]);
 
   const isAdmin = user?.role === 'Admin';
+
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          assets
+            .map((item) => item.category)
+            .filter(
+              (category): category is string =>
+                typeof category === 'string' && category.length > 0,
+            ),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [assets],
+  );
+
+  const statusFilters = [
+    'All',
+    'Active',
+    'For Checking',
+    'For Repair',
+    'For Replacement',
+    'Pulled Out',
+    'Disposed',
+  ];
+
+  const clearFilters = () => {
+    setActiveTag('All');
+    setCategoryFilter('All');
+    setSearch('');
+  };
 
   const filteredAssets = useMemo(
     () =>
@@ -84,14 +151,30 @@ export default function AssetsListScreen() {
         }
         
         const matchesTag = activeTag === 'All' ? true : item.status === activeTag;
+        const matchesCategory =
+          categoryFilter === 'All' ? true : String(item.category ?? '') === categoryFilter;
         const searchable = [item.title, item.category, item.location, item.assetId, item.custodian]
           .join(' ')
           .toLowerCase();
 
-        return matchesDepartment && matchesTag && searchable.includes(search.toLowerCase());
+        return (
+          matchesDepartment &&
+          matchesTag &&
+          matchesCategory &&
+          searchable.includes(search.toLowerCase())
+        );
       }),
-    [search, activeTag, department, departmentId, assets, user, isAdmin],
+    [search, activeTag, categoryFilter, department, departmentId, assets, user, isAdmin],
   );
+
+  // Only the first page is mounted; the window grows as the list is scrolled.
+  const {
+    visible: visibleAssets,
+    hasMore,
+    loadMore,
+    total: totalAssets,
+    shown: shownAssets,
+  } = usePagedList(filteredAssets);
 
   const departmentName = department || (isAdmin ? 'All Assets' : assets.find(a => String(a.departmentId) === String(user?.department_id))?.department || (user?.department ?? (user as any)?.employee_numbers?.Full_Name ?? user?.full_name ?? 'My Assets'));
 
@@ -122,7 +205,12 @@ export default function AssetsListScreen() {
         <NotificationBell />
       </View>
 
-      <ScrollView style={styles.screenBody} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.screenBody}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        onMomentumScrollEnd={loadMore}
+      >
         <View style={styles.searchRow}>
           <View style={styles.searchInputContainer}>
             <MaterialCommunityIcons name="magnify" size={24} color="#94A3B8" />
@@ -134,14 +222,24 @@ export default function AssetsListScreen() {
               placeholderTextColor="#94A3B8"
             />
           </View>
-          <TouchableOpacity style={styles.filterButton}>
-            <MaterialCommunityIcons name="filter-variant" size={24} color="#1E3A5F" />
+          <TouchableOpacity
+            style={styles.filterButton}
+            onPress={() => setFilterOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Filter assets"
+          >
+            <MaterialCommunityIcons
+              name="filter-variant"
+              size={24}
+              color={activeTag !== 'All' || categoryFilter !== 'All' ? '#F59E0B' : '#1E3A5F'}
+            />
           </TouchableOpacity>
         </View>
 
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.tagScrollWrap}
           contentContainerStyle={styles.tagScroll}
         >
           {['All', 'Active', 'For Repair', 'Pulled Out', 'Disposed'].map((tag) => {
@@ -158,8 +256,9 @@ export default function AssetsListScreen() {
           })}
         </ScrollView>
 
-        {filteredAssets.map((item) => {
+        {visibleAssets.map((item) => {
           const expanded = expandedId === item.id;
+          const photoUri = item.imageUrl || photoUrls[item.id] || '';
           const statusColor = item.status === 'Active' ? '#10B981' : item.status === 'For Repair' ? '#F59E0B' : '#64748B';
           const statusBg = item.status === 'Active' ? '#ECFDF5' : item.status === 'For Repair' ? '#FFFBEB' : '#F4F7FB';
 
@@ -167,7 +266,7 @@ export default function AssetsListScreen() {
             <View key={item.id} style={styles.assetCard}>
               <TouchableOpacity
                 style={styles.assetHeader}
-                onPress={() => setExpandedId(expanded ? null : item.id)}
+                onPress={() => toggleExpanded(item)}
                 activeOpacity={0.8}
               >
                 <View style={styles.assetInfo}>
@@ -190,8 +289,8 @@ export default function AssetsListScreen() {
 
               {expanded && (
                 <View style={styles.assetDetails}>
-                  {item.imageUrl ? (
-                    <AssetPhoto uri={item.imageUrl} title={item.title} />
+                  {photoUri ? (
+                    <AssetPhoto uri={photoUri} title={item.title} />
                   ) : (
                     <View style={styles.photoPlaceholder}>
                       <MaterialCommunityIcons name="image-off-outline" size={28} color="#94A3B8" />
@@ -237,6 +336,18 @@ export default function AssetsListScreen() {
             <Text style={styles.emptyText}>No assets match your filter.</Text>
           </View>
         )}
+
+        {hasMore && (
+          <TouchableOpacity style={styles.loadMoreButton} onPress={loadMore} activeOpacity={0.85}>
+            <MaterialCommunityIcons name="chevron-down" size={18} color="#1E3A5F" />
+            <Text style={styles.loadMoreText}>
+              Load more assets ({shownAssets} of {totalAssets})
+            </Text>
+          </TouchableOpacity>
+        )}
+        {!hasMore && totalAssets > PAGE_SIZE && (
+          <Text style={styles.listEndText}>All {totalAssets} assets shown</Text>
+        )}
       </ScrollView>
 
       <QRViewModal
@@ -245,6 +356,97 @@ export default function AssetsListScreen() {
         value={selectedQrValue}
         title={selectedQrTitle}
       />
+
+      <Modal
+        visible={filterOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFilterOpen(false)}
+      >
+        <View style={styles.filterOverlay}>
+          <TouchableOpacity
+            style={styles.filterBackdrop}
+            activeOpacity={1}
+            onPress={() => setFilterOpen(false)}
+          />
+          <View style={styles.filterSheet}>
+            <View style={styles.filterHeader}>
+              <Text style={styles.filterTitle}>Filter Assets</Text>
+              <TouchableOpacity
+                onPress={() => setFilterOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close filters"
+              >
+                <MaterialCommunityIcons name="close" size={22} color="#1E3A5F" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.filterSectionLabel}>STATUS</Text>
+            <View style={styles.filterChipWrap}>
+              {statusFilters.map((status) => {
+                const active = activeTag === status;
+                return (
+                  <TouchableOpacity
+                    key={status}
+                    style={[styles.filterOption, active && styles.filterOptionActive]}
+                    onPress={() => setActiveTag(status)}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[styles.filterOptionText, active && styles.filterOptionTextActive]}
+                    >
+                      {status}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.filterSectionLabel}>CATEGORY</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChipScroll}
+              contentContainerStyle={styles.filterChipWrap}
+            >
+              {['All', ...categories].map((category) => {
+                const active = categoryFilter === category;
+                return (
+                  <TouchableOpacity
+                    key={category}
+                    style={[styles.filterOption, active && styles.filterOptionActive]}
+                    onPress={() => setCategoryFilter(category)}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[styles.filterOptionText, active && styles.filterOptionTextActive]}
+                    >
+                      {category}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.filterActions}>
+              <TouchableOpacity
+                style={styles.filterClear}
+                onPress={clearFilters}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.filterClearText}>Clear all</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.filterApply}
+                onPress={() => setFilterOpen(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.filterApplyText}>Show {filteredAssets.length} assets</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -373,7 +575,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // See transfer.tsx: centre the chips and keep the scroller from filling the
+  // leftover viewport height.
+  tagScrollWrap: { flexGrow: 0 },
   tagScroll: {
+    alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 4,
     gap: 10,
@@ -562,4 +768,93 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
   },
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginBottom: 12,
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E3A5F',
+  },
+  listEndText: {
+    textAlign: 'center',
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  filterOverlay: { flex: 1, justifyContent: 'flex-end' },
+  filterBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  },
+  filterSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 28,
+  },
+  filterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  filterTitle: { fontSize: 18, fontWeight: '800', color: '#0C134F' },
+  filterSectionLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    color: '#94A3B8',
+    marginTop: 16,
+    marginBottom: 9,
+  },
+  filterChipScroll: { flexGrow: 0 },
+  filterChipWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
+  filterOption: {
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  filterOptionActive: { backgroundColor: '#1E3A5F', borderColor: '#1E3A5F' },
+  filterOptionText: { fontSize: 12.5, fontWeight: '700', color: '#475569' },
+  filterOptionTextActive: { color: '#FFFFFF' },
+  filterActions: { flexDirection: 'row', gap: 10, marginTop: 22 },
+  filterClear: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterClearText: { fontSize: 13.5, fontWeight: '800', color: '#64748B' },
+  filterApply: {
+    flex: 1.6,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#FBBF24',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterApplyText: { fontSize: 13.5, fontWeight: '800', color: '#0C134F' },
 });

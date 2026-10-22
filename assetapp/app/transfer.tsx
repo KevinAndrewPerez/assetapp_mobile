@@ -18,7 +18,6 @@ import { headerTopPadding } from '@/lib/theme';
 import { getStoredUser } from '@/lib/userService';
 import { formatStoredDate } from '@/lib/time';
 import {
-  executeEmployeeTransfer,
   fetchEmployeeAssignedAssets,
   fetchTransferEmployees,
   fetchTransferHistory,
@@ -28,6 +27,7 @@ import {
   TransferEmployee,
   TransferRecord,
 } from '@/lib/transferService';
+import { createTransferRequest } from '@/lib/transferWorkflow';
 
 const NAVY = '#0C134F';
 const NAVY_MID = '#1E3A5F';
@@ -179,7 +179,7 @@ export default function TransferScreen() {
     setBusy(true);
     try {
       const actor = await getStoredUser();
-      const result = await executeEmployeeTransfer({
+      const result = await createTransferRequest({
         fromUserId: source.id,
         fromName: source.name,
         toUserId: receiver.id,
@@ -188,12 +188,11 @@ export default function TransferScreen() {
         reason,
         notes,
         actorId: actor?.id ?? null,
-        actorName: actor?.full_name ?? actor?.email ?? null,
       });
 
       Alert.alert(
-        'Transfer Completed',
-        `${result.assetCount} asset${result.assetCount > 1 ? 's' : ''} moved from ${source.name} to ${receiver.name}.\n\nReference: ${result.reference}\nReason: ${reason}`,
+        'Transfer Request Submitted',
+        `${result.assetCount} asset${result.assetCount > 1 ? 's' : ''} from ${source.name} to ${receiver.name} is waiting for approval.\n\nReference: ${result.reference}\nReason: ${reason}\n\nNo asset has moved yet. An Asset Management Office administrator must approve the request on the Requests screen.`,
       );
       resetDraft();
       setTab('history');
@@ -392,7 +391,7 @@ export default function TransferScreen() {
             onPress={() => setStep('receiver')}
           >
             <MaterialCommunityIcons name="swap-horizontal-bold" size={17} color={NAVY} />
-            <Text style={styles.footerGoldText}>Transfer Assets</Text>
+            <Text style={styles.footerGoldText}>Continue</Text>
           </TouchableOpacity>
         </View>
       </>
@@ -525,7 +524,7 @@ export default function TransferScreen() {
             disabled={!receiver}
             onPress={() => setStep('confirm')}
           >
-            <Text style={styles.footerGoldText}>Continue</Text>
+            <Text style={styles.footerGoldText}>Review Request</Text>
           </TouchableOpacity>
         </View>
       </>
@@ -537,8 +536,8 @@ export default function TransferScreen() {
     return (
       <>
         <View style={styles.stepHeader}>
-          <Text style={styles.stepEyebrow}>CONFIRM ASSET TRANSFER</Text>
-          <Text style={styles.stepTitle}>Please review before saving</Text>
+          <Text style={styles.stepEyebrow}>CONFIRM TRANSFER REQUEST</Text>
+          <Text style={styles.stepTitle}>Please review before submitting</Text>
         </View>
 
         <View style={styles.confirmCard}>
@@ -570,9 +569,10 @@ export default function TransferScreen() {
         <View style={styles.warningBox}>
           <MaterialCommunityIcons name="alert-outline" size={18} color="#B45309" />
           <Text style={styles.warningText}>
-            The selected employee will become responsible for these assets. Asset codes, QR
-            stickers, acquisition details and every repair / maintenance / replacement record stay
-            exactly as they are — only the accountable employee changes.
+            This files a transfer request for the Asset Management Office to decide. Nothing moves
+            until it is approved. After approval the selected employee becomes responsible for these
+            assets; asset codes, QR stickers, acquisition details and every repair / maintenance /
+            replacement record stay exactly as they are.
           </Text>
         </View>
 
@@ -596,7 +596,7 @@ export default function TransferScreen() {
             ) : (
               <MaterialCommunityIcons name="check-decagram" size={17} color={NAVY} />
             )}
-            <Text style={styles.footerGoldText}>{busy ? 'Transferring…' : 'Confirm Transfer'}</Text>
+            <Text style={styles.footerGoldText}>{busy ? 'Submitting…' : 'Submit Transfer Request'}</Text>
           </TouchableOpacity>
         </View>
       </>
@@ -742,6 +742,7 @@ export default function TransferScreen() {
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
+                  style={styles.filterScroll}
                   contentContainerStyle={styles.filterRow}
                 >
                   {departments.map((name) => {
@@ -763,7 +764,7 @@ export default function TransferScreen() {
 
                 <Text style={styles.countLine}>
                   {visibleEmployees.length} employee{visibleEmployees.length === 1 ? '' : 's'} •{' '}
-                  {employees.reduce((total, employee) => total + employee.assetCount, 0)} assigned
+                  {visibleEmployees.reduce((total, employee) => total + employee.assetCount, 0)} assigned
                   assets
                 </Text>
 
@@ -898,7 +899,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#1E293B' },
-  filterRow: { paddingVertical: 6, gap: 8, paddingRight: 12 },
+  // A horizontal ScrollView's content container stretches its children to the
+  // container's height when the cross axis has no alignment. Inside the screen's
+  // vertical ScrollView that height is the leftover viewport, which turned every
+  // department chip into a tall pill. Centre the chips and stop the scroller
+  // from growing vertically.
+  filterScroll: { flexGrow: 0 },
+  filterRow: { alignItems: 'center', paddingVertical: 6, gap: 8, paddingRight: 12 },
   filterChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -906,7 +913,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: BORDER,
-    marginRight: 8,
   },
   filterChipActive: { backgroundColor: NAVY_MID, borderColor: NAVY_MID },
   filterChipText: { color: '#334155', fontSize: 12.5, fontWeight: '600' },

@@ -16,9 +16,8 @@ import { getStoredUser } from '../../lib/userService';
 import { supabase } from '../../lib/supabase';
 import NotificationBell from '@/components/notification-bell';
 import { AssetScanButton } from '@/components/asset-scanner';
-import QRCode from 'react-native-qrcode-svg';
-import QRViewModal from '../../components/QRViewModal';
 import { headerTopPadding } from '@/lib/theme';
+import { friendlyErrorMessage } from '@/lib/errorMessage';
 
 export default function AssetsScreen() {
   const router = useRouter();
@@ -27,7 +26,6 @@ export default function AssetsScreen() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [allAssets, setAllAssets] = useState<AssetSummary[]>([]);
   const [expandedDeptId, setExpandedDeptId] = useState<string | number | null>(null);
-  const [search, setSearch] = useState('');
   
   // Edit Dept Head Modal
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -35,11 +33,6 @@ export default function AssetsScreen() {
   const [deptUsers, setDeptUsers] = useState<any[]>([]);
   const [selectedHeadUserId, setSelectedHeadUserId] = useState<string | number | null>(null);
   const [updating, setUpdating] = useState(false);
-
-  // QR Modal
-  const [qrModalVisible, setQrModalVisible] = useState(false);
-  const [selectedQrValue, setSelectedQrValue] = useState('');
-  const [selectedQrTitle, setSelectedQrTitle] = useState('');
 
   const loadData = async () => {
     try {
@@ -73,14 +66,11 @@ export default function AssetsScreen() {
   };
 
   useEffect(() => {
-    loadData();
+    const bootstrap = async () => {
+      await loadData();
+    };
+    bootstrap();
   }, []);
-
-  const openQrModal = (value: string, title: string) => {
-    setSelectedQrValue(value);
-    setSelectedQrTitle(title);
-    setQrModalVisible(true);
-  };
 
   const handleEditHead = async (dept: any) => {
     setEditingDept(dept);
@@ -113,13 +103,19 @@ export default function AssetsScreen() {
     }
     setUpdating(true);
     try {
-      await updateDepartmentHead(editingDept.id, { userId: selectedHeadUserId });
+      await updateDepartmentHead(editingDept.id, {
+        userId: selectedHeadUserId,
+        actorId: user?.id ?? null,
+      });
       Alert.alert('Success', 'Department head updated successfully.');
       setEditModalVisible(false);
       loadData();
     } catch (error) {
       console.error('Failed to update department head:', error);
-      Alert.alert('Error', 'Failed to update department head.');
+      Alert.alert(
+        'Could not update Department Head',
+        friendlyErrorMessage(error, 'Failed to update department head. Please try again.'),
+      );
     } finally {
       setUpdating(false);
     }
@@ -305,12 +301,6 @@ export default function AssetsScreen() {
         </View>
       </Modal>
 
-      <QRViewModal 
-        visible={qrModalVisible} 
-        onClose={() => setQrModalVisible(false)} 
-        value={selectedQrValue} 
-        title={selectedQrTitle} 
-      />
       </View>
     </View>
   );

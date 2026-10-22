@@ -23,6 +23,7 @@ import QRViewModal from '../components/QRViewModal';
 import NotificationBell from '@/components/notification-bell';
 import { formatStoredTimestamp } from '../lib/time';
 import { isSessionAuditRow } from '../lib/auditService';
+import { friendlyErrorMessage } from '../lib/errorMessage';
 
 const activityTags = ['All', 'New Assets', 'User Activity', 'Repairs', 'Pull Outs'];
 const PAGE_SIZE = 15;
@@ -93,7 +94,7 @@ export default function ActivityLogScreen() {
       setVisibleCount(PAGE_SIZE);
       setError(null);
     } catch (err) {
-      setError((err as Error).message || 'Unable to load activity timeline from Supabase');
+      setError(friendlyErrorMessage(err, 'Unable to load the activity timeline. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -115,7 +116,7 @@ export default function ActivityLogScreen() {
       setActivities((prev) => mergeEvents(prev, next));
       setAuditPagesLoaded((p) => p + 1);
     } catch (err) {
-      setError((err as Error).message || 'Unable to load more activity');
+      setError(friendlyErrorMessage(err, 'Unable to load more activity. Please try again.'));
     } finally {
       setLoadingMore(false);
     }
@@ -126,7 +127,7 @@ export default function ActivityLogScreen() {
     if (activeTag === 'New Assets') filtered = activities.filter((a) => isAssetRegistration(a));
     else if (activeTag === 'User Activity') filtered = activities.filter((a) => isUserActivity(a));
     else if (activeTag === 'Repairs') filtered = activities.filter((a) => a.eventType === 'repair');
-    else if (activeTag === 'Pull Outs') filtered = activities.filter((a) => a.eventType === 'disposal');
+    else if (activeTag === 'Pull Outs') filtered = activities.filter((a) => a.eventType === 'pullout');
     else filtered = activities;
 
     const needle = search.trim().toLowerCase();
@@ -193,6 +194,7 @@ export default function ActivityLogScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.tagScrollWrap}
           contentContainerStyle={styles.tagScroll}
         >
           {activityTags.map((tag) => {
@@ -420,7 +422,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  // Horizontal ScrollViews stretch their chips to the leftover viewport height
+  // when the content container has no cross-axis alignment (transfer.tsx).
+  tagScrollWrap: { flexGrow: 0 },
   tagScroll: {
+    alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 4,
     gap: 10,

@@ -26,6 +26,8 @@ import {
 import { resolveActingUserLabel } from '../lib/actorService';
 import { canCompleteMaintenanceStatus, maintenanceBlockedReason } from '../lib/lifecycle';
 import { getStoredUser } from '../lib/userService';
+import { isOfficeRole } from '../lib/access';
+import { friendlyErrorMessage } from '../lib/errorMessage';
 import QRViewModal from '../components/QRViewModal';
 
 const NAVY = '#0C134F';
@@ -78,9 +80,13 @@ export default function AssetDetailsScreen() {
   const { id } = useLocalSearchParams() as { id: string };
   const [asset, setAsset] = useState<AssetDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  // A failed lookup is not the same as a missing asset; the screen has to say
+  // which one happened so a dead connection does not read as "deleted".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [action, setAction] = useState<PageAction | null>(null);
+  const [isOffice, setIsOffice] = useState(false);
   const [notes, setNotes] = useState('');
   const [months, setMonths] = useState('12');
   const [processing, setProcessing] = useState(false);
@@ -90,7 +96,9 @@ export default function AssetDetailsScreen() {
       if (!id) return;
       try {
         setLoading(true);
+        setLoadError(null);
         const user = await getStoredUser();
+        setIsOffice(isOfficeRole(user?.role));
 
         // Same auto-transition the web's asset-detail route performs on open:
         // an Active asset whose lifespan expired (or whose maintenance is
@@ -107,6 +115,7 @@ export default function AssetDetailsScreen() {
       } catch (error) {
         console.error('Error loading asset details:', error);
         setAsset(null);
+        setLoadError(friendlyErrorMessage(error, 'Could not load this asset. Please try again.'));
       } finally {
         setLoading(false);
       }
@@ -135,6 +144,9 @@ export default function AssetDetailsScreen() {
 
   const confirmAction = async () => {
     if (!action || !asset) return;
+    // The footer button disables itself only after the next render; guard the
+    // handler too so one decision is never recorded twice.
+    if (processing) return;
     setProcessing(true);
     try {
       const actor = await resolveActingUserLabel();
@@ -179,7 +191,7 @@ export default function AssetDetailsScreen() {
         return_active: 'Asset returned to Active status',
         send_repair: 'Asset sent for repair evaluation',
         recommend_replacement: 'Asset recommended for replacement',
-        proceed_disposal: 'Asset marked for disposal',
+        proceed_disposal: 'Disposal request submitted for approval',
         extend_lifespan_pullout: 'Lifespan extended. Asset remains in Pullout.',
       };
       Alert.alert(
@@ -187,7 +199,11 @@ export default function AssetDetailsScreen() {
         `${messages[action]}${result.expirationDate ? `\nNew expiration: ${formatLong(result.expirationDate)}` : ''}`,
       );
     } catch (err) {
-      Alert.alert('Error', (err as Error).message || 'Failed to update the asset.');
+      console.error('Asset action failed:', err);
+      Alert.alert(
+        'Update failed',
+        friendlyErrorMessage(err, 'Failed to update the asset. Please try again.'),
+      );
     } finally {
       setProcessing(false);
     }
@@ -208,14 +224,34 @@ export default function AssetDetailsScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Asset Not Found</Text>
+          <Text style={styles.headerTitle}>{loadError ? 'Asset Unavailable' : 'Asset Not Found'}</Text>
         </View>
         <View style={styles.emptyState}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={64} color="#94A3B8" />
-          <Text style={styles.emptyText}>The requested asset could not be found.</Text>
-          <TouchableOpacity style={styles.goBackButton} onPress={() => router.back()}>
-            <Text style={styles.goBackText}>Go Back</Text>
-          </TouchableOpacity>
+          <MaterialCommunityIcons
+            name={loadError ? 'wifi-off' : 'alert-circle-outline'}
+            size={64}
+            color="#94A3B8"
+          />
+          <Text style={styles.emptyText}>
+            {loadError ?? 'The requested asset could not be found.'}
+          </Text>
+          <View style={styles.emptyActions}>
+            {loadError ? (
+              <TouchableOpacity
+                style={styles.goBackButton}
+                onPress={() => void load(false)}
+                accessibilityState={{ busy: loading }}
+              >
+                <Text style={styles.goBackText}>Try again</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.goBackButton, styles.goBackGhost]}
+              onPress={() => router.back()}
+            >
+              <Text style={[styles.goBackText, styles.goBackGhostText]}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -438,7 +474,7 @@ export default function AssetDetailsScreen() {
                 </View>
               </View>
 
-              {canCompleteMaintenance ? (
+              {isOffice && canCompleteMaintenance ? (
                 <TouchableOpacity
                   style={styles.primaryButton}
                   activeOpacity={0.85}
@@ -458,8 +494,10 @@ export default function AssetDetailsScreen() {
             </View>
           ) : null}
 
-          {/* Evaluation panel — shown for an asset past its lifespan */}
-          {isExpired ? (
+          {/* Evaluation panel — shown for an asset past its lifespan. The
+              decisions are the Asset Management Office's; a requester opening
+              their own asset sees the record, not buttons they cannot use. */}
+          {isExpired && isOffice ? (
             <View style={styles.evalPanel}>
               <View style={styles.evalPanelHeader}>
                 <View style={styles.evalIconBadge}>
@@ -583,8 +621,10 @@ export default function AssetDetailsScreen() {
               {action === 'proceed_disposal' ? (
                 <View style={[styles.infoBox, styles.infoBoxDanger]}>
                   <Text style={styles.infoBoxDangerText}>
-                    This marks the end of the asset&apos;s operational lifespan. Its record stays in NU TRACE for
-                    history and auditing.
+                    This files a disposal request for the Asset Management Office to approve. The asset is
+                    not disposed of and its status does not change yet — approval prepares the official
+                    disposal form, and only the web application finalizes it after the signed copy is on
+                    file.
                   </Text>
                 </View>
               ) : null}
@@ -1166,5 +1206,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#FFFFFF',
     fontWeight: '800',
+  },
+  emptyActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  goBackGhost: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  goBackGhostText: {
+    color: NAVY_MID,
   },
 });

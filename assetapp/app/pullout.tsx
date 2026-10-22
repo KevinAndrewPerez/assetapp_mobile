@@ -19,6 +19,8 @@ import { useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { supabase } from "../lib/supabase";
 import { getStoredUser, searchUsers } from "../lib/userService";
+import { QR_BLOCKING, recordSuspiciousScan, verifyScannedQr } from "../lib/qrVerification";
+import { resolveActingUserLabel } from "../lib/actorService";
 import { parseStoredTimestamp } from "../lib/time";
 import {
   PulloutRecord,
@@ -31,6 +33,8 @@ import {
 } from "../lib/pulloutService";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { headerTopPadding } from '@/lib/theme';
+import { PAGE_SIZE, usePagedList } from '@/hooks/use-paged-list';
+import { friendlyErrorMessage } from '@/lib/errorMessage';
 
 type AssetRow = {
   id?: string | number | null;
@@ -119,9 +123,12 @@ export default function PulloutScreen() {
       ]);
       setRecords(rows);
       setTotalPulledOut(pulledCount);
-    } catch (e: any) {
+    } catch (e) {
       console.error("Failed to load pullout records:", e);
-      Alert.alert("Error", e?.message || "Failed to load pullout records.");
+      Alert.alert(
+        "Could not load pullouts",
+        friendlyErrorMessage(e, "Failed to load pullout records. Please try again.")
+      );
       setRecords([]);
     } finally {
       setLoading(false);
@@ -167,9 +174,12 @@ export default function PulloutScreen() {
         `Pullout request for ${result.assetCount} asset${result.assetCount > 1 ? "s" : ""} was sent to the Asset Management Office for approval.`,
       );
       await loadRecords();
-    } catch (e: any) {
+    } catch (e) {
       console.error("Failed to submit pullout request:", e);
-      Alert.alert("Error", e?.message || "Failed to submit the pullout request.");
+      Alert.alert(
+        "Pullout not submitted",
+        friendlyErrorMessage(e, "Failed to submit the pullout request. Please try again.")
+      );
     } finally {
       setSubmitting(false);
     }
@@ -328,6 +338,16 @@ export default function PulloutScreen() {
     });
   }, [records, search, fromDate, toDate]);
 
+  // Pullout records are never deleted, so only one page is mounted at a time;
+  // the search/date filters still run over every record.
+  const {
+    visible: visiblePullouts,
+    hasMore: hasMorePullouts,
+    loadMore: loadMorePullouts,
+    total: totalPullouts,
+    shown: shownPullouts,
+  } = usePagedList(filteredPullouts);
+
   const formatDay = (d: Date | null) => {
     if (!d) return "Any";
     try {
@@ -361,10 +381,42 @@ export default function PulloutScreen() {
     }
 
     try {
+      // Signed NUT1 stickers and legacy plain codes both arrive here; the shared
+      // verifier reads either shape and refuses an altered/revoked one, which a
+      // raw `Asset_code = <scanned text>` lookup could not do (and could not
+      // match at all once the sticker is signed).
+      const scan = await verifyScannedQr(code);
+      if (QR_BLOCKING.includes(scan.status)) {
+        // A refused sticker is a security event, not just a UI message: keep it
+        // in the same shared trail the header scanner writes to.
+        try {
+          const actor = await resolveActingUserLabel();
+          await recordSuspiciousScan(scan, actor.id);
+        } catch (auditError) {
+          console.warn("Rejected pullout scan could not be logged:", auditError);
+        }
+        Alert.alert(scan.label, scan.detail);
+        setScanned(false);
+        return;
+      }
+      if (!scan.asset) {
+        // An unreachable database is not the same as an unknown sticker, and a
+        // genuine sticker outside the viewer's department is neither.
+        if (scan.status === "unavailable") {
+          Alert.alert("Could Not Check", "The asset database could not be reached. Check your connection and scan again.");
+        } else if (!scan.permitted) {
+          Alert.alert(scan.label, scan.detail);
+        } else {
+          Alert.alert("Not Found", `No asset found for code: ${code}`);
+        }
+        setScanned(false);
+        return;
+      }
+
       const { data: asset, error } = await supabase
         .from("assets")
         .select("id, Asset_code, Asset_name, Category, Lifecycle_Status")
-        .eq("Asset_code", code)
+        .eq("id", scan.asset.id)
         .maybeSingle();
 
       if (error) throw error;
@@ -404,9 +456,12 @@ export default function PulloutScreen() {
       setBatch((prev) => [...prev, asset as AssetRow]);
       if (wasEmpty) setScannerVisible(false);
       setScanned(false);
-    } catch (e: any) {
+    } catch (e) {
       console.error("Scan lookup failed:", e);
-      Alert.alert("Error", e?.message || "Failed to validate scanned asset.");
+      Alert.alert(
+        "Error",
+        friendlyErrorMessage(e, "Failed to validate the scanned asset. Check your connection and scan again.")
+      );
       setScanned(false);
     }
   };
@@ -442,6 +497,7 @@ export default function PulloutScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        onMomentumScrollEnd={loadMorePullouts}
       >
         <LinearGradient
           colors={["#0EA5E9", "#0284C7"]}
@@ -558,7 +614,7 @@ export default function PulloutScreen() {
             <ActivityIndicator size="large" color="#0284C7" />
           </View>
         ) : (
-          filteredPullouts.map((record) => {
+          visiblePullouts.map((record) => {
             const statusLabel = pulloutStatusLabel(record.status);
             const dateShown = formatDateTime(record.pulloutDate || record.createdAt);
             const isApproved = statusLabel === "Approved";
@@ -662,6 +718,21 @@ export default function PulloutScreen() {
             </Text>
           </View>
         )}
+
+        {hasMorePullouts ? (
+          <TouchableOpacity
+            style={styles.loadMoreButton}
+            onPress={loadMorePullouts}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="chevron-down" size={18} color="#0F172A" />
+            <Text style={styles.loadMoreText}>
+              Load more pullouts ({shownPullouts} of {totalPullouts})
+            </Text>
+          </TouchableOpacity>
+        ) : totalPullouts > PAGE_SIZE ? (
+          <Text style={styles.listEndText}>All {totalPullouts} pullouts shown</Text>
+        ) : null}
       </ScrollView>
 
       <Modal visible={dateModalVisible} transparent animationType="fade">
@@ -1544,6 +1615,31 @@ const styles = StyleSheet.create({
     color: "#64748B",
     fontSize: 15,
     textAlign: "center",
+  },
+  loadMoreButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    minHeight: 46,
+    marginTop: 4,
+    marginBottom: 12,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  listEndText: {
+    textAlign: "center",
+    color: "#94A3B8",
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 12,
   },
   loadingBox: {
     paddingVertical: 24,

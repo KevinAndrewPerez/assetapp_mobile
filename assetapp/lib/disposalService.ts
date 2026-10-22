@@ -2,23 +2,25 @@ import { supabase } from './supabase';
 import { writeAudit } from './auditService';
 import { createNotification, notifyAdmins } from './notificationService';
 import { readNote, upsertNotes } from './noteUtils';
-import { clampRequestStatus } from './requestStatus';
 import { inventoryRemovalReady, removeAssetFromInventory, withInventoryColumn } from './inventory';
+import { requireOfficeActor } from './access';
 
 /**
- * Disposal Management (NU TRACE mobile spec).
+ * Disposal records (the `disposals` table) and the reads over them.
  *
- * A disposal is never automatic: an asset must be evaluated by the Asset
- * Management Office first. The transaction is tracked through
- *   Pending → Approved → Completed   (or Pending → Cancelled)
- * and the asset is flagged `Disposal` so it can never be assigned again — but
- * the asset row itself is never deleted, so its history survives. Cancelling a
- * disposal restores the asset's *previous* lifecycle status (a pulled-out asset
- * goes back to Pullout, not Active).
+ * Request-driven disposals follow the official-form workflow, which lives in
+ * `lib/disposalForm.ts`: approving a disposal request prepares the official NU
+ * Lipa form, and only the web application's finalization writes these records
+ * and marks the assets Disposed. Nothing here may retire an asset on its own.
  *
- * The `disposals` table has no status/method columns, so that workflow data is
- * stored in `notes` in the same `Key: value | Key: value` format the web app
- * renders as plain text.
+ * `initiateDisposal` is retained for compatibility with callers that still
+ * record a disposal directly, but the mobile lifespan path no longer uses it:
+ * that decision now files a Pending Disposal request. The read helpers below
+ * feed the Disposal screen's Records tab and the archive screen.
+ *
+ * The `disposals` table has no status/method columns, so that data is stored in
+ * `notes` in the same `Key: value | Key: value` format the web app renders as
+ * plain text.
  */
 
 export type DisposalStatus = 'Pending' | 'Approved' | 'Completed' | 'Cancelled';
@@ -197,8 +199,6 @@ export const normalizeDisposalStatus = (raw: unknown): DisposalStatus => {
   if (value.includes('approv')) return 'Approved';
   return 'Pending';
 };
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export function disposalStatusMessage(status: DisposalStatus): string {
   switch (status) {
@@ -393,6 +393,11 @@ export async function archiveDisposal(options: {
   actorId?: string | number | null;
   actorName?: string | null;
 }): Promise<DisposalArchiveResult> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can archive a disposal record.',
+  );
+
   const { record, actorId, actorName } = options;
   const nothing = (message: string): DisposalArchiveResult => ({
     archived: false,
@@ -666,272 +671,6 @@ export async function initiateDisposal(options: {
   });
 
   return { disposalIds: created, initiated: ok.length, blocked };
-}
-
-// ───────────────────────── review / approve / complete / cancel ──────────────
-
-/**
- * Move a disposal transaction through its review workflow, updating the asset
- * lifecycle, the audit trail and the affected user's notifications.
- */
-export async function updateDisposalStatus(options: {
-  disposalId: string | number;
-  status: DisposalStatus;
-  actorId?: string | number | null;
-  actorLabel?: string;
-  fields?: DisposalAdminFields;
-}): Promise<{ status: DisposalStatus; assetStatus: string | null }> {
-  const { disposalId, status, actorId } = options;
-  const fields = options.fields ?? {};
-  const actorLabel = String(options.actorLabel ?? 'Admin');
-  const now = new Date().toISOString();
-  const today = now.slice(0, 10);
-
-  const { data: disposal, error } = await supabase
-    .from('disposals')
-    .select('Disposal_ID, Asset_id, Request_id, notes, Description, disposal_reason, disposal_date')
-    .eq('Disposal_ID', disposalId as any)
-    .maybeSingle();
-  if (error) throw error;
-  if (!disposal) throw new Error('Disposal record not found');
-
-  const assetId = (disposal as any).Asset_id as number | null;
-  const requestId = (disposal as any).Request_id as number | null;
-  const previousNotes = String((disposal as any).notes ?? '');
-  const previousStatus = readNote(previousNotes, 'Previous Status');
-
-  const { data: asset } = assetId
-    ? await supabase
-        .from('assets')
-        .select('id, Asset_code, Asset_name, Lifecycle_Status, user_id')
-        .eq('id', assetId as any)
-        .maybeSingle()
-    : { data: null as any };
-
-  const assetLabel = `${asset?.Asset_name ?? 'Asset'} ${asset?.Asset_code ?? ''}`.trim();
-
-  let notes = upsertNotes(previousNotes, { Status: status });
-
-  if (status === 'Approved') {
-    notes = upsertNotes(notes, { 'Approved On': today });
-  } else if (status === 'Completed') {
-    if (fields.method) notes = upsertNotes(notes, { 'Disposal Method': fields.method });
-    notes = upsertNotes(notes, { 'Completed On': today });
-  } else if (status === 'Cancelled') {
-    notes = upsertNotes(notes, {
-      Cancelled: String(fields.cancellationReason ?? '').trim() || 'Cancelled by Asset Management Office',
-    });
-  }
-
-  if (fields.remarks) notes = upsertNotes(notes, { Remarks: fields.remarks });
-  if (fields.reasonCategory) notes = upsertNotes(notes, { 'Reason Category': fields.reasonCategory });
-
-  const update: Record<string, any> = {
-    notes,
-    Approve_by: actorLabel,
-    updated_at: now,
-  };
-  if (fields.reason) update.Description = fields.reason;
-  if (fields.reasonCategory) update.disposal_reason = normalizeDisposalReason(fields.reasonCategory);
-  if (status === 'Completed') update.disposal_date = fields.disposalDate || today;
-  else if (fields.disposalDate) update.disposal_date = fields.disposalDate;
-
-  const { error: updateError } = await supabase
-    .from('disposals')
-    .update(update)
-    .eq('Disposal_ID', disposalId as any);
-  if (updateError) throw updateError;
-
-  // ── Asset lifecycle ─────────────────────────────────────────────────────
-  let assetStatus: string | null = null;
-  if (assetId) {
-    if (status === 'Approved' || status === 'Completed') {
-      assetStatus = 'Disposal';
-    } else if (status === 'Cancelled') {
-      // Restore the status the asset had before disposal. A pulled-out asset
-      // stays Pullout (spec §9) because that *was* its previous status.
-      const restore = previousStatus.trim();
-      assetStatus = restore && restore.toLowerCase() !== 'disposal' ? restore : 'Active';
-    }
-
-    if (assetStatus) {
-      const { error: assetError } = await supabase
-        .from('assets')
-        .update({ Lifecycle_Status: assetStatus, updated_at: now })
-        .eq('id', assetId as any);
-      if (assetError) throw assetError;
-    }
-  }
-
-  await writeAudit({
-    actorId,
-    assetId,
-    requestId,
-    actionType: 'DISPOSAL',
-    description: `Disposal ${status.toLowerCase()} for ${assetLabel || `record #${disposalId}`}`,
-    notes:
-      status === 'Cancelled'
-        ? `Reason: ${String(fields.cancellationReason ?? 'not specified')}. Restored to ${assetStatus ?? 'previous status'}.`
-        : `${String(fields.remarks ?? '').trim() || `Status: ${status}`}`,
-  });
-
-  const notifyId = (asset?.user_id ?? null) as string | number | null;
-  if (notifyId != null) {
-    if (status === 'Approved') {
-      await createNotification({
-        userId: notifyId,
-        title: 'Disposal Approved',
-        message: `The disposal of ${assetLabel || 'your asset'} has been approved.`,
-        type: 'DISPOSAL',
-        referenceId: disposalId,
-        referenceType: 'disposal',
-      });
-    } else if (status === 'Completed') {
-      await createNotification({
-        userId: notifyId,
-        title: 'Disposal Completed',
-        message: `${assetLabel || 'Your asset'} has been disposed and is no longer under your active accountability. Its record remains in NU TRACE for history.`,
-        type: 'DISPOSAL',
-        referenceId: disposalId,
-        referenceType: 'disposal',
-      });
-    } else if (status === 'Cancelled') {
-      const reasonText = String(fields.cancellationReason ?? '').trim();
-      await createNotification({
-        userId: notifyId,
-        title: 'Disposal Cancelled',
-        message: `The disposal of ${assetLabel || 'your asset'} was cancelled.${reasonText ? ` Reason: ${reasonText}.` : ''} The asset returned to ${assetStatus ?? 'its previous status'}.`,
-        type: 'DISPOSAL',
-        referenceId: disposalId,
-        referenceType: 'disposal',
-      });
-    }
-  }
-
-  if (requestId) await syncRequestStatusFromDisposals(requestId);
-
-  return { status, assetStatus };
-}
-
-/**
- * Derive the parent request status from its disposal rows so the Requests
- * screen and the web never disagree with the disposal transactions.
- */
-export async function syncRequestStatusFromDisposals(
-  requestId: string | number | null,
-): Promise<string | null> {
-  if (requestId == null) return null;
-
-  const { data } = await supabase
-    .from('disposals')
-    .select('notes')
-    .eq('Request_id', requestId as any);
-  const statuses = ((data ?? []) as any[]).map((row) =>
-    normalizeDisposalStatus(readNote(row.notes, 'Status')),
-  );
-  if (statuses.length === 0) return null;
-
-  const completed = statuses.filter((s) => s === 'Completed').length;
-  const cancelled = statuses.filter((s) => s === 'Cancelled').length;
-  const approved = statuses.filter((s) => s === 'Approved').length;
-
-  let derived = 'Pending';
-  if (completed + cancelled === statuses.length && completed > 0) derived = 'Completed';
-  else if (cancelled === statuses.length) derived = 'Cancelled';
-  else if (completed > 0 || approved > 0) derived = 'Approved';
-
-  // `requests.status` only accepts Pending/Approved/Rejected — clamp before the
-  // write so the `requests_status_check` constraint can never reject it.
-  const { error } = await supabase
-    .from('requests')
-    .update({ status: clampRequestStatus(derived), updated_at: new Date().toISOString() })
-    .eq('id', requestId as any);
-  if (error) throw error;
-  return derived;
-}
-
-/**
- * Apply an admin decision taken on the Requests screen to the request's disposal
- * transactions (creating them when the request came from the web).
- */
-export async function applyRequestStatusToDisposals(options: {
-  requestId: string;
-  status: 'Pending' | 'Approved' | 'In Progress' | 'Completed' | 'Cancelled' | 'Rejected';
-  actorId?: string | number | null;
-  actorLabel?: string;
-  notes?: string;
-}): Promise<DisposalStatus | null> {
-  const { requestId, status, actorId, actorLabel, notes } = options;
-
-  const { data: request } = await supabase
-    .from('requests')
-    .select('id, asset_id, Note, user_id, request_type')
-    .eq('id', requestId)
-    .maybeSingle();
-
-  const { data: existingRows } = await supabase
-    .from('disposals')
-    .select('Disposal_ID, Asset_id, notes')
-    .eq('Request_id', requestId);
-  let rows = (existingRows ?? []) as any[];
-
-  const mapped: DisposalStatus =
-    status === 'Completed'
-      ? 'Completed'
-      : status === 'Cancelled' || status === 'Rejected'
-        ? 'Cancelled'
-        : status === 'Approved' || status === 'In Progress'
-          ? 'Approved'
-          : 'Pending';
-
-  if (rows.length === 0) {
-    if (mapped === 'Pending') return null;
-
-    const assetIds: number[] = [];
-    const push = (raw: any) => {
-      const n = Number(raw);
-      if (Number.isFinite(n) && n > 0 && !assetIds.includes(n)) assetIds.push(n);
-    };
-    push((request as any)?.asset_id);
-    const { data: items } = await supabase
-      .from('request_items')
-      .select('asset_id')
-      .eq('request_id', requestId);
-    for (const item of ((items ?? []) as any[])) push(item.asset_id);
-    if (assetIds.length === 0) return null;
-
-    await initiateDisposal({
-      assetIds,
-      reason: String((request as any)?.Note ?? 'Approved disposal request'),
-      requestId,
-      origin: 'Manual',
-      actorId,
-      actorLabel,
-      notes,
-      reasonCategory: 'Obsolete',
-      method: 'Scrapped',
-      initialStatus: mapped,
-    });
-
-    await syncRequestStatusFromDisposals(requestId);
-    return mapped;
-  }
-
-  for (const row of rows) {
-    await updateDisposalStatus({
-      disposalId: row.Disposal_ID,
-      status: mapped,
-      actorId,
-      actorLabel,
-      fields: {
-        remarks: notes,
-        cancellationReason: mapped === 'Cancelled' ? notes : undefined,
-      },
-    });
-  }
-
-  await syncRequestStatusFromDisposals(requestId);
-  return mapped;
 }
 
 /** Disposal history for one asset, oldest → newest. */

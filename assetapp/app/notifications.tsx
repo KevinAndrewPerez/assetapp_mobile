@@ -18,6 +18,7 @@ import {
   formatNotificationTime,
   markAllNotificationsRead,
   markNotificationRead,
+  notificationReferencesRequest,
 } from '@/lib/notificationService';
 import { getStoredUser } from '@/lib/userService';
 
@@ -35,6 +36,16 @@ const metaFor = (type: string) =>
     color: '#64748B',
   };
 
+/** Status pill tones — the same palette request-detail.tsx uses. */
+const requestStatusTone = (status: string) => {
+  const key = status.trim().toLowerCase();
+  if (key === 'pending') return { bg: '#FEF6E4', fg: '#92400E' };
+  if (key === 'approved' || key === 'completed' || key === 'received')
+    return { bg: '#ECFDF5', fg: '#047857' };
+  if (key === 'rejected' || key === 'cancelled') return { bg: '#FEF2F2', fg: '#B91C1C' };
+  return { bg: '#F1F5F9', fg: '#334155' };
+};
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -46,7 +57,7 @@ export default function NotificationsScreen() {
   const load = useCallback(async () => {
     try {
       const user = await getStoredUser();
-      const result = await fetchNotifications(user?.id);
+      const result = await fetchNotifications(user);
       setNotifications(result.notifications);
       setUnread(result.unread);
       setError(null);
@@ -58,7 +69,10 @@ export default function NotificationsScreen() {
   }, []);
 
   useEffect(() => {
-    load();
+    const loadOnOpen = async () => {
+      await load();
+    };
+    loadOnOpen();
   }, [load]);
 
   const onRefresh = async () => {
@@ -79,6 +93,18 @@ export default function NotificationsScreen() {
     } catch (e) {
       console.warn('Failed to mark notification read:', e);
     }
+  };
+
+  /**
+   * Reading a card, then following it: a notification about a request opens
+   * that request (the mobile twin of the web bell's "Review →" link). The
+   * bell itself lists them pending-first so the oldest waiting request is
+   * already the top card (see lib/reviewOrder.ts).
+   */
+  const open = async (n: AppNotification) => {
+    await markRead(n);
+    if (!notificationReferencesRequest(n)) return;
+    router.push({ pathname: '/request-detail', params: { id: String(n.reference_id) } });
   };
 
   const markAllRead = async () => {
@@ -143,11 +169,15 @@ export default function NotificationsScreen() {
           notifications.map((n) => {
             const meta = metaFor(n.type);
             const isUnread = !n.is_read;
+            const requestStatus = n.request_status ? String(n.request_status) : '';
+            const statusTone = requestStatus ? requestStatusTone(requestStatus) : null;
+            const opensRequest = notificationReferencesRequest(n);
+            const isPendingRequest = requestStatus.trim().toLowerCase() === 'pending';
             return (
               <TouchableOpacity
                 key={String(n.id)}
-                style={[styles.card, isUnread && styles.cardUnread]}
-                onPress={() => markRead(n)}
+                style={[styles.card, isUnread && styles.cardUnread, isPendingRequest && styles.cardPending]}
+                onPress={() => open(n)}
                 activeOpacity={0.8}
               >
                 <View style={[styles.iconContainer, { backgroundColor: `${meta.color}18` }]}>
@@ -168,7 +198,19 @@ export default function NotificationsScreen() {
                       {n.message}
                     </Text>
                   ) : null}
-                  <Text style={styles.cardTime}>{formatNotificationTime(n.created_at)}</Text>
+                  <View style={styles.cardFooter}>
+                    <Text style={styles.cardTime}>{formatNotificationTime(n.created_at)}</Text>
+                    {statusTone ? (
+                      <View style={[styles.statusChip, { backgroundColor: statusTone.bg }]}>
+                        <Text style={[styles.statusChipText, { color: statusTone.fg }]}>
+                          {requestStatus}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {opensRequest ? (
+                      <MaterialCommunityIcons name="chevron-right" size={16} color="#94A3B8" />
+                    ) : null}
+                  </View>
                 </View>
               </TouchableOpacity>
             );
@@ -281,6 +323,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFBEB',
     borderColor: '#FDE68A',
   },
+  // The web bell marks its pending rows with a coloured left edge; the same
+  // accent here points at the queue the office has to act on.
+  cardPending: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#FDB833',
+  },
   iconContainer: {
     width: 42,
     height: 42,
@@ -320,9 +368,25 @@ const styles = StyleSheet.create({
     color: '#334155',
     lineHeight: 19,
   },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
   cardTime: {
+    flex: 1,
     fontSize: 11,
     color: '#94A3B8',
     fontWeight: '600',
+  },
+  statusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  statusChipText: {
+    fontSize: 10.5,
+    fontWeight: '800',
   },
 });

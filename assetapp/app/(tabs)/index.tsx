@@ -64,7 +64,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchDashboardData();
+    const loadOnOpen = async () => {
+      await fetchDashboardData();
+    };
+    loadOnOpen();
   }, []);
 
   const onRefresh = async () => {
@@ -74,6 +77,16 @@ export default function App() {
   };
 
   const quickLinks = [
+    {
+      title: 'Reports',
+      subtitle: 'Monthly & yearly summaries',
+      icon: 'chart-box-outline',
+      onPress: () => router.push('/reports' as any),
+      gradientColors: ['#0EA5E9', '#0C134F'],
+      titleColor: '#FFFFFF',
+      subtitleColor: 'rgba(255, 255, 255, 0.75)',
+      iconColor: '#FFFFFF',
+    },
     {
       title: 'Pending Requests',
       subtitle: 'View pending approvals',
@@ -115,8 +128,8 @@ export default function App() {
       iconColor: '#0C134F',
     },
     {
-      title: 'Record Disposal',
-      subtitle: 'Log disposed assets',
+      title: 'Disposal Management',
+      subtitle: 'Requests, forms & records',
       icon: 'trash-can-outline',
       onPress: () => router.push('/disposal'),
       gradientColors: ['#EF4444', '#B91C1C'],
@@ -339,9 +352,11 @@ const styles = StyleSheet.create({
     marginVertical: 8,
   },
   statsScroll: {
+    flexGrow: 0,
     paddingHorizontal: 16,
   },
   statsContainer: {
+    alignItems: 'center',
     paddingRight: 8,
   },
   activityContainer: {

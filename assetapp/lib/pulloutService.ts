@@ -5,6 +5,7 @@ import { resolveActingUserLabel } from './actorService';
 import { NOTE_SEP } from './noteUtils';
 import { pulloutMarkerNote } from './pulloutMarker';
 import { StoredUser, updateRequestStatus } from './userService';
+import { requireOfficeActor } from './access';
 
 export type PulloutDecision = 'approved' | 'rejected' | 'cancelled';
 
@@ -405,6 +406,11 @@ export async function resolvePullout(options: {
   notes?: string;
   actorId?: string | number | null;
 }): Promise<ResolvePulloutResult> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can resolve a pullout.',
+  );
+
   const { action, pulloutId } = options;
   const now = nowIso();
   const notes = String(options.notes ?? '').trim();

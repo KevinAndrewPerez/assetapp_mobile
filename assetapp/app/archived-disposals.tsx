@@ -28,6 +28,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { headerTopPadding } from '@/lib/theme';
 import { formatStoredDate } from '@/lib/time';
 import { getStoredUser, type StoredUser } from '@/lib/userService';
+import { isOfficeRole } from '@/lib/access';
 import {
   archiveColumnsReady,
   archiveDisposal,
@@ -68,7 +69,9 @@ export default function DisposalRecordsScreen() {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isAdmin = user?.role === 'Admin' || user?.role === 'AssetOfficer';
+  // Archiving is the Asset Management Office's action (Admin only — the legacy
+  // AssetOfficer role holds no office authority; see lib/access.ts).
+  const isAdmin = isOfficeRole(user?.role);
 
   // Never calls setState synchronously, so it is safe from a focus effect.
   const load = useCallback(async () => {

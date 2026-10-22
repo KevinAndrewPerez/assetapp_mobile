@@ -3,21 +3,32 @@ import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableO
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { colors } from '../lib/theme';
 import { enrichUserWithEmployeeData, StoredUser } from '../lib/userService';
 import { writeSessionAudit } from '../lib/auditService';
+import {
+  ACCOUNT_DEACTIVATED_MESSAGE,
+  isInactiveStatus,
+  isOfficeRole,
+} from '../lib/access';
 import { BrandLogo } from '../components/brand-logo';
 
 export default function LoginScreen() {
   const router = useRouter();
+  // The session guard sends a deactivated account here with this reason, so the
+  // sign-in page explains why it was signed out instead of looking like a
+  // random logout.
+  const { reason } = useLocalSearchParams<{ reason?: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const [generalError, setGeneralError] = useState('');
+  const [generalError, setGeneralError] = useState(
+    reason === 'deactivated' ? ACCOUNT_DEACTIVATED_MESSAGE : '',
+  );
   const [loading, setLoading] = useState(false);
 
   const clearErrors = () => {
@@ -54,9 +65,25 @@ export default function LoginScreen() {
       }
 
       const user = data[0] as StoredUser;
-      console.log('Current User Role:', user.role);
+
+      // A deactivated account cannot sign in at all — the same rule (and the
+      // same words) as the web's login, checked after the password so a wrong
+      // password never reveals whether an account exists. The fresh row is
+      // read again below; this check uses the row the RPC just verified.
+      if (isInactiveStatus(user.status)) {
+        setGeneralError(ACCOUNT_DEACTIVATED_MESSAGE);
+        return;
+      }
 
       const enrichedUser = await enrichUserWithEmployeeData(user);
+
+      // The enriched row is the live one. If the account was deactivated
+      // between the password check and this read, it is still refused.
+      if (isInactiveStatus(enrichedUser.status)) {
+        setGeneralError(ACCOUNT_DEACTIVATED_MESSAGE);
+        return;
+      }
+
       await AsyncStorage.setItem('user', JSON.stringify(enrichedUser));
 
       // Record the sign-in in the shared audit trail. The web middleware only
@@ -68,9 +95,17 @@ export default function LoginScreen() {
         event: 'login',
       });
 
-      if (enrichedUser.role === 'Admin' || enrichedUser.role === 'AssetOfficer') {
+      // Web parity: the Asset Management Office (Admin) lands in the office
+      // area; every other permitted role lands in the employee area. The legacy
+      // `AssetOfficer` value carries no office authority (see lib/access.ts),
+      // so it is no longer sent to the admin tabs.
+      if (isOfficeRole(enrichedUser.role)) {
         router.replace('/(tabs)');
-      } else if (enrichedUser.role === 'Employee' || enrichedUser.role === 'Department Head') {
+      } else if (
+        enrichedUser.role === 'Employee' ||
+        enrichedUser.role === 'Department Head' ||
+        enrichedUser.role === 'AssetOfficer'
+      ) {
         router.replace('/(user-tabs)' as any);
       } else {
         setGeneralError('Unauthorized role');

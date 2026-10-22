@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -31,6 +32,8 @@ import {
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { describeUploadError, type MediaAsset } from '@/lib/mediaUpload';
+import { friendlyErrorMessage } from '@/lib/errorMessage';
+import { formatStoredDate } from '@/lib/time';
 import {
   REPAIR_PRIORITIES,
   RepairPriority,
@@ -48,6 +51,7 @@ import {
   REQUEST_TYPE_TARGET_STATUS,
 } from '@/lib/lifecycle';
 import { extractAssetKey } from '@/components/asset-scanner';
+import { isOfficeRole } from '@/lib/notificationService';
 
 /**
  * Submit Request (user side).
@@ -113,6 +117,10 @@ type PickedAsset = {
   serialNumber?: string;
   lifecycleStatus?: string;
   imageUrl?: string;
+  /** Shown so the requester can see what is being disposed of. */
+  location?: string;
+  custodian?: string;
+  acquisitionDate?: string;
 };
 
 /**
@@ -121,7 +129,7 @@ type PickedAsset = {
  * checks need.
  */
 const SCAN_SELECT =
-  'id, Asset_code, Asset_name, Category, serial_Number, Lifecycle_Status, user_id, asset_files (Asset_file_ID, file_name, file_path, url)';
+  'id, Asset_code, Asset_name, Category, serial_Number, Lifecycle_Status, user_id, accusion_date, asset_location, users:user_id(employee_numbers(Full_Name), email), asset_files (Asset_file_ID, file_name, file_path, url)';
 
 const statusTone = (status?: string) => {
   const key = String(status ?? '').trim().toLowerCase();
@@ -154,7 +162,10 @@ export default function SubmitRequest() {
   const [recipientSearch, setRecipientSearch] = useState('');
 
   const [scannerVisible, setScannerVisible] = useState(false);
-  const [scanned, setScanned] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  // A ref, not state: the camera emits several frames of the same sticker before
+  // React re-renders, and each one would start its own lookup.
+  const scanLock = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
 
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -217,24 +228,55 @@ export default function SubmitRequest() {
     if (!permission?.granted) {
       const res = await requestPermission();
       if (!res.granted) {
-        Alert.alert('Camera Permission', 'Camera permission is required to scan QR codes.');
+        if (res.canAskAgain === false) {
+          Alert.alert(
+            'Camera permission blocked',
+            'Camera access is turned off for NU Trace. Open Settings and allow Camera to scan asset QR codes.',
+            [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+            ],
+          );
+        } else {
+          Alert.alert(
+            'Camera permission needed',
+            'Camera access is required to scan asset QR codes. You can allow it the next time you tap Scan.',
+          );
+        }
         return;
       }
     }
-    setScanned(false);
+    scanLock.current = false;
+    setScanBusy(false);
     setScannerVisible(true);
   };
 
+  /**
+   * A scan that cannot be used: keep the camera open and hand the user a clear
+   * "Scan again" action instead of silently closing the sheet on them.
+   */
+  const showScanError = (title: string, message: string) => {
+    setScanBusy(false);
+    Alert.alert(title, message, [
+      {
+        text: 'Scan again',
+        onPress: () => {
+          scanLock.current = false;
+        },
+      },
+    ]);
+  };
+
   const handleScanned = async (value: string) => {
-    if (scanned) return;
-    setScanned(true);
+    if (scanLock.current) return;
+    scanLock.current = true;
+    setScanBusy(true);
 
     // The sticker may hold a bare code, a file path or a full URL — normalise it
     // first so a valid sticker is never rejected as "invalid".
     const key = extractAssetKey(value);
     if (!key) {
-      setScanned(false);
-      Alert.alert(
+      showScanError(
         'Invalid QR code',
         "This QR code doesn't carry an asset code. Please scan the sticker on the asset itself.",
       );
@@ -263,7 +305,7 @@ export default function SubmitRequest() {
       }
 
       if (!assetRow) {
-        Alert.alert(
+        showScanError(
           'Asset not found',
           'No registered asset matches this QR code. Make sure you are scanning the asset sticker.',
         );
@@ -278,19 +320,27 @@ export default function SubmitRequest() {
       const ownerId = String(assetRow.user_id ?? '');
       const myId = String(user?.id ?? '');
       if (!myId) {
-        Alert.alert('Sign in required', 'Please sign in again to make a request.');
+        showScanError('Sign in required', 'Please sign in again to make a request.');
         return;
       }
       if (!ownerId || ownerId !== myId) {
-        Alert.alert(NOT_YOUR_ASSET_MESSAGE, `${name} (${code}) is not assigned to you.`);
+        showScanError(NOT_YOUR_ASSET_MESSAGE, `${name} (${code}) is not assigned to you.`);
         return;
       }
 
       // Then lifecycle: only Active assets can be requested.
       if (!isRequestableAsset(assetRow.Lifecycle_Status)) {
-        Alert.alert('Asset not available', `${name} (${code}) — ${notRequestableReason(assetRow.Lifecycle_Status)}`);
+        showScanError(
+          'Asset not available',
+          `${name} (${code}) — ${notRequestableReason(assetRow.Lifecycle_Status)}`,
+        );
         return;
       }
+
+      const owner = Array.isArray(assetRow.users) ? assetRow.users[0] : assetRow.users;
+      const employee = Array.isArray(owner?.employee_numbers)
+        ? owner.employee_numbers[0]
+        : owner?.employee_numbers;
 
       addAsset({
         id: assetRow.id,
@@ -300,12 +350,21 @@ export default function SubmitRequest() {
         serialNumber: assetRow.serial_Number ? String(assetRow.serial_Number) : undefined,
         lifecycleStatus: assetRow.Lifecycle_Status ? String(assetRow.Lifecycle_Status) : undefined,
         imageUrl: resolveMediaUrl(assetRow.asset_files, 'assets'),
+        location: assetRow.asset_location ? String(assetRow.asset_location) : undefined,
+        custodian: String(employee?.Full_Name ?? owner?.email ?? '') || undefined,
+        acquisitionDate: assetRow.accusion_date ? String(assetRow.accusion_date) : undefined,
       });
+
+      // The sticker resolved and the asset was added — only now is there a
+      // reason to leave the scanner.
+      setScanBusy(false);
+      setScannerVisible(false);
     } catch (err) {
       console.error('Scan validation failed:', err);
-      Alert.alert('Error', 'Unable to validate the scanned asset. Please try again.');
-    } finally {
-      setScannerVisible(false);
+      showScanError(
+        'Could not check the code',
+        friendlyErrorMessage(err, 'Unable to validate the scanned asset. Check your connection and try again.'),
+      );
     }
   };
 
@@ -372,6 +431,9 @@ export default function SubmitRequest() {
   };
 
   const handleSubmit = async () => {
+    // A second tap while the first submission is in flight would file the same
+    // request twice; the button's `disabled` only lands after the next render.
+    if (submitting) return;
     if (!requestType) {
       Alert.alert('Validation error', 'Please choose the type of request you are making.');
       return;
@@ -447,7 +509,7 @@ export default function SubmitRequest() {
           'Repair request submitted',
           `Request No. ${result.requestRef}\n${result.submitted} asset(s) reported.\n\n${repairStatusMessage('Pending')}${blockedText}`,
         );
-        router.back();
+        goBack();
         return;
       }
 
@@ -468,10 +530,13 @@ export default function SubmitRequest() {
         `Request No. ${reference}\n${count} asset${count === 1 ? '' : 's'} included.\n\n` +
           `${REQUEST_TYPE_OUTCOME[requestType]}\n\nThe Asset Management Office reviews every request.`,
       );
-      router.back();
-    } catch (error: any) {
+      goBack();
+    } catch (error) {
       console.error('Submit request failed:', error);
-      Alert.alert('Submission failed', error?.message || 'Unable to create the request.');
+      Alert.alert(
+        'Submission failed',
+        friendlyErrorMessage(error, 'Unable to create the request. Please try again.'),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -500,14 +565,37 @@ export default function SubmitRequest() {
   const alreadySelected = (id: string) => selectedAssets.some((a) => String(a.id) === String(id));
   const activeAssetCount = myAssets.filter((a) => isRequestableAsset(a.status)).length;
 
+  /**
+   * Leave the form.
+   *
+   * Pushed from a list, `back()` returns there. Opened from a notification or a
+   * link there may be nothing behind this screen, and the button would look
+   * dead — so fall back to the user's own home instead of doing nothing.
+   */
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace((isOfficeRole(user?.role) ? '/(tabs)' : '/(user-tabs)') as any);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.8}>
-          <MaterialCommunityIcons name="chevron-left" size={24} color="#0F172A" />
+        <TouchableOpacity
+          onPress={goBack}
+          style={styles.backButton}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.pageTitle}>Submit Request</Text>
-        <View style={{ width: 32 }} />
+        {/* Same width as the back button, so the title stays centred. */}
+        <View style={{ width: 42 }} />
       </View>
 
       <Text style={styles.pageSubtitle}>
@@ -604,6 +692,13 @@ export default function SubmitRequest() {
               <View style={styles.assetList}>
                 {selectedAssets.map((asset) => {
                   const tone = statusTone(asset.lifecycleStatus);
+                  // Identifier, location, custodian and acquisition date — what
+                  // the Asset Management Office needs to evaluate a disposal.
+                  const meta = [
+                    asset.location ? `Location: ${asset.location}` : '',
+                    asset.acquisitionDate ? `Acquired ${formatStoredDate(asset.acquisitionDate)}` : '',
+                    asset.custodian ? `Custodian: ${asset.custodian}` : '',
+                  ].filter(Boolean);
                   return (
                     <View key={String(asset.id)} style={styles.assetChip}>
                       {asset.imageUrl ? (
@@ -620,6 +715,11 @@ export default function SubmitRequest() {
                         <Text style={styles.assetChipCode} numberOfLines={1}>
                           {asset.code}
                         </Text>
+                        {meta.length > 0 ? (
+                          <Text style={styles.assetChipMeta} numberOfLines={2}>
+                            {meta.join(' · ')}
+                          </Text>
+                        ) : null}
                         {asset.lifecycleStatus ? (
                           <View style={[styles.statusPill, { backgroundColor: tone.bg }]}>
                             <Text style={[styles.statusPillText, { color: tone.color }]}>
@@ -839,15 +939,26 @@ export default function SubmitRequest() {
           </View>
 
           <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.cancelButton} activeOpacity={0.8} onPress={() => router.back()}>
+            <TouchableOpacity
+              style={[styles.cancelButton, submitting && styles.createButtonDisabled]}
+              activeOpacity={0.8}
+              onPress={goBack}
+              // Leaving mid-submit would lose the confirmation for a request that
+              // may already be saved.
+              disabled={submitting}
+            >
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.createButton, !requestType && styles.createButtonDisabled]}
+              style={[
+                styles.createButton,
+                (!requestType || submitting) && styles.createButtonDisabled,
+              ]}
               activeOpacity={0.9}
               onPress={handleSubmit}
               disabled={submitting}
+              accessibilityState={{ disabled: submitting, busy: submitting }}
             >
               {submitting ? (
                 <ActivityIndicator color="#FFFFFF" />
@@ -923,6 +1034,9 @@ export default function SubmitRequest() {
                           category: asset.category,
                           serialNumber: asset.serialNumber,
                           lifecycleStatus: asset.status,
+                          location: asset.location,
+                          custodian: asset.custodian || asset.assignedTo,
+                          acquisitionDate: asset.acquisitionDate,
                         })
                       }
                     >
@@ -1054,11 +1168,33 @@ export default function SubmitRequest() {
               style={StyleSheet.absoluteFill}
               facing="back"
               barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-              onBarcodeScanned={({ data }) => handleScanned(String(data ?? ''))}
+              // Reading pauses while a code is being checked.
+              onBarcodeScanned={
+                scanBusy ? undefined : ({ data }) => void handleScanned(String(data ?? ''))
+              }
+              onMountError={(event) => {
+                const message = String((event as { message?: string })?.message ?? '');
+                console.warn('Scanner camera failed to start:', message);
+                Alert.alert(
+                  'Camera unavailable',
+                  'The camera could not start. Close this screen and try again, or check the Camera permission in your phone settings.',
+                  [
+                    { text: 'Close', style: 'cancel', onPress: () => setScannerVisible(false) },
+                    { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+                  ],
+                );
+              }}
             />
             <View style={styles.scanFrame} />
             <Text style={styles.scanHint}>Align the QR code inside the frame</Text>
             <Text style={styles.scanSubHint}>Only your own Active assets can be requested</Text>
+
+            {scanBusy ? (
+              <View style={styles.scanLookupCard}>
+                <ActivityIndicator color="#FBBF24" />
+                <Text style={styles.scanLookupText}>Checking sticker…</Text>
+              </View>
+            ) : null}
           </View>
         </SafeAreaView>
       </Modal>
@@ -1084,6 +1220,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   pageTitle: {
     fontSize: 20,
@@ -1265,6 +1404,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
   },
+  assetChipMeta: { fontSize: 11, color: '#64748B', marginTop: 3, lineHeight: 15 },
   assetChipCode: {
     fontSize: 12,
     color: '#64748B',
@@ -1622,6 +1762,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 18,
   },
+  scanLookupCard: {
+    position: 'absolute',
+    bottom: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(15,23,42,0.9)',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  scanLookupText: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '600' },
   cameraWrap: {
     flex: 1,
     justifyContent: 'center',

@@ -2,8 +2,8 @@ import { supabase } from './supabase';
 import { writeAudit } from './auditService';
 import { createNotification } from './notificationService';
 import { submitRepairRequest } from './repairService';
-import { initiateDisposal } from './disposalService';
 import { canCompleteMaintenanceStatus, maintenanceBlockedReason } from './lifecycle';
+import { requireOfficeActor } from './access';
 
 /**
  * Maintenance & Lifespan management (NU TRACE mobile spec).
@@ -205,6 +205,14 @@ export async function runAssetEvaluationCheck(options?: {
   /** Only evaluate this asset (the asset-detail view passes one). */
   assetId?: string | number | null;
 }): Promise<EvaluationItem[]> {
+  // This writes a lifecycle transition (expired/overdue → For Checking), so it
+  // is an office action. The asset-detail screen calls it on open for every
+  // role; a non-office caller is refused instead of silently moving records.
+  await requireOfficeActor(
+    options?.actorId,
+    'Only the Asset Management Office can move an asset to For Checking.',
+  );
+
   const today = todayIso();
   let query = supabase
     .from('assets')
@@ -293,6 +301,11 @@ export type RecordMaintenanceOptions = {
  * maintenance being due/completed never makes an asset "For Repair".
  */
 export async function recordMaintenance(options: RecordMaintenanceOptions): Promise<MaintenanceRecordResult> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can record maintenance.',
+  );
+
   const { assetId } = options;
   const nowIso = new Date().toISOString();
   const performedDate = String(options.performedDate ?? '').slice(0, 10) || todayIso();
@@ -425,7 +438,8 @@ const PULLOUT_ONLY_ACTIONS: EvaluationAction[] = ['extend_lifespan_pullout', 'pr
 export type EvaluationResult = {
   status: string;
   expirationDate?: string | null;
-  disposalIds?: string[];
+  /** Set when the decision filed a Pending Disposal request (not a disposal). */
+  disposalRequestId?: string | null;
 };
 
 /**
@@ -442,6 +456,11 @@ export async function runAssetEvaluation(options: {
   actorId?: string | number | null;
   actorLabel?: string;
 }): Promise<EvaluationResult> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can evaluate an asset.',
+  );
+
   const { assetId, action } = options;
   const notes = String(options.notes ?? '').trim();
   const months = Math.max(0, Number(options.extensionMonths ?? 0) || 0);
@@ -637,22 +656,66 @@ export async function runAssetEvaluation(options: {
     return { status: 'Pullout', expirationDate: newExpiration };
   }
 
-  // proceed_disposal — recorded through the disposal service so the transaction
-  // carries its review status, previous lifecycle status, audit trail and the
-  // accountable user's notification. The asset is never deleted.
-  const { disposalIds } = await initiateDisposal({
-    assetIds: [assetId],
-    reason: notes || 'End of lifespan',
-    reasonCategory: 'End of Lifespan',
-    method: 'Scrapped',
-    origin: statusKey === 'pullout' ? 'Pullout' : 'Checking',
-    initialStatus: 'Approved',
+  // proceed_disposal — a recommendation, not a disposal. The old flow called
+  // `initiateDisposal`, which wrote a `disposals` row and set the asset to
+  // Disposal immediately, skipping the official form the university requires.
+  // Now the decision files a normal Pending Disposal request; approval creates
+  // the official form, and only web finalization retires the asset. The asset
+  // keeps its current lifecycle status in the meantime.
+  const disposalReason = notes || 'End of lifespan';
+  const { data: requestRow, error: requestError } = await supabase
+    .from('requests')
+    .insert([
+      {
+        user_id: row.user_id ?? options.actorId ?? null,
+        asset_id: Number(assetId),
+        request_type: 'Disposal',
+        status: 'Pending',
+        Note: disposalReason,
+        created_at: now,
+        updated_at: now,
+      },
+    ])
+    .select('id')
+    .single();
+  if (requestError) throw requestError;
+
+  const disposalRequestId = String((requestRow as any)?.id ?? '');
+  if (!disposalRequestId) {
+    throw new Error('The disposal request could not be created.');
+  }
+
+  const { error: itemError } = await supabase.from('request_items').insert([
+    {
+      request_id: disposalRequestId,
+      asset_id: Number(assetId),
+      created_at: now,
+      updated_at: now,
+    },
+  ]);
+  if (itemError) {
+    // An empty request must not sit in the office queue waiting for a decision.
+    const { error: undoError } = await supabase
+      .from('requests')
+      .delete()
+      .eq('id', disposalRequestId as any);
+    if (undoError) console.warn('Could not roll back the empty disposal request:', undoError.message);
+    throw itemError;
+  }
+
+  await writeAudit({
     actorId: options.actorId,
-    actorLabel,
-    notes: notes || 'Disposed after lifespan evaluation',
+    assetId,
+    requestId: disposalRequestId,
+    actionType: 'DISPOSAL',
+    description: `Disposal request #${disposalRequestId} submitted after lifespan evaluation`,
+    notes:
+      `Lifespan Evaluation Decision: PROCEED WITH DISPOSAL\n` +
+      `Reason: ${disposalReason}\n` +
+      `Asset status remains ${status || 'unchanged'} until the request is approved and the official disposal form is finalized on the web.`,
   });
 
-  return { status: 'Disposal', disposalIds };
+  return { status: status || 'For Checking', disposalRequestId };
 }
 
 /**
@@ -669,6 +732,11 @@ export async function extendAssetLifespan(options: {
   notes?: string;
   actorId?: string | number | null;
 }): Promise<{ expirationDate: string; status: string; statusRestored: boolean }> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can extend an asset lifespan.',
+  );
+
   const months = Number(options.months ?? 0);
   if (!Number.isFinite(months) || months < 1 || months > 120) {
     throw new Error('Enter a lifespan extension between 1 and 120 months.');

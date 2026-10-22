@@ -102,3 +102,36 @@ export function todayLocalIso(date: Date = new Date()): string {
 export function toStoredTimestamp(date: Date = new Date()): string {
   return date.toISOString();
 }
+
+/** `2026-09-30T16:00:00.000Z` → `2026-09-30T16:00:00` (naive UTC). */
+const naiveUtc = (date: Date, keepMillis = false): string => {
+  const iso = date.toISOString().replace('Z', '');
+  return keepMillis ? iso : iso.replace(/\.000$/, '');
+};
+
+/**
+ * The start of a **local** calendar day as the naive-UTC string a timestamp
+ * column stores.
+ *
+ * A report period is chosen on the phone's calendar ("1–31 October"), but
+ * `repairs.Repair_Date` and `requests.created_at` hold naive UTC. Comparing
+ * `2026-10-01T00:00:00` against them would include the first eight hours of
+ * 30 September and hide the last eight hours of 31 October on a UTC+8 phone.
+ * This is the same conversion `monthQueryBounds()` performs for the list
+ * filters. Returns `''` for anything that is not a `yyyy-mm-dd` date.
+ */
+export function localDateStartStored(value: string): string {
+  const match = DATE_ONLY.exec(String(value ?? '').trim());
+  if (!match) return '';
+  return naiveUtc(new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0));
+}
+
+/** The inclusive end of a local calendar day, as naive UTC (see above). */
+export function localDateEndStored(value: string): string {
+  const match = DATE_ONLY.exec(String(value ?? '').trim());
+  if (!match) return '';
+  return naiveUtc(
+    new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999),
+    true,
+  );
+}

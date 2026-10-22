@@ -302,6 +302,7 @@ export default function UserDashboard() {
           <ScrollView 
             horizontal 
             showsHorizontalScrollIndicator={false} 
+            style={styles.statusScrollWrap}
             contentContainerStyle={styles.statusScroll}
           >
             {lifecycleStatus.map((status, index) => (
@@ -583,6 +584,8 @@ const styles = StyleSheet.create({
     color: '#1E3A5F',
     marginBottom: 16,
   },
+  // flexGrow:0 stops the row from reserving the rest of the card's height.
+  statusScrollWrap: { flexGrow: 0 },
   statusScroll: {
     flexDirection: 'row',
     alignItems: 'center',

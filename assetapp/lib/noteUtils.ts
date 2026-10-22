@@ -36,6 +36,25 @@ export const upsertNotes = (
   return [...kept, ...added].join(NOTE_SEP);
 };
 
+/**
+ * Set one key, and **remove it when the new value is empty**.
+ *
+ * `upsertNotes` deliberately ignores empty values, which is right for a
+ * status that is always written — but wrong when a user clears the Remarks box
+ * and expects them to be cleared. Notes written by the mobile keep their other
+ * segments either way.
+ */
+export const setNote = (
+  existing: string | null | undefined,
+  key: string,
+  value: string | number | null | undefined,
+): string => {
+  const target = `${key.toLowerCase()}:`;
+  const kept = splitNotes(existing).filter((part) => !part.toLowerCase().startsWith(target));
+  const text = value === null || value === undefined ? '' : String(value).trim();
+  return (text ? [...kept, `${key}: ${text}`] : kept).join(NOTE_SEP);
+};
+
 /** Read the last occurrence of `key`, or '' when it isn't present. */
 export const readNote = (notes: string | null | undefined, key: string): string => {
   const target = `${key.toLowerCase()}:`;

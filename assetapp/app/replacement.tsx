@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,13 +15,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import QRCode from 'react-native-qrcode-svg';
-import { supabase } from '@/lib/supabase';
 import NotificationBell from '@/components/notification-bell';
 import {
   createAndLinkReplacementAsset,
+  createReplacementForAsset,
   fetchReplacementRecords,
   linkReplacementAsset,
   markReplacementReceived,
@@ -30,7 +29,14 @@ import {
 } from '@/lib/assetService';
 import { describeUploadError, type MediaAsset, type UploadedMedia } from '@/lib/mediaUpload';
 import { getStoredUser } from '@/lib/userService';
+import {
+  AssetScannerModal,
+  useScannerLauncher,
+  type ScannedAsset,
+} from '@/components/asset-scanner';
 import { headerTopPadding } from '@/lib/theme';
+import { PAGE_SIZE, usePagedList } from '@/hooks/use-paged-list';
+import { friendlyErrorMessage } from '@/lib/errorMessage';
 
 const filterTabs = ['All', 'Approved', 'Received'] as const;
 type FilterTab = typeof filterTabs[number];
@@ -45,12 +51,17 @@ export default function ReplacementModule() {
   const [searchQuery, setSearchQuery] = useState('');
   const [acting, setActing] = useState(false);
 
-  // QR scanner for linking a new asset to a specific replacement.
-  const [permission, requestPermission] = useCameraPermissions();
-  const [scannerVisible, setScannerVisible] = useState(false);
-  const [scanned, setScanned] = useState(false);
-  const [scanTargetId, setScanTargetId] = useState<string | null>(null);
-  const [scanTargetOldCode, setScanTargetOldCode] = useState('');
+  // One verified scanner serves both scan actions: opening a replacement for a
+  // scanned old asset, and linking the scanned new unit to an existing record.
+  const scanner = useScannerLauncher();
+  const [scanTarget, setScanTarget] = useState<ReplacementRecord | null>(null);
+
+  // Scan-first "New Replacement": the scanned asset waits here until the reason
+  // is entered, because the web route refuses a replacement that has none.
+  const [newReplacementAsset, setNewReplacementAsset] = useState<ScannedAsset | null>(null);
+  const [replacementReason, setReplacementReason] = useState('');
+  const [creatingReplacement, setCreatingReplacement] = useState(false);
+  const creatingReplacementRef = useRef(false);
 
   // "Create & Link New Asset" flow (web parity): a chooser between scanning an
   // existing asset's QR or registering a brand-new asset, then the form.
@@ -91,7 +102,10 @@ export default function ReplacementModule() {
       setItems(records);
     } catch (error) {
       console.error('Failed to fetch replacement records:', error);
-      Alert.alert('Error', 'Failed to load replacement records');
+      Alert.alert(
+        'Could not load replacements',
+        friendlyErrorMessage(error, 'Failed to load replacement records. Please try again.'),
+      );
     } finally {
       setLoading(false);
     }
@@ -132,18 +146,27 @@ export default function ReplacementModule() {
     });
   }, [activeFilter, items, searchQuery]);
 
-  const openScanner = async (record: ReplacementRecord) => {
-    if (!permission?.granted) {
-      const res = await requestPermission();
-      if (!res.granted) {
-        Alert.alert('Camera Permission', 'Camera permission is required to scan QR codes.');
-        return;
-      }
-    }
-    setScanTargetId(record.replacementId);
-    setScanTargetOldCode(record.oldAsset.code);
-    setScanned(false);
-    setScannerVisible(true);
+  // Replacement records are kept forever, so the screen mounts one page and
+  // grows the window as the list is scrolled (or via Load more).
+  const {
+    visible: visibleItems,
+    hasMore,
+    loadMore,
+    total: totalItems,
+    shown: shownItems,
+  } = usePagedList(filteredItems);
+
+  /** Scan the new unit that replaces `record` (link action on a card). */
+  const openLinkScanner = (record: ReplacementRecord) => {
+    setScanTarget(record);
+    void scanner.open();
+  };
+
+  /** Open a replacement for an asset scanned from a sticker (no card involved). */
+  const openNewReplacementScanner = () => {
+    if (creatingReplacementRef.current) return;
+    setScanTarget(null);
+    void scanner.open();
   };
 
   /** Web-style random code: AST-XXXXXXXX-XXXX. */
@@ -280,44 +303,78 @@ export default function ReplacementModule() {
     }
   };
 
-  const handleScanned = async (value: string) => {
-    if (scanned) return;
-    setScanned(true);
-    const code = String(value ?? '').trim();
-    if (!code) {
-      setScanned(false);
-      Alert.alert('Invalid QR', 'The scanned QR code is empty.');
+  /**
+   * A sticker that passed verification. Which action asked for it decides what
+   * happens next: the card's link button links the scanned new unit, while the
+   * "New Replacement" button opens the reason step for the scanned old asset.
+   */
+  const handleVerifiedScan = async (asset: ScannedAsset) => {
+    if (scanTarget) {
+      await linkScannedReplacement(asset, scanTarget);
       return;
     }
+    setReplacementReason('');
+    setNewReplacementAsset(asset);
+  };
 
+  const linkScannedReplacement = async (asset: ScannedAsset, record: ReplacementRecord) => {
     try {
-      const { data: assetRow, error: assetErr } = await supabase
-        .from('assets')
-        .select('id, Asset_code, Asset_name')
-        .eq('Asset_code', code)
-        .maybeSingle();
-
-      if (assetErr) throw assetErr;
-      if (!assetRow) {
-        Alert.alert('Invalid asset', 'No asset was found for the scanned code.');
-        return;
-      }
-
-      const user = await getStoredUser();
       setActing(true);
-      await linkReplacementAsset(scanTargetId!, assetRow.id, user?.id ?? null);
-      Alert.alert(
-        'Asset linked',
-        `"${assetRow.Asset_name || assetRow.Asset_code}" is now the replacement asset.`,
-      );
-      setScannerVisible(false);
+      const user = await getStoredUser();
+      await linkReplacementAsset(record.replacementId, asset.id, user?.id ?? null);
+      Alert.alert('Asset linked', `"${asset.name || asset.code}" is now the replacement asset.`);
       await fetchData();
     } catch (err) {
       console.error('Failed to link replacement asset:', err);
-      Alert.alert('Link failed', (err as Error).message || 'Unable to link the replacement asset.');
+      Alert.alert('Link failed', friendlyErrorMessage(err, 'Unable to link the replacement asset.'));
     } finally {
       setActing(false);
-      setScanned(false);
+      setScanTarget(null);
+    }
+  };
+
+  /**
+   * Open the scanned asset's replacement. Mirrors the web's
+   * POST /admin/replacements/create (minus the repair), so the record lands on
+   * the web's Replacement page with the same status and placeholder new asset.
+   */
+  const createReplacement = async () => {
+    const asset = newReplacementAsset;
+    if (!asset) return;
+    if (creatingReplacementRef.current) return;
+
+    const reason = replacementReason.trim();
+    if (!reason) {
+      Alert.alert('Reason required', 'Say why the asset is being replaced so the custodian knows.');
+      return;
+    }
+
+    creatingReplacementRef.current = true;
+    setCreatingReplacement(true);
+    try {
+      const user = await getStoredUser();
+      const result = await createReplacementForAsset({
+        assetId: asset.id,
+        actorId: user?.id ?? null,
+        actorLabel: user?.full_name || user?.email || 'Admin',
+        reason,
+      });
+      setNewReplacementAsset(null);
+      setReplacementReason('');
+      Alert.alert(
+        'Replacement opened',
+        `${result.assetName} (${result.assetCode}) is now For Replacement — ${result.requestRef}. Link the new unit once it is available.`,
+      );
+      await fetchData();
+    } catch (error) {
+      console.error('New replacement from a scanned sticker failed:', error);
+      Alert.alert(
+        'Replacement not created',
+        friendlyErrorMessage(error, 'Could not open the replacement. Please try again.'),
+      );
+    } finally {
+      creatingReplacementRef.current = false;
+      setCreatingReplacement(false);
     }
   };
 
@@ -377,6 +434,7 @@ export default function ReplacementModule() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          onMomentumScrollEnd={loadMore}
         >
           <View style={styles.searchBarWrap}>
             <View style={styles.searchBar}>
@@ -419,7 +477,7 @@ export default function ReplacementModule() {
           </ScrollView>
 
           <View style={styles.listContainer}>
-            {filteredItems.length > 0 ? filteredItems.map((item) => {
+            {visibleItems.length > 0 ? visibleItems.map((item) => {
               const isExpanded = expandedId === item.replacementId;
               const st = statusStyle(item.status);
               const canReceive = item.status === 'Approved';
@@ -528,6 +586,17 @@ export default function ReplacementModule() {
                 <Text style={styles.emptyStateText}>No replacement records found</Text>
               </View>
             )}
+
+            {hasMore ? (
+              <TouchableOpacity style={styles.loadMoreButton} onPress={loadMore} activeOpacity={0.85}>
+                <MaterialCommunityIcons name="chevron-down" size={18} color="#1E3A5F" />
+                <Text style={styles.loadMoreText}>
+                  Load more replacements ({shownItems} of {totalItems})
+                </Text>
+              </TouchableOpacity>
+            ) : totalItems > PAGE_SIZE ? (
+              <Text style={styles.listEndText}>All {totalItems} replacements shown</Text>
+            ) : null}
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -547,7 +616,7 @@ export default function ReplacementModule() {
               onPress={() => {
                 const record = linkModalFor;
                 setLinkModalFor(null);
-                if (record) openScanner(record);
+                if (record) openLinkScanner(record);
               }}
             >
               <View style={[styles.chooserIcon, { backgroundColor: '#EFF6FF' }]}>
@@ -751,30 +820,86 @@ export default function ReplacementModule() {
         </View>
       </Modal>
 
-      {/* QR scanner for linking a new replacement asset */}
-      <Modal visible={scannerVisible} animationType="slide">
-        <SafeAreaView style={styles.scannerContainer}>
-          <View style={styles.scannerHeader}>
-            <View style={{ width: 42 }} />
-            <Text style={styles.scannerTitle}>Scan Replacement Asset QR</Text>
-            <TouchableOpacity style={styles.scannerClose} onPress={() => setScannerVisible(false)} activeOpacity={0.8}>
-              <MaterialCommunityIcons name="close" size={22} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
+      {/* Scan-first "New Replacement": one sticker opens the record. */}
+      <TouchableOpacity
+        style={styles.fabButton}
+        onPress={openNewReplacementScanner}
+        activeOpacity={0.9}
+        disabled={creatingReplacement}
+        accessibilityRole="button"
+        accessibilityLabel="Scan an asset sticker to open a replacement"
+        accessibilityState={{ busy: creatingReplacement, disabled: creatingReplacement }}
+      >
+        {creatingReplacement ? (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        ) : (
+          <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FFFFFF" />
+        )}
+        <Text style={styles.fabText}>{creatingReplacement ? 'Saving…' : 'New Replacement'}</Text>
+      </TouchableOpacity>
 
-          <View style={styles.cameraWrap}>
-            <CameraView
-              style={StyleSheet.absoluteFill}
-              facing="back"
-              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-              onBarcodeScanned={({ data }) => handleScanned(String(data ?? ''))}
-            />
-            <View style={styles.scanFrame} />
-            <Text style={styles.scanHint}>
-              Scan the QR of the asset replacing {scanTargetOldCode || 'the old asset'}
+      {/* The same verified scanner the card's link action uses. */}
+      <AssetScannerModal
+        visible={scanner.visible}
+        onClose={scanner.close}
+        onVerified={handleVerifiedScan}
+        title={scanTarget ? 'Scan Replacement Asset' : 'Scan Asset to Replace'}
+      />
+
+      {/* Reason step: the web route refuses a replacement without one. */}
+      <Modal
+        visible={!!newReplacementAsset}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!creatingReplacement) setNewReplacementAsset(null);
+        }}
+      >
+        <View style={styles.chooserOverlay}>
+          <View style={styles.chooserCard}>
+            <Text style={styles.chooserTitle}>New Replacement</Text>
+            <Text style={styles.chooserSubtitle}>
+              {newReplacementAsset
+                ? `${newReplacementAsset.name} (${newReplacementAsset.code}) will be flagged For Replacement.`
+                : ''}
             </Text>
+
+            <Text style={styles.reasonLabel}>Why is it being replaced?</Text>
+            <TextInput
+              style={styles.reasonInput}
+              value={replacementReason}
+              onChangeText={setReplacementReason}
+              placeholder="e.g. Beyond repair, obsolete, damaged beyond use"
+              placeholderTextColor="#94A3B8"
+              multiline
+              editable={!creatingReplacement}
+            />
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={styles.chooserCancel}
+                activeOpacity={0.8}
+                disabled={creatingReplacement}
+                onPress={() => setNewReplacementAsset(null)}
+              >
+                <Text style={styles.chooserCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                activeOpacity={0.85}
+                disabled={creatingReplacement}
+                onPress={() => void createReplacement()}
+                accessibilityState={{ busy: creatingReplacement, disabled: creatingReplacement }}
+              >
+                {creatingReplacement ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Open Replacement</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
     </View>
   );
@@ -803,7 +928,8 @@ const styles = StyleSheet.create({
   headerSpacer: { width: 42 },
   title: { fontSize: 21, fontWeight: '800', color: '#FFFFFF' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  scrollContent: { paddingVertical: 12, paddingBottom: 28 },
+  // Room for the scan FAB so it never covers the last record.
+  scrollContent: { paddingVertical: 12, paddingBottom: 112 },
   searchBarWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -828,8 +954,13 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, paddingVertical: 0, fontSize: 14.5, color: '#0F172A' },
   avatarButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#0EA5E9', justifyContent: 'center', alignItems: 'center' },
   avatarText: { color: '#FFFFFF', fontWeight: '700' },
-  filterScroll: { backgroundColor: '#F4F7FB', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  filterContent: { gap: 8, paddingHorizontal: 18, paddingVertical: 12 },
+  filterScroll: {
+    flexGrow: 0,
+    backgroundColor: '#F4F7FB',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  filterContent: { alignItems: 'center', gap: 8, paddingHorizontal: 18, paddingVertical: 12 },
   filterButton: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: '#E2E8F0', borderWidth: 1, borderColor: '#CBD5E1' },
   filterButtonActive: { backgroundColor: '#1E3A5F', borderColor: '#1E3A5F' },
   filterLabel: { fontSize: 13, fontWeight: '600', color: '#475569' },
@@ -1069,32 +1200,82 @@ const styles = StyleSheet.create({
     height: 48,
   },
   regSaveText: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
-  scannerContainer: { flex: 1, backgroundColor: '#0F172A' },
-  scannerHeader: {
+  // Scan-first "New Replacement" action, above the list's bottom edge.
+  fabButton: {
+    position: 'absolute',
+    right: 20,
+    bottom: 26,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: '#0F172A',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 18,
+    backgroundColor: '#1E3A5F',
+    elevation: 6,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
-  scannerClose: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    justifyContent: 'center',
+  fabText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  reasonLabel: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    marginBottom: 6,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  reasonInput: {
+    width: '100%',
+    minHeight: 88,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+    textAlignVertical: 'top',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: 10,
+    marginTop: 16,
   },
-  scannerTitle: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
-  cameraWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  scanFrame: {
-    width: 250,
-    height: 250,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#FBBF24',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+  primaryButton: {
+    minWidth: 132,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: '#1E3A5F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
   },
-  scanHint: { marginTop: 18, color: '#E2E8F0', fontSize: 14, fontWeight: '600' },
+  primaryButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 46,
+    marginTop: 4,
+    marginBottom: 12,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  loadMoreText: { fontSize: 14, fontWeight: '700', color: '#1E3A5F' },
+  listEndText: {
+    textAlign: 'center',
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
 });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,7 @@ import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   fetchRepairRecords,
+  createRepairForAsset,
   updateRepairStatus,
   sendRepairToReplacement,
   sendRepairToDisposal,
@@ -32,7 +33,15 @@ import {
   REPAIR_RESULTS,
 } from '@/lib/repairService';
 import { resolveActingUserLabel } from '@/lib/actorService';
+import { friendlyErrorMessage } from '@/lib/errorMessage';
+import { repairActionState } from '@/lib/repairActions';
+import { PAGE_SIZE, usePagedList } from '@/hooks/use-paged-list';
 import { headerTopPadding } from '@/lib/theme';
+import {
+  AssetScannerModal,
+  useScannerLauncher,
+  type ScannedAsset,
+} from '@/components/asset-scanner';
 
 /**
  * Repair Management — the Asset Management Office side of the repair flow.
@@ -260,6 +269,11 @@ export default function RepairManagement() {
   const [actorLabel, setActorLabel] = useState('Admin');
   const [actorId, setActorId] = useState<string | number | null>(null);
   const [saving, setSaving] = useState(false);
+  // Opening a repair from a scan is its own request, so it gets its own busy
+  // flag — the action modal's `saving` would otherwise lock the wrong button.
+  const [creatingRepair, setCreatingRepair] = useState(false);
+  const creatingRepairRef = useRef(false);
+  const scanner = useScannerLauncher();
   const [action, setAction] = useState<AdminAction | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
@@ -306,6 +320,17 @@ export default function RepairManagement() {
     return records.filter((r) => r.status === activeFilter);
   }, [activeFilter, records]);
 
+  // The repair queue grows with every request, and each card is heavy (timeline,
+  // asset block, action stack). Render the first page only and grow the window
+  // as the admin scrolls, so opening the screen never mounts the whole history.
+  const {
+    visible: visibleRecords,
+    hasMore: hasMoreRecords,
+    loadMore: loadMoreRecords,
+    total: totalRecords,
+    shown: shownRecords,
+  } = usePagedList(filteredRecords);
+
   /**
    * Repair evidence/history (system logic §9): every repair of one asset, oldest
    * first — a later repair is a new transaction, never an overwrite, so the
@@ -351,6 +376,9 @@ export default function RepairManagement() {
 
   const confirmAction = async () => {
     if (!action) return;
+    // The modal's confirm button disables itself only on the next render, so a
+    // fast double tap could post the same status change (and audit entry) twice.
+    if (saving) return;
     const { type, record } = action;
 
     // Finishing a repair with "Beyond Repair" closes it and moves the asset into
@@ -473,11 +501,66 @@ export default function RepairManagement() {
 
       closeAction();
       await loadRecords();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Repair action failed:', error);
-      Alert.alert('Action failed', error?.message || 'Could not update the repair record.');
+      Alert.alert(
+        'Action failed',
+        friendlyErrorMessage(error, 'Could not update the repair record. Please try again.'),
+      );
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * "New Repair" is a scan-first action.
+   *
+   * The office's job here is to take an asset out of service, so the sticker is
+   * the input: one scan resolves and verifies the asset, then a confirmation
+   * says exactly what will change before anything is written. The record itself
+   * mirrors the web's POST /admin/repairs/create, so the repair appears on the
+   * web's Repair page with the same rows and the same statuses.
+   */
+  const confirmScannedRepair = (asset: ScannedAsset) => {
+    if (creatingRepairRef.current) return;
+    Alert.alert(
+      'Mark as For Repair?',
+      `${asset.name} (${asset.code}) will be flagged For Repair and a pending repair record will be opened for it.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Create Repair', onPress: () => void createScannedRepair(asset) },
+      ],
+    );
+  };
+
+  const createScannedRepair = async (asset: ScannedAsset) => {
+    // Same guard as the action modal: a second tap must not try to open a second
+    // repair for one asset (only one open repair per asset is allowed).
+    if (creatingRepairRef.current) return;
+    creatingRepairRef.current = true;
+    setCreatingRepair(true);
+
+    try {
+      const result = await createRepairForAsset({
+        assetId: asset.id,
+        actorId,
+        actorLabel,
+        issue: `Scanned for repair by ${actorLabel}`,
+      });
+      Alert.alert(
+        'Repair created',
+        `${result.assetName} (${result.assetCode}) is now For Repair — ${result.requestRef}.`,
+      );
+      await loadRecords();
+    } catch (error) {
+      console.error('New repair from a scanned sticker failed:', error);
+      Alert.alert(
+        'Repair not created',
+        friendlyErrorMessage(error, 'Could not create the repair record. Please try again.'),
+      );
+    } finally {
+      creatingRepairRef.current = false;
+      setCreatingRepair(false);
     }
   };
 
@@ -565,6 +648,7 @@ export default function RepairManagement() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          onMomentumScrollEnd={loadMoreRecords}
         >
           <View style={styles.statsContainer}>
             <StatCard title="Total Repairs" value={stats.total} icon="hammer" gradientColors={['#EF4444', '#DC2626']} />
@@ -597,8 +681,8 @@ export default function RepairManagement() {
           </View>
 
           <View style={styles.listContainer}>
-            {filteredRecords.length > 0 ? (
-              filteredRecords.map((record) => {
+            {visibleRecords.length > 0 ? (
+              visibleRecords.map((record) => {
                 const statusStyle = getStatusStyle(record.status);
                 const priorityStyle = priorityTone(record.priority);
                 const lifeTone = lifecycleTone(record.lifecycleStatus);
@@ -608,18 +692,20 @@ export default function RepairManagement() {
                 const repairNumber = historyIndex >= 0 ? historyIndex + 1 : 1;
                 const previousRepairs = historyIndex > 0 ? assetHistory.slice(0, historyIndex) : [];
                 const isExpanded = expandedId === record.repairId;
-                const canStart = record.status === 'Pending';
-                const canComplete = record.status === 'Pending' || record.status === 'In Progress';
-                const canCancel = record.status === 'Pending' || record.status === 'In Progress';
 
-                // A repair is final once it is Completed / Cancelled, or once the
-                // asset has already left the repair process. From that point the
-                // record is history: no more editing and no more sending it
-                // anywhere else — one decision, taken once.
-                const lifecycleKey = String(record.lifecycleStatus ?? '').trim().toLowerCase();
-                const canFinalize =
-                  canComplete && lifecycleKey !== 'disposal' && lifecycleKey !== 'disposed';
-                const canSend = canFinalize && lifecycleKey !== 'for replacement';
+                // One rule set decides every button, so a status pill can never
+                // advertise one thing while the actions offer another. A repair
+                // is final once it is Completed / Cancelled, or once the asset
+                // has already left the repair process: from that point the
+                // record is history — one decision, taken once.
+                const {
+                  canStart,
+                  canComplete,
+                  canCancel,
+                  canFinalize,
+                  canSend,
+                  lifecycleKey,
+                } = repairActionState(record.status, record.lifecycleStatus);
 
                 return (
                   <View key={record.repairId} style={styles.recordCard}>
@@ -954,14 +1040,29 @@ export default function RepairManagement() {
                 <Text style={styles.emptyStateText}>No repair records found</Text>
               </View>
             )}
+
+            {hasMoreRecords ? (
+              <TouchableOpacity style={styles.loadMoreButton} onPress={loadMoreRecords} activeOpacity={0.85}>
+                <MaterialCommunityIcons name="chevron-down" size={18} color="#1E3A5F" />
+                <Text style={styles.loadMoreText}>
+                  Load more repairs ({shownRecords} of {totalRecords})
+                </Text>
+              </TouchableOpacity>
+            ) : totalRecords > PAGE_SIZE ? (
+              <Text style={styles.listEndText}>All {totalRecords} repairs shown</Text>
+            ) : null}
           </View>
         </ScrollView>
       </SafeAreaView>
 
       <TouchableOpacity
         style={styles.fabButton}
-        onPress={() => router.push('/submit-request')}
+        onPress={() => void scanner.open()}
         activeOpacity={0.9}
+        disabled={creatingRepair}
+        accessibilityRole="button"
+        accessibilityLabel="Scan an asset sticker to mark it for repair"
+        accessibilityState={{ busy: creatingRepair, disabled: creatingRepair }}
       >
         <LinearGradient
           colors={['#EF4444', '#DC2626']}
@@ -969,10 +1070,21 @@ export default function RepairManagement() {
           end={{ x: 1, y: 1 }}
           style={styles.fabGradient}
         >
-          <MaterialCommunityIcons name="plus" size={22} color="#FFFFFF" />
-          <Text style={styles.fabText}>New Repair</Text>
+          {creatingRepair ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <MaterialCommunityIcons name="qrcode-scan" size={22} color="#FFFFFF" />
+          )}
+          <Text style={styles.fabText}>{creatingRepair ? 'Saving…' : 'New Repair'}</Text>
         </LinearGradient>
       </TouchableOpacity>
+
+      <AssetScannerModal
+        visible={scanner.visible}
+        onClose={scanner.close}
+        onVerified={confirmScannedRepair}
+        title="Scan Asset to Repair"
+      />
 
       <Modal visible={action !== null} transparent animationType="fade" onRequestClose={closeAction}>
         <View style={styles.modalOverlay}>
@@ -1312,10 +1424,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
+  // flexGrow:0 keeps the horizontal strip from taking the leftover screen
+  // height; centring the chips stops them stretching into tall pills.
   filterScroll: {
+    flexGrow: 0,
     paddingHorizontal: 12,
   },
   filterContent: {
+    alignItems: 'center',
     gap: 8,
     paddingRight: 8,
   },
@@ -1665,6 +1781,31 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 12,
     fontWeight: '500',
+  },
+  loadMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 4,
+    marginBottom: 24,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E3A5F',
+  },
+  listEndText: {
+    textAlign: 'center',
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 24,
   },
   fabButton: {
     position: 'absolute',

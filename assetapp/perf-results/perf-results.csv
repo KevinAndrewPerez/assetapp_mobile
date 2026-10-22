@@ -1,0 +1,18 @@
+scenario,role,run1_ms,run2_ms,run3_ms,run4_ms,run5_ms,average_ms,per_request_bytes,rows,threshold_s,verdict
+sign-in-admin,Admin,512,506,500,485,499,500,418,1,2,PASS
+sign-in-department-head,Department Head,490,494,477,474,514,490,564,1,2,PASS
+sign-in-employee,Employee,497,487,474,477,465,480,551,1,2,PASS
+dashboard-admin,Admin,118,108,114,110,109,112,63239,450,3,PASS
+dashboard-department-head,Department Head,112,105,110,118,119,113,63239,450,3,PASS
+dashboard-employee,Employee,105,113,125,115,180,127,63239,450,3,PASS
+asset-list-head,Department Head,252,207,203,215,228,221,34938,48,3,PASS
+asset-list-employee,Employee,204,187,208,203,195,199,32323,45,3,PASS
+asset-details-head,Department Head,123,101,123,104,101,110,1166,1,3,PASS
+asset-details-employee,Employee,101,105,117,99,98,104,1171,1,3,PASS
+qr-scan-admin,Admin,96,107,103,97,105,102,95,1,3,PASS
+qr-scan-head,Department Head,102,99,90,102,97,98,95,1,3,PASS
+qr-scan-employee,Employee,104,89,104,95,101,99,96,1,3,PASS
+asset-tab-admin,Admin,513,529,547,510,550,530,186575,174,3,PASS
+notifications-head,Department Head,206,251,216,236,199,222,8472,38,3,PASS
+notifications-employee,Employee,217,210,190,211,233,212,8091,48,3,PASS
+profile-employee,Employee,99,123,104,110,104,108,451,1,3,PASS

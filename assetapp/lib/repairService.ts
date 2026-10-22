@@ -5,6 +5,7 @@ import { NOTE_SEP, readNote, upsertNotes } from './noteUtils';
 import { clampRequestStatus } from './requestStatus';
 import { repairCameFromPullout } from './pulloutMarker';
 import { normalizeDisposalReason } from './disposalService';
+import { requireOfficeActor } from './access';
 
 /**
  * Repair Management (NU TRACE mobile spec).
@@ -758,6 +759,152 @@ export async function submitRepairRequest(input: SubmitRepairInput): Promise<Sub
   return { requestId, requestRef, repairIds, submitted: ok.length, blocked: allBlocked };
 }
 
+// ──────────────────── admin: open a repair from a scan ───────────────────────
+
+export type CreateRepairForAssetInput = {
+  /** The asset the scanned sticker resolved to. */
+  assetId: string | number;
+  /** The admin doing the scan — the request row is theirs, as on the web. */
+  actorId: string | number | null | undefined;
+  actorLabel?: string;
+  /** What is wrong. The web's New Repair form requires one; a scan supplies its own. */
+  issue: string;
+  priority?: RepairPriority;
+};
+
+export type CreateRepairForAssetResult = {
+  repairId: string;
+  requestId: string;
+  requestRef: string;
+  assetName: string;
+  assetCode: string;
+};
+
+/**
+ * The office's "New Repair" action: one scanned sticker replaces the asset
+ * drop-down of the web's New Repair Request form (`POST /admin/repairs/create`).
+ *
+ * Every row mirrors that endpoint, so the web's Repair page shows exactly what
+ * the phone just created:
+ *   - `requests`: owned by the admin, type Repair, status `Approved` (the office
+ *     has already decided — this is not an employee's pending request);
+ *   - `repairs`: status `Pending`, the issue as its description, `Priority` in
+ *     the notes mirror the card reads;
+ *   - `assets.Lifecycle_Status = 'For Repair'`;
+ *   - one `audit_logs` REPAIR entry.
+ *
+ * The asset is checked first with the same rule as an employee's request: a
+ * disposed asset, or one that already has a Pending/In Progress repair, is
+ * refused before anything is written.
+ */
+export async function createRepairForAsset(
+  input: CreateRepairForAssetInput,
+): Promise<CreateRepairForAssetResult> {
+  const assetId = String(input.assetId ?? '').trim();
+  if (!assetId) throw new Error('Scan an asset sticker first.');
+
+  const issue = String(input.issue ?? '').trim();
+  if (!issue) throw new Error('Describe the problem before creating the repair.');
+
+  const actorId = input.actorId;
+  if (actorId === undefined || actorId === null || actorId === '') {
+    throw new Error('Your session was not found. Please sign in again.');
+  }
+
+  const { ok, blocked } = await validateAssetsForRepair([assetId]);
+  const asset = ok[0];
+  if (!asset) {
+    throw new Error(blocked[0]?.reason ?? 'This asset cannot be sent for repair.');
+  }
+
+  const now = new Date().toISOString();
+  const priority: RepairPriority = input.priority ?? 'Medium';
+  const actorLabel = String(input.actorLabel ?? '').trim() || 'Admin';
+
+  const { data: requestRow, error: requestError } = await supabase
+    .from('requests')
+    .insert([
+      {
+        user_id: actorId,
+        asset_id: Number(asset.id),
+        request_type: 'Repair',
+        status: 'Approved',
+        Note: issue,
+        created_at: now,
+        updated_at: now,
+      },
+    ])
+    .select('id')
+    .single();
+  if (requestError) throw requestError;
+
+  const requestId = String((requestRow as any)?.id ?? '');
+  let repairId = '';
+
+  try {
+    const { data: repairRow, error: repairError } = await supabase
+      .from('repairs')
+      .insert([
+        {
+          Assets_id: Number(asset.id),
+          Request_id: requestId,
+          Repair_Description: issue,
+          Repair_Date: now,
+          Approve_by: actorLabel,
+          Repair_Cost: 0,
+          status: 'Pending',
+          notes: upsertNotes('', { Priority: priority }),
+          created_at: now,
+          updated_at: now,
+        },
+      ])
+      .select('Repair_id')
+      .single();
+    if (repairError) throw repairError;
+    repairId = String((repairRow as any)?.Repair_id ?? '');
+
+    const { error: assetError } = await supabase
+      .from('assets')
+      .update({ Lifecycle_Status: 'For Repair', updated_at: now })
+      .eq('id', Number(asset.id));
+    if (assetError) throw assetError;
+  } catch (error) {
+    // PostgREST gives no transaction to lean on, so undo what this call created:
+    // a repair row left behind by a failed asset update would hold the one open
+    // repair a scanned asset is allowed to have, and the admin could not retry.
+    if (repairId) {
+      const { error: undoRepair } = await supabase
+        .from('repairs')
+        .delete()
+        .eq('Repair_id', repairId as any);
+      if (undoRepair) console.warn('Could not roll back the repair row:', undoRepair.message);
+    }
+    const { error: undoRequest } = await supabase
+      .from('requests')
+      .delete()
+      .eq('id', requestId as any);
+    if (undoRequest) console.warn('Could not roll back the request row:', undoRequest.message);
+    throw error;
+  }
+
+  await writeAudit({
+    actorId,
+    assetId: asset.id,
+    requestId,
+    actionType: 'REPAIR',
+    description: `Repair #${repairId || requestId} created for ${asset.name} ${asset.code} from a scanned sticker`,
+    notes: `Repair request created for asset — ${issue}`,
+  });
+
+  return {
+    repairId,
+    requestId,
+    requestRef: `REP-${requestId}`,
+    assetName: asset.name,
+    assetCode: asset.code,
+  };
+}
+
 // ───────────────────────── admin status workflow ─────────────────────────────
 
 const mapRequestStatusToRepairStatus = (
@@ -790,6 +937,12 @@ export async function updateRepairStatus(options: {
   fields?: RepairAdminFields;
 }): Promise<{ status: RepairStatus; assetStatus: string | null; evaluationSaved: boolean }> {
   const { repairId, status, actorId } = options;
+
+  await requireOfficeActor(
+    actorId,
+    'Only the Asset Management Office can update a repair.',
+  );
+
   const fields = options.fields ?? {};
   const now = new Date().toISOString();
 
@@ -924,19 +1077,34 @@ export async function updateRepairStatus(options: {
           }`
         : `Repair status updated to ${status} for ${assetLabel}`;
 
-  await writeAudit({
-    actorId,
-    assetId,
-    requestId,
-    actionType: 'REPAIR',
-    description: auditDescription,
-    notes: fields.adminRemarks || notes || `Repair status: ${status}`,
-  });
+  // The repair row and the asset are already saved at this point. The audit
+  // entry, the requester's notification and the request summary are consequences
+  // of that saved change, so a failure in one of them must not be reported as
+  // "action failed" — the admin would retry and post the same decision twice.
+  // Each one is attempted, and a failure is logged for follow-up instead.
+  try {
+    await writeAudit({
+      actorId,
+      assetId,
+      requestId,
+      actionType: 'REPAIR',
+      description: auditDescription,
+      notes: fields.adminRemarks || notes || `Repair status: ${status}`,
+    });
+  } catch (auditError) {
+    console.warn('Repair saved, but the audit entry could not be written:', auditError);
+  }
 
   // Notify the requester (spec §13).
   const ownerId = (asset?.user_id ?? null) as string | number | null;
-  const notifyId = await resolveRequesterId(requestId, ownerId);
+  let notifyId: string | number | null = null;
+  try {
+    notifyId = await resolveRequesterId(requestId, ownerId);
+  } catch (notifyError) {
+    console.warn('Repair saved, but the requester could not be resolved:', notifyError);
+  }
   const base = `${assetLabel}`.trim();
+  try {
   if (notifyId != null) {
     if (status === 'Completed' && fromPullout) {
       await createNotification({
@@ -983,8 +1151,15 @@ export async function updateRepairStatus(options: {
       });
     }
   }
+  } catch (notificationError) {
+    console.warn('Repair saved, but the requester could not be notified:', notificationError);
+  }
 
-  await syncRequestStatusFromRepairs(requestId);
+  try {
+    await syncRequestStatusFromRepairs(requestId);
+  } catch (syncError) {
+    console.warn('Repair saved, but the request summary could not be updated:', syncError);
+  }
 
   return { status, assetStatus, evaluationSaved };
 }
@@ -1051,6 +1226,11 @@ export async function applyRequestStatusToRepairs(options: {
   actorLabel?: string;
   notes?: string;
 }): Promise<RepairStatus | null> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can decide a repair request.',
+  );
+
   const { requestId, status, actorId, actorLabel, notes } = options;
 
   const { data: request } = await supabase
@@ -1139,6 +1319,11 @@ export async function sendRepairToReplacement(options: {
    */
   markCompleted?: boolean;
 }): Promise<{ replacementId: string | null }> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can send a repair to replacement.',
+  );
+
   const reason = String(options.reason ?? '').trim();
   if (!reason) throw new Error('A reason is required so the user knows why the asset is being replaced.');
 
@@ -1254,6 +1439,11 @@ export async function sendRepairToDisposal(options: {
   /** See `sendRepairToReplacement` — completes instead of cancelling the repair. */
   markCompleted?: boolean;
 }): Promise<{ disposalId: string | null }> {
+  await requireOfficeActor(
+    options.actorId,
+    'Only the Asset Management Office can send a repair to disposal.',
+  );
+
   const reason = String(options.reason ?? '').trim();
   if (!reason) throw new Error('A reason is required so the user knows why the asset is being disposed.');
 

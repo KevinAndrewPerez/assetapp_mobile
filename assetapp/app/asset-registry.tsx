@@ -596,7 +596,12 @@ export default function AssetRegistryScreen() {
             <Text style={styles.label}>
               Category <Text style={styles.requiredStar}>*</Text>
             </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.categoryScroll}
+              contentContainerStyle={styles.categoryRow}
+            >
               {categoryOptions.map((option) => (
                 <TouchableOpacity
                   key={option}
@@ -1139,6 +1144,8 @@ export default function AssetRegistryScreen() {
                     {codeMode === 'auto'
                       ? 'Built from the category and asset name (e.g. AST-IE-DL-X7Q2). Bulk copies always get unique codes.'
                       : 'The QR sticker encodes this exact code, so scanning it opens this asset.'}
+                    {' '}This preview is the plain code; the Asset Management Office prints the
+                    signed sticker from the web.
                   </Text>
                 </View>
               </View>
@@ -2003,7 +2010,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
   },
+  // See transfer.tsx: no cross-axis alignment lets a horizontal scroller stretch
+  // its cards to the leftover screen height.
+  categoryScroll: { flexGrow: 0 },
   categoryRow: {
+    alignItems: 'center',
     gap: 12,
     paddingVertical: 6,
   },

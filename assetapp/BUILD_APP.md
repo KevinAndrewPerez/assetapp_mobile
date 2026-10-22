@@ -106,9 +106,9 @@ npx expo start --dev-client
 
 ## Before you build a release, check
 
-- **`EXPO_PUBLIC_MAIL_API_KEY`** — the key that lets the app mail the reset code itself
-  (see the forgot-password section). Without it the app falls back to the website's mailer,
-  which never delivers on the current deployment.
+- **Mail configuration lives on the website, not in the app.** The forgot-password flow
+  posts to the NUTrace site, which owns the `MAIL_*` settings. No `EXPO_PUBLIC_MAIL_*`
+  variable is read by the app; do not put a provider key in the bundle.
 - **`EXPO_PUBLIC_WEB_URL`** — only needed for photos uploaded *through the web app*
   (Laravel `public` disk). Every file reference in the database today is a Supabase Storage
   URL, so images work as-is; if web uploads start being used, either put the deployed web
@@ -194,70 +194,39 @@ sign-in / sign-out rows with the plain notices "This user account has logged in.
 "…logged out.". The app also records the mobile session itself (sign-in and sign-out) so an
 admin can see mobile activity, not just web activity.
 
-## Forgot password: the app mails the code itself
+## Forgot password: the website owns delivery
 
-The app generates the single-use 6-digit code, stores its bcrypt hash in
-`password_resets` — the same row the web app writes — and sends the message through an
-email API over HTTPS (`lib/resetMailer.ts`). The steps after that (code check, password
-policy, the `users` password write, the audit entry) were already done inside the app, so
-the whole reset finishes on the phone.
+The app posts the address to the NUTrace website's `/forgot-password` form. The site
+writes the single-use 6-digit code's bcrypt hash into the shared `password_resets` table
+and mails the code using its **server-side** `MAIL_*` configuration. The app verifies the
+code, applies the same password policy as the web, writes the new `users` password and
+records the audit entry. Either app can finish a reset the other started.
 
-**Why it no longer asks the website to send it.** The deployed NUTrace site has no
-`MAIL_*` configuration, so Laravel falls back to its default `log` mailer: the message is
-written into `storage/logs/laravel.log`, the site reports success, and nothing leaves the
-server. The site still writes the code row, which is why the app used to show "code sent"
-while the inbox stayed empty. `scripts/reset-mail-doctor.js` reproduces that exactly (the
-POST answers as fast as a plain GET — no SMTP conversation happened — while a fresh code
-row appears in the table).
+**No mail-provider key belongs in this app.** `EXPO_PUBLIC_*` values are inlined into the
+JavaScript bundle and can be extracted from an APK/IPA. `lib/resetMailer.ts` was removed
+for that reason; `EXPO_PUBLIC_MAIL_API_KEY`, `EXPO_PUBLIC_MAIL_PROVIDER`,
+`EXPO_PUBLIC_MAIL_FROM` and `EXPO_PUBLIC_MAIL_FROM_NAME` are no longer read. If an older
+build exports them, remove them.
 
-### Configure the sender
+### Server configuration (not mobile)
 
-| variable | meaning |
-| --- | --- |
-| `EXPO_PUBLIC_MAIL_API_KEY` | the provider's API key. **Required**; without it the app falls back to asking the website to mail the code. |
-| `EXPO_PUBLIC_MAIL_PROVIDER` | `resend` (default) or `brevo`. |
-| `EXPO_PUBLIC_MAIL_FROM` | the verified sender address. Defaults to Resend's `onboarding@resend.dev`. |
-| `EXPO_PUBLIC_MAIL_FROM_NAME` | display name, default `NU TRACE`. |
-
-Put them in `.env` for Metro runs. **A release build does not read `.env`** (it is
-gitignored and never uploaded), so for an APK the same values must also live in
-`app.json → extra` — where `EXPO_PUBLIC_SUPABASE_URL` already is — or in EAS environment
-variables. Everything prefixed `EXPO_PUBLIC_` is inlined into the JS bundle and can be
-extracted from the APK: fine for a capstone, but treat the key as burnable and rotate it
-in the provider's dashboard if it leaks; a production app would send through a small
-server instead.
-
-Resend's testing sender only delivers to the address that owns the Resend account.
-Verify a domain — or use Brevo, which verifies a single sender *address* and needs no
-domain — to mail any registered user.
-
-Only Brevo's endpoint allows browser-origin calls (`access-control-allow-origin` comes
-back on its preflight). Resend's does not, so a Resend-keyed build can only send from a
-**native** build — Expo Go or the APK — not from `expo export --platform web`. That is
-harmless for this project (the deliverable is the APK), but do not conclude the mailer is
-broken from a browser run: the console shows a CORS refusal there.
-
-With no key configured, `sendResetCode()` falls back to posting the website's
-`/forgot-password` form, which only works once that deployment gets real `MAIL_*`
-settings.
+On the deployed NUTrace site, set a real mailer in `.env` (for example
+`MAIL_MAILER=smtp`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`,
+`MAIL_ENCRYPTION` and `MAIL_FROM_ADDRESS`), then clear the Laravel config cache. Verify by
+requesting a reset from the website and checking `storage/logs/laravel.log`: with the
+default `log` mailer the code row is written but no email leaves the server. That is a
+deployment issue to fix on the server, not a reason to move the credential into the phone.
 
 ### Checking it
 
 ```bash
-node scripts/reset-code-store-check.js  # the row the app writes is readable and verifiable by both apps
+node scripts/reset-code-store-check.js  # the shared row is readable and verifiable by both apps
 node scripts/reset-mail-doctor.js       # what the website does (and does not) send
 ```
 
-For a real send, put the key in `.env` and run `npx expo start` — Expo Go loads `.env`,
-so the phone can be tested without an APK. `scripts/serve-web-build.js <dir> <port>`
-serves an `expo export --platform web` build when you want to drive the screens in a
-browser.
-
-`.env` in this repo is **tracked by git** (only `.env*.local` is ignored), so a key pasted
-there shows up as a diff. Either untrack it (`git rm --cached assetapp/.env` plus a
-`.env` line in `.gitignore`), pass the key through the shell
-(`EXPO_PUBLIC_MAIL_API_KEY=… npx expo start`), or set it as an EAS environment variable for
-cloud builds.
+`scripts/serve-web-build.js <dir> <port>` serves an `expo export --platform web` build
+when you want to drive the screens in a browser, but it is not a deployment: the reset
+form posts to the web app configured by `EXPO_PUBLIC_WEB_URL`.
 
 Passwords written by the app are stored as bcrypt digests tagged `$2y$`, the only format
 Postgres' `crypt()` (used by the login RPC) can verify — see `lib/passwordHash.ts`.
